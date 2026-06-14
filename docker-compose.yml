@@ -1,0 +1,11 @@
+services:
+  Convy:
+    image: ${DOCKER_REGISTRY-}convy
+    build:
+      context: .
+      dockerfile: src/Convy/Dockerfile
+    environment:
+      QBITTORRENT__URL: ${QBITTORRENT__URL}
+      QBITTORRENT__USERNAME: ${QBITTORRENT__USERNAME}
+      QBITTORRENT__PASSWORD: ${QBITTORRENT__PASSWORD}
+      QBITTORRENT__SYNCINTERVAL: ${QBITTORRENT__SYNCINTERVAL:-0:0:5}

@@ -1,0 +1,6 @@
+@qBittorrent_Hooks_HostAddress = http://localhost:5174
+
+GET {{qBittorrent_Hooks_HostAddress}}/weatherforecast/
+Accept: application/json
+
+###
