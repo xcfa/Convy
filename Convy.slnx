@@ -6,6 +6,10 @@
   <Project Path="src/Convy.Services/Convy.Services.csproj" Id="397ae47e-ab2a-4a1b-9705-86446edde563" />
   <Project Path="Tests/Convy.Services.Tests/Convy.Services.Tests.csproj" />
   <Project Path="src/Convy/Convy.csproj" />
+  <Folder Name="/Solution Items/">
+    <File Path=".env" />
+    <File Path=".env.example" />
+  </Folder>
   <Project Path="docker-compose.dcproj">
     <Build />
   </Project>
