@@ -9,6 +9,7 @@
   <Folder Name="/Solution Items/">
     <File Path=".env" />
     <File Path=".env.example" />
+    <File Path="README.md" />
   </Folder>
   <Project Path="docker-compose.dcproj">
     <Build />
