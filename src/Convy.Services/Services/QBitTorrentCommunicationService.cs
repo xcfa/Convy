@@ -175,7 +175,8 @@ namespace Convy.Services.Services
                 // would fail with EEXIST.
                 if (File.Exists(dest))
                 {
-                    RecordLink(context, hash, file.Name, dest);
+	                _logger.LogDebug("Destination already exists: {Destination}. Only added to database.", dest);
+					RecordLink(context, hash, file.Name, dest);
                     linked.Add(file.Name);
                     continue;
                 }
