@@ -3,8 +3,6 @@
 # This stage is used when running from VS in fast mode (Default for Debug configuration).
 # It builds for the host architecture only, so its RUN executes natively.
 FROM mcr.microsoft.com/dotnet/aspnet:10.0 AS base
-RUN mkdir -p /var/lib/convy && chown $APP_UID:$APP_UID /var/lib/convy
-USER $APP_UID
 WORKDIR /app
 EXPOSE 8080
 EXPOSE 8081
@@ -42,7 +40,5 @@ FROM mcr.microsoft.com/dotnet/aspnet:10.0 AS final
 WORKDIR /app
 EXPOSE 8080
 EXPOSE 8081
-COPY --from=build --chown=$APP_UID:$APP_UID /app/state /var/lib/convy
 COPY --from=build /app/publish .
-USER $APP_UID
 ENTRYPOINT ["dotnet", "Convy.dll"]
