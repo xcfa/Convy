@@ -2,14 +2,16 @@
   <Project Path="src/Convy.Data/Convy.Data.csproj" Id="fa57587a-9675-4551-889c-6e995b7a444c" />
   <Project Path="src/Convy.Infrastructure/Convy.Infrastructure.csproj" />
   <Project Path="src/Convy.PathExpressions/Convy.PathExpressions.csproj" Id="347107b9-5db9-46f9-a1fe-f16931c8d2a2" />
-  <Project Path="Tests/Convy.PathExpressions.Tests/Convy.PathExpressions.Tests.csproj" />
   <Project Path="src/Convy.Services/Convy.Services.csproj" Id="397ae47e-ab2a-4a1b-9705-86446edde563" />
-  <Project Path="Tests/Convy.Services.Tests/Convy.Services.Tests.csproj" />
   <Project Path="src/Convy/Convy.csproj" />
   <Folder Name="/Solution Items/">
     <File Path=".env" />
     <File Path=".env.example" />
     <File Path="README.md" />
+  </Folder>
+  <Folder Name="/Tests/">
+    <Project Path="Tests/Convy.PathExpressions.Tests/Convy.PathExpressions.Tests.csproj" />
+    <Project Path="Tests/Convy.Services.Tests/Convy.Services.Tests.csproj" />
   </Folder>
   <Project Path="docker-compose.dcproj">
     <Build />

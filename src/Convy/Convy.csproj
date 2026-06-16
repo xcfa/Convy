@@ -7,8 +7,8 @@
     <RootNamespace>Convy</RootNamespace>
     <UserSecretsId>f5cd01fd-8b3a-4521-8c78-b9f77a5bf58a</UserSecretsId>
     <DockerDefaultTargetOS>Linux</DockerDefaultTargetOS>
-    <DockerComposeProjectPath>..\docker-compose.dcproj</DockerComposeProjectPath>
-	  <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
+    <DockerComposeProjectPath>..\..\docker-compose.dcproj</DockerComposeProjectPath>
+	<AllowUnsafeBlocks>true</AllowUnsafeBlocks>
   </PropertyGroup>
 
   <ItemGroup>
