@@ -403,3 +403,4 @@ FodyWeavers.xsd
 # Local secrets / environment (real values live here, never commit)
 .env
 
+CLAUDE.md

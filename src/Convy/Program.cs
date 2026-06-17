@@ -4,11 +4,14 @@ using Convy.Services.Linking;
 using Convy.Services.Rules;
 using Convy.Services.Services;
 using Convy.Services.Tracking;
+using Convy.Services.Webhooks;
 using Microsoft.AspNetCore.Builder;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging;
+using System.Collections.Generic;
+using System.Net.Http;
 using System.Text.Json.Serialization;
 using System.Threading.Tasks;
 using Convy.Data.Context;
@@ -25,6 +28,7 @@ public class Program
 
 		builder.Configuration.AddJsonFile("config/appsettings.json", optional: true, reloadOnChange: true);
 		builder.Configuration.AddJsonFile($"config/appsettings.{builder.Environment.EnvironmentName}.json", optional: true, reloadOnChange: true);
+		builder.Configuration.AddYamlFile("config/configuration.yml", optional: true, reloadOnChange: true);
 		builder.Configuration.AddEnvironmentVariables();
 		builder.Configuration.AddKeyPerFile("/run/secrets", optional: true);  // секреты перекрывают env
 		builder.Configuration.AddCommandLine(args);
@@ -68,6 +72,17 @@ public class Program
 		// Hard-link creation.
 		builder.Services.AddSingleton<IFileLinker, FileLinker>();
 		builder.Services.AddSingleton<FileLinkingService>();
+
+		// Webhook notifications after successful linking.
+		builder.Services.AddSingleton<IWebhookNotifier>(sp =>
+		{
+			var configs = builder.Configuration.GetSection("Webhooks").Get<List<WebhookConfig>>()
+			               ?? new List<WebhookConfig>();
+			return new WebhookNotifier(
+				configs,
+				new HttpClient(),
+				sp.GetRequiredService<ILogger<WebhookNotifier>>());
+		});
 
 		// Business logic for a single sync cycle (owns the qBittorrent connection).
 		builder.Services.AddSingleton<QBitTorrentCommunicationService>();

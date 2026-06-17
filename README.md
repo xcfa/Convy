@@ -108,8 +108,19 @@ rules in effect rather than taking the service down.
 
 ## Configuration
 
-Settings are supplied via environment variables (double underscore = nesting). With Docker
-Compose they come from a local `.env` file (see `.env.example`):
+Convy reads settings from several sources, applied in order (later wins):
+
+1. `appsettings.json` — built-in defaults (logging, connection string)
+2. `config/appsettings.json` — optional override mounted into the container
+3. `config/configuration.yml` — **user configuration file** (webhooks, etc.)
+4. Environment variables (double underscore = nesting)
+5. Docker secrets (`/run/secrets`)
+6. Command-line arguments
+
+For day-to-day use, put your settings in `config/configuration.yml` and connection /
+qBittorrent credentials in environment variables or Docker secrets.
+
+### qBittorrent connection
 
 | Variable | Description |
 | --- | --- |
@@ -118,11 +129,68 @@ Compose they come from a local `.env` file (see `.env.example`):
 | `QBITTORRENT__PASSWORD` | Web UI password |
 | `QBITTORRENT__SYNCINTERVAL` | Poll interval as `h:m:s`; `0` disables syncing |
 
-Other settings:
+### Other settings
 
 - `Convy:RulesPath` — path to the YAML rules file (default `config/rules.yaml`)
 - `ConnectionStrings:SQLite` — EF Core/SQLite connection string for the local database
   that stores linked files and tracker state
+
+### Webhooks
+
+A webhook fires once at the end of each sync cycle if at least one torrent was linked
+or an error occurred. The request is a single POST with a JSON body containing all
+results at once. Configured in `config/configuration.yml`:
+
+```yaml
+webhooks:
+  - name: Send to telegram
+    url: https://tg-proxy.example.com/34234324
+    params:
+      - place: Body
+        name: category
+        value: category
+      - place: Body
+        name: torrent
+        value: name
+
+  - name: Simple hook
+    url: https://example.com/hook
+```
+
+The POST body is always a JSON object with two arrays:
+
+```json
+{
+  "linked": [
+    {"category": "Movies", "torrent": "My Film"},
+    {"category": "Anime", "torrent": "Show S02"}
+  ],
+  "errors": [
+    {"hash": "af83…", "error": "Link failed: EXDEV"}
+  ]
+}
+```
+
+Each param maps a torrent property to a field in each `linked` item:
+
+| Field | Description |
+| --- | --- |
+| `place` | `Query` (URL query string) or `Body` (JSON body). Default: `Query` |
+| `name` | Parameter name in the request |
+| `value` | Torrent property to read (case-insensitive) |
+
+Available property values: `hash`, `name`, `category`, `savePath`, `targetPath`, `size`,
+`state`, `tags`.
+
+When `params` is omitted, every property is included in each `linked` item.
+
+**Environment variable shorthand.** When a full YAML config isn't needed, a webhook URL
+can be set via environment variables:
+
+```
+Webhooks__0__Url=https://example.com/hook
+Webhooks__0__Name=My hook
+```
 
 ## Running
 
@@ -156,7 +224,7 @@ services:
       # One filesystem holding downloads AND media as subfolders, mounted at the SAME
       # absolute path qBittorrent uses for its save path.
       - /srv/media-stack:/data
-      # Routing rules -> /app/config/rules.yaml
+      # User config: routing rules (rules.yaml) and webhooks (configuration.yml)
       - ./config:/app/config:ro
       # Persist the database. Optional — without it the db is ephemeral.
       - convy-db:/var/lib/convy
@@ -192,7 +260,7 @@ downloads a JRE automatically the first time, so no separate Java installation i
 | Project | Responsibility |
 | --- | --- |
 | `Convy` | ASP.NET host: the polling worker, dependency injection, HTTP endpoints |
-| `Convy.Services` | qBittorrent communication, file linking, and the state tracker |
+| `Convy.Services` | qBittorrent communication, file linking, state tracker, webhook notifier |
 | `Convy.PathExpressions` | the rule language: ANTLR grammar, expression tree, mapping-file loader |
 | `Convy.Data` | EF Core (SQLite) entities and migrations |
 | `Convy.Infrastructure` | low-level helpers (the native hard-link wrapper) |

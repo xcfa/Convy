@@ -1,0 +1,10 @@
+# rules/missing-configureawait.yml
+id: missing-configureawait
+language: csharp
+severity: warning
+message: await без ConfigureAwait(false) в сервисном коде
+rule:
+  pattern: await $CALL($$$)
+  not:
+    has:
+      pattern: ConfigureAwait

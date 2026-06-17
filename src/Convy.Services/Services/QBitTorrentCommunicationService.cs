@@ -4,6 +4,7 @@ using Convy.Data.Entities;
 using Convy.Services.Linking;
 using Convy.Services.Rules;
 using Convy.Services.Tracking;
+using Convy.Services.Webhooks;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
@@ -22,6 +23,7 @@ namespace Convy.Services.Services
         private readonly IRulesProvider _rulesProvider;
         private readonly ITorrentStateTracker _tracker;
         private readonly FileLinkingService _linkingService;
+        private readonly IWebhookNotifier _webhookNotifier;
         private readonly ILogger<QBitTorrentCommunicationService> _logger;
 
         private QBittorrentClient? _client;
@@ -34,6 +36,7 @@ namespace Convy.Services.Services
             IRulesProvider rulesProvider,
             ITorrentStateTracker tracker,
             FileLinkingService linkingService,
+            IWebhookNotifier webhookNotifier,
             ILogger<QBitTorrentCommunicationService> logger)
         {
             _settings = settings.Value;
@@ -41,6 +44,7 @@ namespace Convy.Services.Services
             _rulesProvider = rulesProvider;
             _tracker = tracker;
             _linkingService = linkingService;
+            _webhookNotifier = webhookNotifier;
             _logger = logger;
         }
 
@@ -80,6 +84,7 @@ namespace Convy.Services.Services
 
             var processed = new List<string>();
             var skipped = new List<string>();
+            var webhookBatch = new WebhookBatch();
 
             foreach (var hash in changes)
             {
@@ -87,7 +92,7 @@ namespace Convy.Services.Services
 
                 try
                 {
-                    switch (await ProcessChangeAsync(client, context, hash, rules, cancellationToken))
+                    switch (await ProcessChangeAsync(client, context, hash, rules, webhookBatch, cancellationToken))
                     {
                         case ProcessOutcome.Handled:
                             processed.Add(hash);
@@ -107,6 +112,7 @@ namespace Convy.Services.Services
                     // Isolate per torrent: one failure must neither abort the batch nor
                     // advance this torrent's baseline.
                     _logger.LogError(ex, "Failed to process torrent {Hash}.", hash);
+                    webhookBatch.Errors.Add(new WebhookError(hash, ex.Message));
                 }
             }
 
@@ -115,6 +121,19 @@ namespace Convy.Services.Services
             // Advance the tracker baseline only after the links are durably recorded.
             await _tracker.ConfirmProcessedAsync(processed, cancellationToken);
             await _tracker.MarkSkippedAsync(skipped, cancellationToken);
+
+            if (webhookBatch.HasEntries)
+            {
+                try
+                {
+                    await _webhookNotifier.NotifyAsync(webhookBatch, cancellationToken)
+                        .ConfigureAwait(false);
+                }
+                catch (Exception ex) when (ex is not OperationCanceledException)
+                {
+                    _logger.LogError(ex, "Webhook notification failed.");
+                }
+            }
         }
 
         private async Task<QBittorrentClient> EnsureConnectedAsync()
@@ -136,6 +155,7 @@ namespace Convy.Services.Services
             ConvyDbContext context,
             string hash,
             RulesSnapshot rules,
+            WebhookBatch webhookBatch,
             CancellationToken cancellationToken)
         {
             var info = await client.Torrent.GetTorrentInfo(hash);
@@ -197,7 +217,29 @@ namespace Convy.Services.Services
                     hash, outcome.MissingSources, info.SavePath);
             }
 
-            return outcome.AllLinked ? ProcessOutcome.Handled : ProcessOutcome.Retry;
+            if (outcome.AllLinked)
+            {
+                var properties = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase)
+                {
+                    ["hash"] = hash,
+                    ["name"] = info.Name ?? "",
+                    ["category"] = info.Category ?? "",
+                    ["savePath"] = info.SavePath ?? "",
+                    ["targetPath"] = targetPath,
+                    ["size"] = info.Size?.ToString() ?? "0",
+                    ["state"] = info.State?.ToString() ?? "",
+                };
+
+                if (info.TagList is not null)
+                {
+                    properties["tags"] = string.Join(",", info.TagList);
+                }
+
+                webhookBatch.Linked.Add(properties);
+                return ProcessOutcome.Handled;
+            }
+
+            return ProcessOutcome.Retry;
         }
 
         private enum ProcessOutcome

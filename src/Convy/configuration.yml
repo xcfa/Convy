@@ -1,0 +1,28 @@
+# Convy user configuration.
+#
+# This file is loaded by the ASP.NET Core configuration pipeline and
+# supports hot-reload: changes take effect on the next sync cycle
+# without a restart.
+#
+# Webhooks are called once per torrent after all its files have been
+# hard-linked. Available property values for params:
+#   hash, name, category, savePath, targetPath, size, state, tags
+#
+# When params are omitted, all properties are sent as a JSON body.
+# Environment variable alternative (query-only):
+#   Webhooks__0__Url=https://example.com/hook
+#   Webhooks__0__Name=My hook
+
+# webhooks:
+#   - name: Send to telegram
+#     url: https://tg-proxy.example.com/34234324
+#     params:
+#       - place: Body
+#         name: category
+#         value: category
+#       - place: Body
+#         name: torrent
+#         value: name
+#
+#   - name: Simple query hook
+#     url: https://example.com/hook
