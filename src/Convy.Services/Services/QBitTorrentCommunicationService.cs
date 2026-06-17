@@ -159,6 +159,7 @@ namespace Convy.Services.Services
             }
 
             var allLinked = true;
+            var missingSource = 0;
 
             foreach (var file in files)
             {
@@ -183,10 +184,11 @@ namespace Convy.Services.Services
 
                 if (!File.Exists(source))
                 {
-                    // Content not on disk yet (e.g. output not mounted, or size changed
-                    // mid-download). Retry on a later cycle once the file appears.
+                    // Content not visible at this path (volume not mounted, wrong path,
+                    // or size changed mid-download). Retry on a later cycle.
                     _logger.LogDebug("Source not present yet, will retry: {Source}", source);
                     allLinked = false;
+                    missingSource++;
                     continue;
                 }
 
@@ -210,6 +212,14 @@ namespace Convy.Services.Services
                     _logger.LogError(ex, "Failed to link {Source} -> {Dest}; will retry.", source, dest);
                     allLinked = false;
                 }
+            }
+
+            if (missingSource > 0)
+            {
+                _logger.LogWarning(
+                    "Torrent {Hash}: {Missing} file(s) not found under '{SavePath}' inside the container. " +
+                    "Is qBittorrent's download path mounted here at the same absolute path? Will retry.",
+                    hash, missingSource, info.SavePath);
             }
 
             return allLinked;

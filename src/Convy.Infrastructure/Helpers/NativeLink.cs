@@ -10,7 +10,9 @@ namespace Convy.Infrastructure.Helpers
     /// </summary>
     public static partial class NativeLink
     {
-        [LibraryImport("libc", EntryPoint = "link", StringMarshalling = StringMarshalling.Utf8)]
+        // SetLastError is required so Marshal.GetLastPInvokeError() returns the real
+        // errno; without it the value is meaningless (often 0).
+        [LibraryImport("libc", EntryPoint = "link", SetLastError = true, StringMarshalling = StringMarshalling.Utf8)]
         public static partial int Link(string existing, string @new);
 
         public static void CreateHardLink(string source, string dest)
@@ -18,7 +20,16 @@ namespace Convy.Infrastructure.Helpers
             if (Link(source, dest) != 0)
             {
                 var errno = Marshal.GetLastPInvokeError();
-                throw new IOException($"link() failed with errno {errno} for '{source}' -> '{dest}'");
+                var detail = errno switch
+                {
+                    18 => " (EXDEV: source and destination are on different filesystems; hard links cannot cross filesystems)",
+                    17 => " (EEXIST: destination already exists)",
+                    13 => " (EACCES: permission denied)",
+                    2 => " (ENOENT: source path does not exist)",
+                    _ => string.Empty,
+                };
+
+                throw new IOException($"link() failed with errno {errno}{detail} for '{source}' -> '{dest}'");
             }
         }
     }

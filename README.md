@@ -26,28 +26,37 @@ Because hard links are used, the torrent's save path and the destination must li
 **same filesystem**. Linking is done with the POSIX `link()` syscall, so Convy is meant to
 run on Linux (the provided container image).
 
-### Paths must match qBittorrent
+### Storage layout: one filesystem for downloads and destinations
 
-Convy uses the save path that qBittorrent reports (`SavePath`) **verbatim** to locate each
-file. For linking to work, the downloaded data must be visible inside the Convy container at
-the **exact same absolute path** qBittorrent uses to write it.
+Two hard requirements, both coming from how hard links work:
 
-In practice this means mounting the same volume, at the same mount point, in both
-containers. For example, if qBittorrent saves to `/downloads`, then Convy must also see that
-data at `/downloads`:
+1. **Same path as qBittorrent.** Convy locates each file using the save path qBittorrent
+   reports (`SavePath`) **verbatim**. The downloaded data must be visible inside the Convy
+   container at the **exact same absolute path** qBittorrent writes it to. If it isn't,
+   Convy finds nothing to link and keeps retrying.
+2. **Same filesystem (mount) for source and destination.** A hard link cannot cross
+   filesystems — the kernel returns `EXDEV` (errno 18) and the link fails. The qBittorrent
+   save path and every destination in `ConvyMappings.ini` must live on the **same mount**.
 
-```yaml
-# qBittorrent
-volumes:
-  - /mnt/data/torrents:/downloads
-# Convy
-volumes:
-  - /mnt/data/torrents:/downloads      # identical target path
-  - /mnt/data/media:/media             # destinations from ConvyMappings.ini, same filesystem
+The simplest way to satisfy both is a single data volume holding the downloads and the
+media library side by side, mounted at the same path everywhere:
+
+```
+/data
+├── downloads/        # qBittorrent's save path, e.g. /data/downloads/...
+└── media/            # Convy's destinations,    e.g. /data/media/...
 ```
 
-If the paths differ, Convy will look for the source file at a path that doesn't exist in its
-own filesystem and the link will be skipped (and retried) indefinitely.
+Do **not** mount downloads and media as two separate volumes (e.g. `/downloads` and
+`/media`): even if they point at the same disk, Docker presents them as separate mounts and
+`link()` fails with `EXDEV`. Use one mount with both as subdirectories.
+
+To verify inside the container that two paths share a filesystem, compare their device ids —
+the first number must match:
+
+```bash
+stat -c '%d %n' /data/downloads /data/media
+```
 
 ## Rule syntax
 
@@ -62,11 +71,11 @@ Lines beginning with `#` or `;` are comments. Blank lines are ignored.
 Example:
 
 ```
-Category == Movies && Size > 1073741824            => /media/movies
-Tags.Contains(anime) || Category == Anime          => /media/anime
-State == StalledUpload && Ratio >= 2.0             => /media/seeding/done
-Name == "My Favourite Show" && !Tags.Contains(skip) => /media/shows/favourite
-SeedingTime > 86400                                => /media/archive
+Category == Movies && Size > 1073741824            => /data/media/movies
+Tags.Contains(anime) || Category == Anime          => /data/media/anime
+State == StalledUpload && Ratio >= 2.0             => /data/media/seeding/done
+Name == "My Favourite Show" && !Tags.Contains(skip) => /data/media/shows/favourite
+SeedingTime > 86400                                => /data/media/archive
 ```
 
 ### Conditions
@@ -124,6 +133,46 @@ Other settings:
 ```bash
 docker compose up -d --build
 ```
+
+### Example docker-compose.yml
+
+A minimal deployment using the published image. The single `/data` mount is what makes hard
+links work (see [Storage layout](#storage-layout-one-filesystem-for-downloads-and-destinations)).
+
+```yaml
+services:
+  convy:
+    image: ghcr.io/xcfa/convy:latest
+    container_name: convy
+    restart: unless-stopped
+    env_file: .env                       
+    environment:
+      CONVY_CONNECTIONSTRING: "Data Source=/appdata/convy.db"
+      QBITTORRENT__URL: ""
+      QBITTORRENT__USERNAME: ""
+      QBITTORRENT__PASSWORD: ""
+      QBITTORRENT__SYNCINTERVAL: "01:00:00"
+    volumes:
+      # One filesystem holding downloads AND media as subfolders, mounted at the SAME
+      # absolute path qBittorrent uses for its save path.
+      - /srv/media-stack:/data
+      # Routing rules -> /app/config/ConvyMappings.ini
+      - ./config:/app/config:ro
+      # Persist the link/tracker database across restarts.
+      - convy-db:/appdata
+
+volumes:
+  convy-db:
+```
+
+Notes:
+
+- **qBittorrent must mount the same storage at the same path.** If qBittorrent runs in
+  another container/host, give it the same `/srv/media-stack:/data` mount and let it save
+  under `/data/downloads/...`. Convy then links into `/data/media/...` on the same filesystem.
+- The destinations in `ConvyMappings.ini` must live under that same mount (e.g. `/data/media/...`).
+- Convy's container runs as a fixed non-root user, so the `/data` tree must be readable
+  (downloads) and writable (the destination subtree) by it.
 
 ## Building and testing
 
