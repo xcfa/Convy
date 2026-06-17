@@ -145,10 +145,9 @@ services:
   convy:
     image: ghcr.io/xcfa/convy:latest
     container_name: convy
-    restart: unless-stopped
-    env_file: .env                       
+    restart: unless-stopped                  
     environment:
-      CONVY_CONNECTIONSTRING: "Data Source=/appdata/convy.db"
+      CONVY_CONNECTIONSTRING: "Data Source=/var/lib/convy/convy.db"
       QBITTORRENT__URL: ""
       QBITTORRENT__USERNAME: ""
       QBITTORRENT__PASSWORD: ""
@@ -159,8 +158,8 @@ services:
       - /srv/media-stack:/data
       # Routing rules -> /app/config/rules.yaml
       - ./config:/app/config:ro
-      # Persist the link/tracker database across restarts.
-      - convy-db:/appdata
+      # Persist the database. Optional — without it the db is ephemeral.
+      - convy-db:/var/lib/convy
 
 volumes:
   convy-db:
@@ -172,8 +171,9 @@ Notes:
   another container/host, give it the same `/srv/media-stack:/data` mount and let it save
   under `/data/downloads/...`. Convy then links into `/data/media/...` on the same filesystem.
 - The destinations in `rules.yaml` must live under that same mount (e.g. `/data/media/...`).
-- Convy's container runs as a fixed non-root user, so the `/data` tree must be readable
-  (downloads) and writable (the destination subtree) by it.
+- The image runs as **root** by default and needs no mounts to start. To run as a non-root
+  user, set `user:` in compose — then it's on you to make `/var/lib/convy` (the db) and the
+  `/data` tree writable by that uid (e.g. `chown` them, or use volumes owned by it).
 
 ## Building and testing
 

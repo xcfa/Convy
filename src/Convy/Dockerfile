@@ -3,6 +3,8 @@
 # This stage is used when running from VS in fast mode (Default for Debug configuration).
 # It builds for the host architecture only, so its RUN executes natively.
 FROM mcr.microsoft.com/dotnet/aspnet:10.0 AS base
+# App state directory (SQLite db). This stage is only built locally for VS Fast Mode.
+RUN mkdir -p /var/lib/convy
 WORKDIR /app
 EXPOSE 8080
 EXPOSE 8081
@@ -40,5 +42,10 @@ FROM mcr.microsoft.com/dotnet/aspnet:10.0 AS final
 WORKDIR /app
 EXPOSE 8080
 EXPOSE 8081
+# Create the app state directory (for the SQLite db) via COPY, not RUN, so the stage stays
+# emulation-free for cross-arch builds. The image runs as root by default and works with no
+# mounts (ephemeral db). Running as a non-root user — and making this path and /data
+# writable by it — is the deployer's responsibility.
+COPY --from=build --chown=0:0 --chmod=775 /app/state /var/lib/convy
 COPY --from=build /app/publish .
 ENTRYPOINT ["dotnet", "Convy.dll"]
