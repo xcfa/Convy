@@ -16,6 +16,9 @@ namespace Convy.Data.Entities
 		[MaxLength(2048)]
 		public required string TargetPath { get; set; }
 
+		[MaxLength(1024)]
+		public string? TorrentName { get; set; }
+
 		public DateTimeOffset LinkedDate { get; set; }
 	}
 }

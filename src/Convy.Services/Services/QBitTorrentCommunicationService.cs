@@ -205,6 +205,7 @@ namespace Convy.Services.Services
                     InfoHash = hash,
                     FilePath = name,
                     TargetPath = Path.Combine(targetPath, name),
+                    TorrentName = info.Name,
                     LinkedDate = DateTimeOffset.Now,
                 });
             }
