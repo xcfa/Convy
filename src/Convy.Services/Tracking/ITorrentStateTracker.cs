@@ -27,5 +27,19 @@ namespace Convy.Services.Tracking
         /// persisted baseline to the last observed state so they are not re-emitted.
         /// </summary>
         Task ConfirmProcessedAsync(IEnumerable<string> hashes, CancellationToken cancellationToken);
+
+        /// <summary>
+        /// Marks torrents that matched no rule as skipped (in-memory only). They are not
+        /// re-emitted until their tracked state changes, the rules change
+        /// (<see cref="ClearSkipped"/>), or the process restarts — so a no-rule torrent is
+        /// never persisted as "done" and is re-evaluated cheaply against the latest rules.
+        /// </summary>
+        Task MarkSkippedAsync(IEnumerable<string> hashes, CancellationToken cancellationToken);
+
+        /// <summary>
+        /// Forgets all skipped torrents so they are re-emitted and re-evaluated. Called
+        /// when the routing rules change.
+        /// </summary>
+        Task ClearSkippedAsync(CancellationToken cancellationToken);
     }
 }

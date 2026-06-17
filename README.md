@@ -15,7 +15,7 @@ the first matching rule wins.
    only the ones that have just become *downloaded* (or whose size changed). This state
    is persisted, so a restart does not reprocess everything — only what changed while the
    service was down.
-3. For each reported torrent, Convy evaluates the rules in `ConvyMappings.ini` against the
+3. For each reported torrent, Convy evaluates the rules in `rules.yaml` against the
    torrent's metadata. The first matching rule's path becomes the destination.
 4. Every file that isn't already linked is hard-linked into the destination. Successfully
    linked files are recorded, so the work is idempotent and a transient failure (for
@@ -36,7 +36,7 @@ Two hard requirements, both coming from how hard links work:
    Convy finds nothing to link and keeps retrying.
 2. **Same filesystem (mount) for source and destination.** A hard link cannot cross
    filesystems — the kernel returns `EXDEV` (errno 18) and the link fails. The qBittorrent
-   save path and every destination in `ConvyMappings.ini` must live on the **same mount**.
+   save path and every destination in `rules.yaml` must live on the **same mount**.
 
 The simplest way to satisfy both is a single data volume holding the downloads and the
 media library side by side, mounted at the same path everywhere:
@@ -60,22 +60,22 @@ stat -c '%d %n' /data/downloads /data/media
 
 ## Rule syntax
 
-`ConvyMappings.ini` holds one rule per line:
+Rules live in a YAML file (`rules.yaml`) as an ordered list; the first matching rule wins.
+The file is reloaded automatically when it changes. A torrent that matches no rule is
+skipped and not re-evaluated until the rules change.
 
-```
-<condition>  =>  <output path>
-```
-
-Lines beginning with `#` or `;` are comments. Blank lines are ignored.
-
-Example:
-
-```
-Category == Movies && Size > 1073741824            => /data/media/movies
-Tags.Contains(anime) || Category == Anime          => /data/media/anime
-State == StalledUpload && Ratio >= 2.0             => /data/media/seeding/done
-Name == "My Favourite Show" && !Tags.Contains(skip) => /data/media/shows/favourite
-SeedingTime > 86400                                => /data/media/archive
+```yaml
+rules:
+  - condition: "Category == Movies && Size > 1073741824"
+    path: /data/media/movies
+  - condition: "Tags.Contains(anime) || Category == Anime"
+    path: /data/media/anime
+  - condition: "State == StalledUpload && Ratio >= 2.0"
+    path: /data/media/seeding/done
+  - condition: "Name == \"My Favourite Show\" && !Tags.Contains(skip)"
+    path: /data/media/shows/favourite
+  - condition: "SeedingTime > 86400"
+    path: /data/media/archive
 ```
 
 ### Conditions
@@ -102,8 +102,9 @@ The left-hand side of a comparison is any qBittorrent torrent property. Common o
 | `SeedingTime`, `TimeActive`, `EstimatedTimeArrival` | durations, compared in **seconds** |
 | `AddedOn`, `CompletionOn`, `LastActivity` | timestamps, compared as **unix seconds** |
 
-An unknown property, an illegal operator for a type, or a malformed line fails fast with a
-parse error that names the offending line.
+An unknown property, an illegal operator for a type, or a malformed rule fails fast with a
+parse error that names the offending rule. A parse failure keeps the previously loaded
+rules in effect rather than taking the service down.
 
 ## Configuration
 
@@ -119,7 +120,7 @@ Compose they come from a local `.env` file (see `.env.example`):
 
 Other settings:
 
-- `Convy:MappingsFile` — path to the rules file (default `config/ConvyMappings.ini`)
+- `Convy:RulesPath` — path to the YAML rules file (default `config/rules.yaml`)
 - `ConnectionStrings:SQLite` — EF Core/SQLite connection string for the local database
   that stores linked files and tracker state
 
@@ -127,7 +128,7 @@ Other settings:
 
 1. Copy `.env.example` to `.env` and fill in your qBittorrent details. `.env` is
    git-ignored and never committed.
-2. Provide a `config/ConvyMappings.ini` with your rules.
+2. Provide a `config/rules.yaml` with your rules.
 3. Start it:
 
 ```bash
@@ -156,7 +157,7 @@ services:
       # One filesystem holding downloads AND media as subfolders, mounted at the SAME
       # absolute path qBittorrent uses for its save path.
       - /srv/media-stack:/data
-      # Routing rules -> /app/config/ConvyMappings.ini
+      # Routing rules -> /app/config/rules.yaml
       - ./config:/app/config:ro
       # Persist the link/tracker database across restarts.
       - convy-db:/appdata
@@ -170,7 +171,7 @@ Notes:
 - **qBittorrent must mount the same storage at the same path.** If qBittorrent runs in
   another container/host, give it the same `/srv/media-stack:/data` mount and let it save
   under `/data/downloads/...`. Convy then links into `/data/media/...` on the same filesystem.
-- The destinations in `ConvyMappings.ini` must live under that same mount (e.g. `/data/media/...`).
+- The destinations in `rules.yaml` must live under that same mount (e.g. `/data/media/...`).
 - Convy's container runs as a fixed non-root user, so the `/data` tree must be readable
   (downloads) and writable (the destination subtree) by it.
 

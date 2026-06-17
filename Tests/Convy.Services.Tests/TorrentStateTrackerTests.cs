@@ -263,4 +263,56 @@ public class TorrentStateTrackerTests
         var changes = await Apply(tracker, Sync(false, ("h1", Downloaded, 100)));
         Assert.Equal("h1", Assert.Single(changes));
     }
+
+    [Fact]
+    public async Task SkippedTorrentIsSuppressedUntilCleared()
+    {
+        var store = new FakeStore();
+        var tracker = new TorrentStateTracker(store);
+
+        // First sight: emitted.
+        Assert.Equal("h1", Assert.Single(await Apply(tracker, Sync(true, ("h1", Downloaded, 100)))));
+
+        // Marked skipped (no rule matched) -> not re-emitted while unchanged.
+        await tracker.MarkSkippedAsync(["h1"], CancellationToken.None);
+        Assert.Empty(await Apply(tracker, Sync(true, ("h1", Downloaded, 100))));
+
+        // Rules change -> clear skipped -> re-emitted for re-evaluation.
+        await tracker.ClearSkippedAsync(CancellationToken.None);
+        Assert.Equal("h1", Assert.Single(await Apply(tracker, Sync(true, ("h1", Downloaded, 100)))));
+    }
+
+    [Fact]
+    public async Task SkippedTorrentIsReEmittedWhenItChanges()
+    {
+        var store = new FakeStore();
+        var tracker = new TorrentStateTracker(store);
+
+        Assert.Single(await Apply(tracker, Sync(true, ("h1", Downloaded, 100))));
+        await tracker.MarkSkippedAsync(["h1"], CancellationToken.None);
+
+        // Unchanged -> suppressed.
+        Assert.Empty(await Apply(tracker, Sync(false, ("h1", null, null))));
+
+        // Size changes -> re-emitted.
+        Assert.Equal("h1", Assert.Single(await Apply(tracker, Sync(false, ("h1", null, 200)))));
+    }
+
+    [Fact]
+    public async Task SkippedTorrentIsNotPersistedSoReEvaluatedAfterRestart()
+    {
+        var store = new FakeStore();
+        var tracker = new TorrentStateTracker(store);
+
+        Assert.Single(await Apply(tracker, Sync(true, ("h1", Downloaded, 100))));
+        await tracker.MarkSkippedAsync(["h1"], CancellationToken.None);
+        Assert.Empty(await Apply(tracker, Sync(true, ("h1", Downloaded, 100))));
+
+        // A skipped torrent is never persisted, so it stays out of the store...
+        Assert.False(store.Data.ContainsKey("h1"));
+
+        // ...and a fresh instance (restart) re-emits it for re-evaluation.
+        var restarted = new TorrentStateTracker(store);
+        Assert.Equal("h1", Assert.Single(await Apply(restarted, Sync(true, ("h1", Downloaded, 100)))));
+    }
 }

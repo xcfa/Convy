@@ -1,14 +1,14 @@
-using Convy.PathExpressions.Mappings;
+using Convy.Infrastructure.Helpers;
 using Convy.Services;
+using Convy.Services.Linking;
+using Convy.Services.Rules;
 using Convy.Services.Services;
 using Convy.Services.Tracking;
 using Microsoft.AspNetCore.Builder;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
-using System;
-using System.IO;
-using System.Linq;
+using Microsoft.Extensions.Logging;
 using System.Text.Json.Serialization;
 using System.Threading.Tasks;
 using Convy.Data.Context;
@@ -53,20 +53,21 @@ public class Program
 			}
 		});
 
-		// Output routing rules (ConvyMappings.ini). The path is configurable; if the
-		// file is absent we start with an empty rule set rather than failing to boot.
-		builder.Services.AddSingleton(sp =>
+		// Routing rules: loaded from a YAML file and reloaded when the file changes.
+		builder.Services.AddSingleton<IRulesProvider>(sp =>
 		{
-			var path = builder.Configuration["Convy:MappingsFile"] ?? "config/ConvyMappings.ini";
-			return File.Exists(path)
-				? OutputDirectoryMatcher.FromFile(path)
-				: new OutputDirectoryMatcher(ConvyMappings.Parse(Array.Empty<string>()));
+			var path = builder.Configuration["Convy:RulesPath"] ?? "config/rules.yaml";
+			return new RulesProvider(path, sp.GetRequiredService<ILogger<RulesProvider>>());
 		});
 
 		// State tracking: persists each torrent's completion/size so that after a
 		// restart only torrents that changed while we were down are reprocessed.
 		builder.Services.AddSingleton<ITorrentStateStore, EfTorrentStateStore>();
 		builder.Services.AddSingleton<ITorrentStateTracker, TorrentStateTracker>();
+
+		// Hard-link creation.
+		builder.Services.AddSingleton<IFileLinker, FileLinker>();
+		builder.Services.AddSingleton<FileLinkingService>();
 
 		// Business logic for a single sync cycle (owns the qBittorrent connection).
 		builder.Services.AddSingleton<QBitTorrentCommunicationService>();

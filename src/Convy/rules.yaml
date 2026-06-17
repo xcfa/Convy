@@ -1,0 +1,31 @@
+# Convy routing rules.
+#
+# Rules are evaluated top to bottom; the first matching rule wins. A torrent that
+# matches no rule is skipped until this file changes.
+#
+# condition — the filter DSL:
+#   comparisons:  Size > 100      Ratio >= 1.5      Category == Movies
+#   booleans:     AutoTmmEnabled == true
+#   membership:   Tags.Contains(Test)
+#   logic:        &&   ||   !   ( )
+#   strings:      bare words, or "quoted when they contain spaces"
+#   durations are seconds, timestamps unix-seconds, State matches its name
+#
+# path — destination directory. It must be on the SAME filesystem as the torrent's
+# save path (hard links cannot cross filesystems).
+
+rules:
+  - condition: "Category == Movies && Size > 1073741824"
+    path: /data/media/movies
+
+  - condition: "Tags.Contains(anime) || Category == Anime"
+    path: /data/media/anime
+
+  - condition: "State == StalledUpload && Ratio >= 2.0"
+    path: /data/media/seeding/done
+
+  - condition: "Name == \"My Favourite Show\" && !Tags.Contains(skip)"
+    path: /data/media/shows/favourite
+
+  - condition: "SeedingTime > 86400"
+    path: /data/media/archive

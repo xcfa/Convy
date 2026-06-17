@@ -3,31 +3,32 @@ using Banned.Qbittorrent.Models.Sync;
 namespace Convy.Services.Tracking
 {
     /// <summary>
-    /// Tracks each torrent's download-completion and size. Keeps two views:
+    /// Tracks each torrent's download-completion and size. Keeps three views:
     /// <list type="bullet">
     /// <item><b>observed</b> — the latest state seen from qBittorrent for every known
-    /// torrent (in-memory; seeded from the persisted baseline on startup and updated by
-    /// each sync). It is the merge accumulator for partial updates.</item>
-    /// <item><b>processed</b> — the last state we acted upon, persisted via
-    /// <see cref="ITorrentStateStore"/> so it survives restarts.</item>
+    /// torrent (in-memory; seeded from the persisted baseline on startup). The merge
+    /// accumulator for partial updates.</item>
+    /// <item><b>processed</b> — the last state we acted upon for torrents that matched a
+    /// rule and were linked; persisted via <see cref="ITorrentStateStore"/> so they are
+    /// not reprocessed across restarts.</item>
+    /// <item><b>skipped</b> — torrents that matched no rule. In-memory only and never
+    /// persisted, so after a restart they are re-evaluated against the current rules
+    /// (which may have changed while the app was down).</item>
     /// </list>
-    /// A torrent is reported as changed whenever it is downloaded and its tracked state
-    /// (download flag + size) diverges from processed. The processed baseline is only
-    /// advanced for an emitted change once the consumer confirms it
-    /// (<see cref="ConfirmProcessedAsync"/>); until then the change is re-emitted every
-    /// cycle, so a transient failure (e.g. an unmounted output directory) is retried
-    /// without needing a restart or a further change on the qBittorrent side. Both views
-    /// are pruned together when a torrent is removed (see <see cref="CollectRemoved"/>).
+    /// A torrent is reported as changed when it is downloaded and its tracked state
+    /// diverges from processed, unless it is currently skipped at that same state. The
+    /// processed baseline is only advanced once the consumer confirms a successful link
+    /// (<see cref="ConfirmProcessedAsync"/>); until then the change is re-emitted so a
+    /// transient failure is retried.
     /// </summary>
     public sealed class TorrentStateTracker : ITorrentStateTracker
     {
         private readonly ITorrentStateStore _store;
         private readonly SemaphoreSlim _sync = new(1, 1);
 
-        // Latest observed state for every known torrent; the merge accumulator. Not persisted.
         private readonly Dictionary<string, Snapshot> _observed = new();
+        private readonly Dictionary<string, Snapshot> _skipped = new();
 
-        // Last acted-upon state for every known torrent, mirrored from the store.
         private Dictionary<string, Snapshot>? _processed;
 
         public TorrentStateTracker(ITorrentStateStore store) => _store = store;
@@ -47,6 +48,7 @@ namespace Convy.Services.Tracking
                 {
                     _observed.Remove(hash);
                     _processed!.Remove(hash);
+                    _skipped.Remove(hash);
                 }
 
                 var changes = new List<string>();
@@ -54,14 +56,15 @@ namespace Convy.Services.Tracking
 
                 foreach (var (hash, observed) in _observed)
                 {
+                    // Suppress a no-rule torrent while it hasn't changed since we skipped it.
+                    if (_skipped.TryGetValue(hash, out var skippedAt) && skippedAt == observed)
+                    {
+                        continue;
+                    }
+
                     var hadProcessed = _processed!.TryGetValue(hash, out var processed);
                     var changed = !hadProcessed || processed != observed;
 
-                    // Act only on a downloaded torrent whose tracked state changed. We
-                    // don't care whether it was the completion or a later size change —
-                    // the consumer re-reads info and (re)links missing files regardless.
-                    // Leave the baseline untouched until the consumer confirms it, so a
-                    // failed link is retried next cycle.
                     if (observed.IsDownloaded && changed)
                     {
                         changes.Add(hash);
@@ -69,8 +72,7 @@ namespace Convy.Services.Tracking
                     else if (changed)
                     {
                         // Non-actionable change (e.g. a regression to a non-downloaded
-                        // state): advance the baseline so a later completion is detected
-                        // as a fresh transition.
+                        // state): advance the baseline so a later completion is detected.
                         _processed![hash] = observed;
                         dirty.Add(observed.ToSnapshot(hash));
                     }
@@ -103,6 +105,9 @@ namespace Convy.Services.Tracking
 
                 foreach (var hash in hashes)
                 {
+                    // A confirmed torrent matched a rule, so it is no longer skipped.
+                    _skipped.Remove(hash);
+
                     if (!_observed.TryGetValue(hash, out var observed))
                     {
                         continue;
@@ -116,6 +121,42 @@ namespace Convy.Services.Tracking
                 }
 
                 await _store.UpsertAsync(dirty, cancellationToken);
+            }
+            finally
+            {
+                _sync.Release();
+            }
+        }
+
+        public async Task MarkSkippedAsync(IEnumerable<string> hashes, CancellationToken cancellationToken)
+        {
+            await _sync.WaitAsync(cancellationToken);
+
+            try
+            {
+                await EnsureLoadedAsync(cancellationToken);
+
+                foreach (var hash in hashes)
+                {
+                    if (_observed.TryGetValue(hash, out var observed))
+                    {
+                        _skipped[hash] = observed;
+                    }
+                }
+            }
+            finally
+            {
+                _sync.Release();
+            }
+        }
+
+        public async Task ClearSkippedAsync(CancellationToken cancellationToken)
+        {
+            await _sync.WaitAsync(cancellationToken);
+
+            try
+            {
+                _skipped.Clear();
             }
             finally
             {

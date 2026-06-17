@@ -17,59 +17,79 @@ public class ConvyMappingsTests
     [Fact]
     public void FirstMatchingRuleWins()
     {
-        var mappings = ConvyMappings.Parse(
-        [
-            "# routing rules",
-            "Category == Movies        => D:\\Movies",
-            "Tags.Contains(anime)      => D:\\Anime",
-            "Size > 0                  => D:\\Fallback",
-        ]);
+        var mappings = ConvyMappings.ParseYaml(
+            """
+            rules:
+              - condition: "Category == Movies"
+                path: /data/media/movies
+              - condition: "Tags.Contains(anime)"
+                path: /data/media/anime
+              - condition: "Size > 0"
+                path: /data/media/fallback
+            """);
 
-        Assert.Equal("D:\\Anime", mappings.Resolve(Anime()));
+        Assert.Equal("/data/media/anime", mappings.Resolve(Anime()));
     }
 
     [Fact]
     public void ReturnsNullWhenNoRuleMatches()
     {
-        var mappings = ConvyMappings.Parse(["Category == Movies => D:\\Movies"]);
+        var mappings = ConvyMappings.ParseYaml(
+            """
+            rules:
+              - condition: "Category == Movies"
+                path: /data/media/movies
+            """);
+
         Assert.Null(mappings.Resolve(Anime()));
     }
 
     [Fact]
-    public void CommentsAndBlankLinesAreIgnored()
+    public void EmptyDocumentYieldsNoRules()
     {
-        var mappings = ConvyMappings.Parse(
-        [
-            "",
-            "# a comment",
-            "; another comment",
-            "   ",
-            "Size > 0 => D:\\Out",
-        ]);
-
-        Assert.Single(mappings.Rules);
-        Assert.Equal(1, mappings.Rules.Count);
+        Assert.Empty(ConvyMappings.ParseYaml("").Rules);
+        Assert.Empty(ConvyMappings.ParseYaml("rules: []").Rules);
     }
 
     [Fact]
-    public void MissingSeparatorThrowsWithLineNumber()
+    public void MissingConditionThrows()
     {
-        var ex = Assert.Throws<FilterParseException>(() =>
-            ConvyMappings.Parse(["Size > 0 D:\\Out"]));
-        Assert.Contains("Line 1", ex.Message);
+        var ex = Assert.Throws<FilterParseException>(() => ConvyMappings.ParseYaml(
+            """
+            rules:
+              - path: /data/media/movies
+            """));
+        Assert.Contains("Rule #1", ex.Message);
     }
 
     [Fact]
-    public void EmptyOutputPathThrows()
+    public void MissingPathThrows()
     {
-        Assert.Throws<FilterParseException>(() => ConvyMappings.Parse(["Size > 0 =>   "]));
+        var ex = Assert.Throws<FilterParseException>(() => ConvyMappings.ParseYaml(
+            """
+            rules:
+              - condition: "Size > 0"
+            """));
+        Assert.Contains("Rule #1", ex.Message);
     }
 
     [Fact]
-    public void BadConditionReportsLineNumber()
+    public void BadConditionReportsRuleIndex()
     {
-        var ex = Assert.Throws<FilterParseException>(() =>
-            ConvyMappings.Parse(["Bogus == 1 => D:\\Out"]));
-        Assert.Contains("Line 1", ex.Message);
+        var ex = Assert.Throws<FilterParseException>(() => ConvyMappings.ParseYaml(
+            """
+            rules:
+              - condition: "Category == Movies"
+                path: /data/media/movies
+              - condition: "Bogus == 1"
+                path: /data/media/bogus
+            """));
+        Assert.Contains("Rule #2", ex.Message);
+    }
+
+    [Fact]
+    public void InvalidYamlThrows()
+    {
+        Assert.Throws<FilterParseException>(() => ConvyMappings.ParseYaml("rules: [ unclosed"));
     }
 }

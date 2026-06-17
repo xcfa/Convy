@@ -37,7 +37,7 @@ namespace Convy.Data.Migrations
 
                     b.HasKey("InfoHash", "FilePath");
 
-                    b.ToTable("FileEntries");
+                    b.ToTable("FileEntries", (string)null);
                 });
 
             modelBuilder.Entity("Convy.Data.Entities.TorrentStateEntry", b =>
@@ -57,7 +57,7 @@ namespace Convy.Data.Migrations
 
                     b.HasKey("InfoHash");
 
-                    b.ToTable("TorrentStates");
+                    b.ToTable("TorrentStates", (string)null);
                 });
 #pragma warning restore 612, 618
         }
