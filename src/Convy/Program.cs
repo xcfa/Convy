@@ -1,10 +1,12 @@
 using Convy.Configuration;
 using Convy.Infrastructure.Helpers;
+using Convy.Middleware;
 using Convy.Services;
 using Convy.Services.Files;
 using Convy.Services.Linking;
 using Convy.Services.Sync;
 using Convy.Services.Rules;
+using Convy.Services.Security;
 using Convy.Services.Services;
 using Convy.Services.Settings;
 using Convy.Services.Tracking;
@@ -52,6 +54,22 @@ public class Program
 		builder.Services
 			.AddOptions<UserSettings>()
 			.Bind(builder.Configuration.GetSection("UserSettings"));
+
+		// IP allow-list for incoming requests. PostConfigure applies the built-in
+		// defaults only when nothing is configured (binding a list would otherwise
+		// merge config entries with the defaults by index).
+		builder.Services
+			.AddOptions<IpAccessControlOptions>()
+			.Bind(builder.Configuration.GetSection(IpAccessControlOptions.SectionName))
+			.PostConfigure(options =>
+			{
+				if (options.AllowedNetworks.Count == 0)
+				{
+					options.AllowedNetworks = new List<string>(IpAccessControlOptions.DefaultAllowedNetworks);
+				}
+			});
+
+		builder.Services.AddSingleton<IClientIpValidator, ClientIpValidator>();
 
 		builder.Services.AddSingleton<IValidateOptions<QBitTorrentConnectionSettings>, ValidateQBitTorrentConnectionSettings>();
 
@@ -141,6 +159,10 @@ public class Program
 
 
 		// ── HTTP pipeline ────────────────────────────────────────────────────
+
+		// Reject clients outside the configured IP allow-list before anything else.
+		app.UseMiddleware<IpAccessControlMiddleware>();
+
 		if (app.Environment.IsDevelopment())
 		{
 			// Serve the OpenAPI JSON (Microsoft.AspNetCore.OpenApi) at /openapi/v1.json …

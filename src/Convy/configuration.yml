@@ -13,6 +13,22 @@
 #   Webhooks__0__Url=https://example.com/hook
 #   Webhooks__0__Name=My hook
 
+# IP allow-list: only requests from these addresses are accepted (others get 403).
+# Each entry is a single IP or a CIDR range. When this section is omitted the
+# built-in defaults apply: 127.0.0.1, ::1, 192.168.0.0/16, 172.16.0.0/12
+# (the last covers Docker bridge networks). Specifying the section REPLACES the
+# defaults, so include loopback/LAN explicitly if you still need them.
+# Environment variable alternative:
+#   IpAccessControl__AllowedNetworks__0=127.0.0.1
+#   IpAccessControl__AllowedNetworks__1=10.0.0.0/8
+
+# ipAccessControl:
+#   allowedNetworks:
+#     - 127.0.0.1
+#     - ::1
+#     - 192.168.0.0/16
+#     - 172.16.0.0/12
+
 # webhooks:
 #   - name: Send to telegram
 #     url: https://tg-proxy.example.com/34234324
