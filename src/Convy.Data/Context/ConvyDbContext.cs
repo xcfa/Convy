@@ -9,7 +9,7 @@ namespace Convy.Data.Context
 
 		public DbSet<TorrentStateEntry> TorrentStates => Set<TorrentStateEntry>();
 
-		public ConvyDbContext(DbContextOptions<ConvyDbContext> context) 
+		public ConvyDbContext(DbContextOptions<ConvyDbContext> context)
 			: base(context)
 		{
 

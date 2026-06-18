@@ -1,8 +1,12 @@
+using Convy.Configuration;
 using Convy.Infrastructure.Helpers;
 using Convy.Services;
+using Convy.Services.Files;
 using Convy.Services.Linking;
+using Convy.Services.Sync;
 using Convy.Services.Rules;
 using Convy.Services.Services;
+using Convy.Services.Settings;
 using Convy.Services.Tracking;
 using Convy.Services.Webhooks;
 using Microsoft.AspNetCore.Builder;
@@ -31,12 +35,12 @@ public class Program
 		builder.Configuration.AddYamlFile("config/configuration.yml", optional: true, reloadOnChange: true);
 		builder.Configuration.AddEnvironmentVariables();
 		builder.Configuration.AddKeyPerFile("/run/secrets", optional: true);  // секреты перекрывают env
+		var dbConfigSource = builder.Configuration.AddDbConfiguration();
 		builder.Configuration.AddCommandLine(args);
 
 		builder.Services
 			.AddControllers()
 			.AddJsonOptions(options =>
-				// Serialize enums as their names ("Container", "Ru") instead of numbers.
 				options.JsonSerializerOptions.Converters.Add(new JsonStringEnumConverter()));
 
 		builder.Services
@@ -45,11 +49,31 @@ public class Program
 			.ValidateDataAnnotations()
 			.ValidateOnStart();
 
+		builder.Services
+			.AddOptions<UserSettings>()
+			.Bind(builder.Configuration.GetSection("UserSettings"));
+
 		builder.Services.AddSingleton<IValidateOptions<QBitTorrentConnectionSettings>, ValidateQBitTorrentConnectionSettings>();
+
+		var connectionString = builder.Configuration.GetConnectionString("SQLite");
 
 		builder.Services.AddDbContextFactory<ConvyDbContext>(dbBuilder =>
 		{
-			dbBuilder.UseSqlite(builder.Configuration.GetConnectionString("SQLite"));
+			dbBuilder.UseSqlite(connectionString);
+
+			if (builder.Environment.IsDevelopment())
+			{
+				dbBuilder.EnableSensitiveDataLogging();
+			}
+		});
+
+		// User settings live in the same SQLite file but a dedicated context, so
+		// they keep their own migrations history table (otherwise the two contexts
+		// would clash over __EFMigrationsHistory).
+		builder.Services.AddDbContextFactory<SettingsDbContext>(dbBuilder =>
+		{
+			dbBuilder.UseSqlite(connectionString,
+				sqlite => sqlite.MigrationsHistoryTable("__EFMigrationsHistorySettings"));
 
 			if (builder.Environment.IsDevelopment())
 			{
@@ -87,13 +111,32 @@ public class Program
 		// Business logic for a single sync cycle (owns the qBittorrent connection).
 		builder.Services.AddSingleton<QBitTorrentCommunicationService>();
 
-		builder.Services.AddHostedService<QBitTorrentSyncService>();
+		// User settings persistence: writes to DB and triggers config provider reload.
+		builder.Services.AddSingleton<IUserSettingsService>(sp =>
+		{
+			var dbFactory = sp.GetRequiredService<IDbContextFactory<SettingsDbContext>>();
+			return new UserSettingsService(dbFactory, () => dbConfigSource.Provider?.Reload());
+		});
+
+		// Controller-facing services: all endpoint logic lives here, controllers only delegate.
+		builder.Services.AddScoped<IFileEntryQueryService, FileEntryQueryService>();
+		builder.Services.AddSingleton<ISyncControlService, SyncControlService>();
+
+		// Background sync loop — registered as singleton for DI + hosted service.
+		builder.Services.AddSingleton<QBitTorrentSyncService>();
+		builder.Services.AddSingleton<ISyncTrigger>(sp => sp.GetRequiredService<QBitTorrentSyncService>());
+		builder.Services.AddHostedService(sp => sp.GetRequiredService<QBitTorrentSyncService>());
 
 		var app = builder.Build();
 
 		await using (var db = await app.Services.GetRequiredService<IDbContextFactory<ConvyDbContext>>().CreateDbContextAsync())
 		{
 			await db.Database.MigrateAsync();
+		}
+
+		await using (var settingsDb = await app.Services.GetRequiredService<IDbContextFactory<SettingsDbContext>>().CreateDbContextAsync())
+		{
+			await settingsDb.Database.MigrateAsync();
 		}
 
 
