@@ -4,12 +4,17 @@ using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Configuration;
 using System;
 using System.Collections.Generic;
+using System.Threading;
+using System.Threading.Tasks;
 
 namespace Convy.Configuration;
 
 /// <summary>
 /// Reads the <c>UserSettings</c> table and exposes each row as
-/// <c>UserSettings:{Key}</c> in the configuration tree.
+/// <c>UserSettings:{Key}</c> in the configuration tree. The database is read
+/// asynchronously via <see cref="ReloadAsync"/>; the synchronous
+/// <see cref="Load"/> required by the configuration contract is intentionally a
+/// no-op so that building configuration never blocks on database I/O.
 /// </summary>
 public sealed class DbConfigurationProvider : ConfigurationProvider
 {
@@ -20,7 +25,18 @@ public sealed class DbConfigurationProvider : ConfigurationProvider
         _connectionString = connectionString;
     }
 
+    /// <summary>
+    /// No-op. <see cref="IConfigurationProvider"/> loads synchronously, but we never
+    /// block on the database. Values are populated by <see cref="ReloadAsync"/> once
+    /// the host has started (and migrations have created the table), and again after
+    /// each settings write.
+    /// </summary>
     public override void Load()
+    {
+    }
+
+    /// <summary>Reads the table asynchronously, replaces the data and fires change tokens.</summary>
+    public async Task ReloadAsync(CancellationToken cancellationToken = default)
     {
         var data = new Dictionary<string, string?>(StringComparer.OrdinalIgnoreCase);
 
@@ -30,11 +46,14 @@ public sealed class DbConfigurationProvider : ConfigurationProvider
                 .UseSqlite(_connectionString)
                 .Options;
 
-            using var db = new SettingsDbContext(options);
+            await using var db = new SettingsDbContext(options);
 
-            // ConfigurationProvider.Load is synchronous (it runs while the
-            // configuration root is being built), so the read must be sync too.
-            foreach (var entry in db.UserSettings.AsNoTracking())
+            var entries = await db.UserSettings
+                .AsNoTracking()
+                .ToListAsync(cancellationToken)
+                .ConfigureAwait(false);
+
+            foreach (var entry in entries)
             {
                 data[$"UserSettings:{entry.Key}"] = entry.Value;
             }
@@ -45,12 +64,6 @@ public sealed class DbConfigurationProvider : ConfigurationProvider
         }
 
         Data = data;
-    }
-
-    /// <summary>Re-reads the table and fires change tokens.</summary>
-    public void Reload()
-    {
-        Load();
         OnReload();
     }
 }

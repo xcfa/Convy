@@ -3,8 +3,8 @@
 # This stage is used when running from VS in fast mode (Default for Debug configuration).
 # It builds for the host architecture only, so its RUN executes natively.
 FROM mcr.microsoft.com/dotnet/aspnet:10.0 AS base
-# App state directory (SQLite db). This stage is only built locally for VS Fast Mode.
-RUN mkdir -p /var/lib/convy
+# App state directory (SQLite db) and log directory. This stage is only built locally for VS Fast Mode.
+RUN mkdir -p /var/lib/convy /var/log/convy
 WORKDIR /app
 EXPOSE 8080
 EXPOSE 8081
@@ -32,9 +32,9 @@ COPY . .
 RUN DOTNET_ARCH="$(echo "$TARGETARCH" | sed 's/amd64/x64/')" \
  && dotnet publish "src/Convy/Convy.csproj" -c "$BUILD_CONFIGURATION" -a "$DOTNET_ARCH" -o /app/publish /p:UseAppHost=false
 
-# Stage an (app-owned) data directory to copy into the final image without a RUN, so the
+# Stage app-owned data and log directories to copy into the final image without a RUN, so the
 # final, target-arch stage executes no foreign code.
-RUN mkdir -p /app/state && touch /app/state/.keep
+RUN mkdir -p /app/state /app/logs && touch /app/state/.keep /app/logs/.keep
 
 # Final, target-architecture image. Contains only COPY/metadata — no RUN — so it needs
 # no emulation when built for a foreign architecture.
@@ -47,5 +47,7 @@ EXPOSE 8081
 # mounts (ephemeral db). Running as a non-root user — and making this path and /data
 # writable by it — is the deployer's responsibility.
 COPY --from=build --chown=0:0 --chmod=775 /app/state /var/lib/convy
+# Log directory (access.log / error.log). Same non-root-writability caveat as /var/lib/convy.
+COPY --from=build --chown=0:0 --chmod=775 /app/logs /var/log/convy
 COPY --from=build /app/publish .
 ENTRYPOINT ["dotnet", "Convy.dll"]

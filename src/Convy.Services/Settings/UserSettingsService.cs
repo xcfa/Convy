@@ -12,9 +12,9 @@ namespace Convy.Services.Settings;
 public sealed class UserSettingsService : IUserSettingsService
 {
     private readonly IDbContextFactory<SettingsDbContext> _dbFactory;
-    private readonly Action _onSettingsChanged;
+    private readonly Func<CancellationToken, Task> _onSettingsChanged;
 
-    public UserSettingsService(IDbContextFactory<SettingsDbContext> dbFactory, Action onSettingsChanged)
+    public UserSettingsService(IDbContextFactory<SettingsDbContext> dbFactory, Func<CancellationToken, Task> onSettingsChanged)
     {
         _dbFactory = dbFactory;
         _onSettingsChanged = onSettingsChanged;
@@ -39,7 +39,7 @@ public sealed class UserSettingsService : IUserSettingsService
 
         await db.SaveChangesAsync(cancellationToken).ConfigureAwait(false);
 
-        _onSettingsChanged();
+        await _onSettingsChanged(cancellationToken).ConfigureAwait(false);
     }
 
     private static async Task UpsertAsync(

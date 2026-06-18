@@ -13,6 +13,48 @@
 #   Webhooks__0__Url=https://example.com/hook
 #   Webhooks__0__Name=My hook
 
+# ── Logging (Serilog) ──────────────────────────────────────────────────────
+# Console output and baseline levels are configured in code (always on, so Docker
+# stdout is never lost). This section ADDS the file sinks: everything goes to
+# access.log, and Warning/Error/Fatal additionally go to error.log. Files grow
+# unbounded — set up rotation yourself (logrotate with `copytruncate`, since the
+# process keeps the file handle open).
+serilog:
+  using:
+    - Serilog.Sinks.Async
+    - Serilog.Sinks.File
+    # - Serilog.Sinks.Seq      # uncomment together with the Seq sink below
+  minimumLevel:
+    default: Information
+    override:
+      Microsoft.AspNetCore: Warning
+  writeTo:
+    # Async wrapper: file writes run on a background worker so logging calls never
+    # block on disk I/O. Buffered events are flushed on shutdown by the
+    # Log.CloseAndFlushAsync() in Program.cs.
+    - name: Async
+      args:
+        configure:
+          - name: File
+            args:
+              path: /var/log/convy/access.log
+              outputTemplate: "{Timestamp:yyyy-MM-dd HH:mm:ss.fff zzz} [{Level:u3}] {SourceContext} {Message:lj}{NewLine}{Exception}"
+          - name: File
+            args:
+              path: /var/log/convy/error.log
+              restrictedToMinimumLevel: Warning
+              outputTemplate: "{Timestamp:yyyy-MM-dd HH:mm:ss.fff zzz} [{Level:u3}] {SourceContext} {Message:lj}{NewLine}{Exception}"
+    # Seq — structured log server. DISABLED by default; uncomment this entry and the
+    # `Serilog.Sinks.Seq` line under `using` above. Example docker-compose service:
+    #   seq:
+    #     image: datalust/seq
+    #     environment: { ACCEPT_EULA: "Y" }
+    #     ports: ["5341:80"]
+    # - name: Seq
+    #   args:
+    #     serverUrl: http://seq:5341
+    #     # apiKey: your-optional-api-key
+
 # IP allow-list: only requests from these addresses are accepted (others get 403).
 # Each entry is a single IP or a CIDR range. When this section is omitted the
 # built-in defaults apply: 127.0.0.1, ::1, 192.168.0.0/16, 172.16.0.0/12

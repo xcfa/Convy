@@ -16,6 +16,7 @@ using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging;
+using System;
 using System.Collections.Generic;
 using System.Net.Http;
 using System.Text.Json.Serialization;
@@ -23,6 +24,8 @@ using System.Threading.Tasks;
 using Convy.Data.Context;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Options;
+using Serilog;
+using Serilog.Events;
 
 namespace Convy;
 
@@ -30,6 +33,11 @@ public class Program
 {
 	public static async Task Main(string[] args)
 	{
+		// Capture failures during host construction until the full logger is built.
+		Log.Logger = new LoggerConfiguration()
+			.WriteTo.Console()
+			.CreateBootstrapLogger();
+
 		var builder = WebApplication.CreateBuilder(args);
 
 		builder.Configuration.AddJsonFile("config/appsettings.json", optional: true, reloadOnChange: true);
@@ -39,6 +47,16 @@ public class Program
 		builder.Configuration.AddKeyPerFile("/run/secrets", optional: true);  // секреты перекрывают env
 		var dbConfigSource = builder.Configuration.AddDbConfiguration();
 		builder.Configuration.AddCommandLine(args);
+
+		// Console and baseline levels are configured here so Docker stdout always works,
+		// even if the config file is missing. File sinks and Seq are added from the
+		// `Serilog` section of configuration.yml via ReadFrom.Configuration.
+		builder.Host.UseSerilog((context, loggerConfiguration) => loggerConfiguration
+			.MinimumLevel.Information()
+			.MinimumLevel.Override("Microsoft.AspNetCore", LogEventLevel.Warning)
+			.Enrich.FromLogContext()
+			.WriteTo.Console()
+			.ReadFrom.Configuration(context.Configuration));
 
 		builder.Services
 			.AddControllers()
@@ -133,7 +151,8 @@ public class Program
 		builder.Services.AddSingleton<IUserSettingsService>(sp =>
 		{
 			var dbFactory = sp.GetRequiredService<IDbContextFactory<SettingsDbContext>>();
-			return new UserSettingsService(dbFactory, () => dbConfigSource.Provider?.Reload());
+			return new UserSettingsService(dbFactory,
+				ct => dbConfigSource.Provider?.ReloadAsync(ct) ?? Task.CompletedTask);
 		});
 
 		// Controller-facing services: all endpoint logic lives here, controllers only delegate.
@@ -155,6 +174,13 @@ public class Program
 		await using (var settingsDb = await app.Services.GetRequiredService<IDbContextFactory<SettingsDbContext>>().CreateDbContextAsync())
 		{
 			await settingsDb.Database.MigrateAsync();
+		}
+
+		// Load DB-backed settings now that the table exists — async, so startup never
+		// blocks on the database. Subsequent writes refresh it via UserSettingsService.
+		if (dbConfigSource.Provider is not null)
+		{
+			await dbConfigSource.Provider.ReloadAsync();
 		}
 
 
@@ -187,6 +213,18 @@ public class Program
 
 		app.MapControllers();
 
-		await app.RunAsync();
+		try
+		{
+			await app.RunAsync();
+		}
+		catch (Exception ex)
+		{
+			Log.Fatal(ex, "Convy terminated unexpectedly");
+			throw;
+		}
+		finally
+		{
+			await Log.CloseAndFlushAsync();
+		}
 	}
 }
