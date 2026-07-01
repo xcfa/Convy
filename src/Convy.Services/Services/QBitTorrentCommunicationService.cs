@@ -195,7 +195,7 @@ namespace Convy.Services.Services
             }
 
             // Only hand the linker the files we haven't linked yet.
-            var pending = files.Select(f => f.Name).Where(name => !alreadyLinked.Contains(name));
+            var pending = files.Where(x => Math.Abs(x.Progress - 1) < 0.001).Select(f => f.Name).Where(name => !alreadyLinked.Contains(name));
             var outcome = _linkingService.LinkFiles(info.SavePath, targetPath, pending);
 
             foreach (var name in outcome.NewlyLinked)
