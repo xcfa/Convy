@@ -37,9 +37,18 @@ public sealed class WebhookNotifier : IWebhookNotifier
 
         foreach (var webhook in _webhooks)
         {
+            var linked = FilterLinked(webhook, batch.Linked);
+
+            // Skip webhooks whose rule filter matched nothing this cycle and
+            // that have no errors to report.
+            if (linked.Count == 0 && batch.Errors.Count == 0)
+            {
+                continue;
+            }
+
             try
             {
-                await SendAsync(webhook, batch, cancellationToken).ConfigureAwait(false);
+                await SendAsync(webhook, linked, batch.Errors, cancellationToken).ConfigureAwait(false);
                 _logger.LogInformation("Webhook '{Name}' sent successfully.", webhook.Name ?? webhook.Url);
             }
             catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
@@ -53,16 +62,35 @@ public sealed class WebhookNotifier : IWebhookNotifier
         }
     }
 
+    /// <summary>
+    /// Selects the linked items a webhook should receive. A webhook with an
+    /// empty <see cref="WebhookConfig.Names"/> list receives every linked item;
+    /// otherwise only items routed by a rule whose name is in the list.
+    /// </summary>
+    private static List<WebhookLinkedItem> FilterLinked(
+        WebhookConfig webhook, IReadOnlyList<WebhookLinkedItem> linked)
+    {
+        if (webhook.Names is not { Count: > 0 } names)
+        {
+            return [.. linked];
+        }
+
+        return linked
+            .Where(l => l.RuleName is not null && names.Contains(l.RuleName))
+            .ToList();
+    }
+
     private async Task SendAsync(
         WebhookConfig webhook,
-        WebhookBatch batch,
+        IReadOnlyList<WebhookLinkedItem> linked,
+        IReadOnlyList<WebhookError> errors,
         CancellationToken cancellationToken)
     {
         var hasExplicitParams = webhook.Params is { Count: > 0 };
         var queryParams = new Dictionary<string, string>();
 
         var linkedItems = new List<Dictionary<string, string>>();
-        foreach (var properties in batch.Linked)
+        foreach (var (_, properties) in linked)
         {
             var item = new Dictionary<string, string>();
 
@@ -92,7 +120,7 @@ public sealed class WebhookNotifier : IWebhookNotifier
             linkedItems.Add(item);
         }
 
-        var errorItems = batch.Errors.Select(e => new Dictionary<string, string>
+        var errorItems = errors.Select(e => new Dictionary<string, string>
         {
             ["hash"] = e.Hash,
             ["error"] = e.Message,

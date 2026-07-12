@@ -40,11 +40,12 @@ public class WebhookNotifierTests
 
     private static WebhookBatch BatchWith(
         IReadOnlyDictionary<string, string>[]? linked = null,
-        WebhookError[]? errors = null)
+        WebhookError[]? errors = null,
+        string? ruleName = null)
     {
         var batch = new WebhookBatch();
         if (linked is not null)
-            foreach (var item in linked) batch.Linked.Add(item);
+            foreach (var item in linked) batch.AddLinked(ruleName, item);
         if (errors is not null)
             foreach (var err in errors) batch.Errors.Add(err);
         return batch;
@@ -253,6 +254,141 @@ public class WebhookNotifierTests
         var (_, uri, _) = handler.Requests[0];
         Assert.Contains("token=secret", uri.Query);
         Assert.Contains("h=abc123", uri.Query);
+    }
+
+    [Fact]
+    public async Task Names_FilterLinkedItemsByRule()
+    {
+        var handler = new FakeHandler();
+        var config = new WebhookConfig
+        {
+            Url = "https://example.com/hook",
+            Names = ["anime"],
+        };
+
+        var batch = new WebhookBatch();
+        batch.AddLinked("movies", Torrent1);
+        batch.AddLinked("anime", Torrent2);
+
+        var notifier = Create([config], handler);
+        await notifier.NotifyAsync(batch, CancellationToken.None);
+
+        Assert.Single(handler.Requests);
+        var json = JsonSerializer.Deserialize<JsonElement>(handler.Requests[0].Body!);
+        var linked = json.GetProperty("linked");
+        Assert.Equal(1, linked.GetArrayLength());
+        Assert.Equal("def456", linked[0].GetProperty("hash").GetString());
+    }
+
+    [Fact]
+    public async Task EmptyNames_ReceivesAllRules()
+    {
+        var handler = new FakeHandler();
+        var config = new WebhookConfig { Url = "https://example.com/hook" };
+
+        var batch = new WebhookBatch();
+        batch.AddLinked("movies", Torrent1);
+        batch.AddLinked("anime", Torrent2);
+
+        var notifier = Create([config], handler);
+        await notifier.NotifyAsync(batch, CancellationToken.None);
+
+        Assert.Single(handler.Requests);
+        var json = JsonSerializer.Deserialize<JsonElement>(handler.Requests[0].Body!);
+        Assert.Equal(2, json.GetProperty("linked").GetArrayLength());
+    }
+
+    [Fact]
+    public async Task Names_NoMatchAndNoErrors_WebhookNotCalled()
+    {
+        var handler = new FakeHandler();
+        var config = new WebhookConfig
+        {
+            Url = "https://example.com/hook",
+            Names = ["tv"],
+        };
+
+        var batch = new WebhookBatch();
+        batch.AddLinked("movies", Torrent1);
+
+        var notifier = Create([config], handler);
+        await notifier.NotifyAsync(batch, CancellationToken.None);
+
+        Assert.Empty(handler.Requests);
+    }
+
+    [Fact]
+    public async Task Names_NoMatchButErrors_WebhookStillCalledWithErrorsOnly()
+    {
+        var handler = new FakeHandler();
+        var config = new WebhookConfig
+        {
+            Url = "https://example.com/hook",
+            Names = ["tv"],
+        };
+
+        var batch = new WebhookBatch();
+        batch.AddLinked("movies", Torrent1);
+        batch.Errors.Add(new WebhookError("bad789", "Boom"));
+
+        var notifier = Create([config], handler);
+        await notifier.NotifyAsync(batch, CancellationToken.None);
+
+        Assert.Single(handler.Requests);
+        var json = JsonSerializer.Deserialize<JsonElement>(handler.Requests[0].Body!);
+        Assert.Equal(0, json.GetProperty("linked").GetArrayLength());
+        Assert.Equal(1, json.GetProperty("errors").GetArrayLength());
+    }
+
+    [Fact]
+    public async Task Names_RouteDifferentRulesToDifferentWebhooks()
+    {
+        var handler = new FakeHandler();
+        var configs = new List<WebhookConfig>
+        {
+            new() { Url = "https://example.com/movies", Names = ["movies"] },
+            new() { Url = "https://example.com/anime", Names = ["anime"] },
+        };
+
+        var batch = new WebhookBatch();
+        batch.AddLinked("movies", Torrent1);
+        batch.AddLinked("anime", Torrent2);
+
+        var notifier = Create(configs, handler);
+        await notifier.NotifyAsync(batch, CancellationToken.None);
+
+        Assert.Equal(2, handler.Requests.Count);
+
+        var moviesReq = handler.Requests.Single(r => r.Uri.ToString().Contains("/movies"));
+        var moviesJson = JsonSerializer.Deserialize<JsonElement>(moviesReq.Body!);
+        var moviesLinked = moviesJson.GetProperty("linked");
+        Assert.Equal(1, moviesLinked.GetArrayLength());
+        Assert.Equal("abc123", moviesLinked[0].GetProperty("hash").GetString());
+
+        var animeReq = handler.Requests.Single(r => r.Uri.ToString().Contains("/anime"));
+        var animeJson = JsonSerializer.Deserialize<JsonElement>(animeReq.Body!);
+        var animeLinked = animeJson.GetProperty("linked");
+        Assert.Equal(1, animeLinked.GetArrayLength());
+        Assert.Equal("def456", animeLinked[0].GetProperty("hash").GetString());
+    }
+
+    [Fact]
+    public async Task UnnamedRule_OnlyReachesUnfilteredWebhooks()
+    {
+        var handler = new FakeHandler();
+        var config = new WebhookConfig
+        {
+            Url = "https://example.com/hook",
+            Names = ["movies"],
+        };
+
+        // Rule name is null (unnamed rule) -> should not match a scoped webhook.
+        var batch = BatchWith([Torrent1], ruleName: null);
+
+        var notifier = Create([config], handler);
+        await notifier.NotifyAsync(batch, CancellationToken.None);
+
+        Assert.Empty(handler.Requests);
     }
 
     internal sealed class FakeHandler : HttpMessageHandler

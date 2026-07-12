@@ -3,6 +3,9 @@
 # Rules are evaluated top to bottom; the first matching rule wins. A torrent that
 # matches no rule is skipped until this file changes.
 #
+# name — optional. Used to scope webhooks to specific rules (see webhooks.names
+#   in configuration.yml). Rules without a name only reach webhooks that have no
+#   names filter.
 # condition — the filter DSL:
 #   comparisons:  Size > 100      Ratio >= 1.5      Category == Movies
 #   booleans:     AutoTmmEnabled == true
@@ -15,10 +18,12 @@
 # save path (hard links cannot cross filesystems).
 
 rules:
-  - condition: "Category == Movies && Size > 1073741824"
+  - name: movies
+    condition: "Category == Movies && Size > 1073741824"
     path: /data/media/movies
 
-  - condition: "Tags.Contains(anime) || Category == Anime"
+  - name: anime
+    condition: "Tags.Contains(anime) || Category == Anime"
     path: /data/media/anime
 
   - condition: "State == StalledUpload && Ratio >= 2.0"

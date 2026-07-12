@@ -12,6 +12,12 @@ public sealed class MappingRule
     public required IExpression Condition { get; init; }
     public required string OutputPath { get; init; }
 
+    /// <summary>
+    /// Optional rule name. Used to scope webhooks to specific rules; <c>null</c>
+    /// when the rule is unnamed.
+    /// </summary>
+    public string? Name { get; init; }
+
     /// <summary>The original condition text, kept for logging / diagnostics.</summary>
     public required string RawCondition { get; init; }
 

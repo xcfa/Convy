@@ -66,9 +66,11 @@ skipped and not re-evaluated until the rules change.
 
 ```yaml
 rules:
-  - condition: "Category == Movies && Size > 1073741824"
+  - name: movies                                  # optional; lets webhooks target this rule
+    condition: "Category == Movies && Size > 1073741824"
     path: /data/media/movies
-  - condition: "Tags.Contains(anime) || Category == Anime"
+  - name: anime
+    condition: "Tags.Contains(anime) || Category == Anime"
     path: /data/media/anime
   - condition: "State == StalledUpload && Ratio >= 2.0"
     path: /data/media/seeding/done
@@ -77,6 +79,9 @@ rules:
   - condition: "SeedingTime > 86400"
     path: /data/media/archive
 ```
+
+The optional `name` on a rule lets you scope webhooks to specific rules — see
+[Webhooks](#webhooks).
 
 ### Conditions
 
@@ -143,8 +148,10 @@ results at once. Configured in `config/configuration.yml`:
 
 ```yaml
 webhooks:
-  - name: Send to telegram
+  - name: Send anime to telegram
     url: https://tg-proxy.example.com/34234324
+    names:                       # only rules named "anime" reach this webhook
+      - anime
     params:
       - place: Body
         name: category
@@ -153,7 +160,7 @@ webhooks:
         name: torrent
         value: name
 
-  - name: Simple hook
+  - name: Catch-all hook          # no `names` -> fires for every rule
     url: https://example.com/hook
 ```
 
@@ -184,12 +191,19 @@ Available property values: `hash`, `name`, `category`, `savePath`, `targetPath`,
 
 When `params` is omitted, every property is included in each `linked` item.
 
+**Scoping to rules.** The optional `names` list restricts a webhook to torrents routed by
+rules with those names (`name` in `rules.yaml`). When `names` is omitted or empty, the
+webhook fires for torrents matched by any rule. Torrents routed by an unnamed rule reach
+only webhooks without a `names` filter. Errors aren't attributable to a rule, so they are
+delivered to every webhook that fires.
+
 **Environment variable shorthand.** When a full YAML config isn't needed, a webhook URL
 can be set via environment variables:
 
 ```
 Webhooks__0__Url=https://example.com/hook
 Webhooks__0__Name=My hook
+Webhooks__0__Names__0=anime
 ```
 
 ## Running

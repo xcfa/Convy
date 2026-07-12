@@ -22,5 +22,8 @@ namespace Convy.Services.Rules
 
         /// <summary>The output path of the first matching rule, or <c>null</c>.</summary>
         public string? Resolve(TorrentInfo info) => Mappings.Resolve(info);
+
+        /// <summary>The first matching rule, or <c>null</c>.</summary>
+        public MappingRule? ResolveRule(TorrentInfo info) => Mappings.ResolveRule(info);
     }
 }

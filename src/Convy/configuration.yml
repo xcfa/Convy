@@ -4,14 +4,18 @@
 # supports hot-reload: changes take effect on the next sync cycle
 # without a restart.
 #
-# Webhooks are called once per torrent after all its files have been
-# hard-linked. Available property values for params:
+# Webhooks are called once per sync cycle (batch) after linking finishes,
+# with a JSON body { "linked": [ ... ], "errors": [ ... ] }. Available
+# property values for params:
 #   hash, name, category, savePath, targetPath, size, state, tags
 #
-# When params are omitted, all properties are sent as a JSON body.
-# Environment variable alternative (query-only):
+# When params are omitted, all properties are sent for each linked torrent.
+# names — optional list of rule names (see rules.yaml) this webhook fires for.
+#   When omitted/empty the webhook fires for torrents matched by any rule.
+# Environment variable alternative:
 #   Webhooks__0__Url=https://example.com/hook
 #   Webhooks__0__Name=My hook
+#   Webhooks__0__Names__0=anime
 
 # ── Logging (Serilog) ──────────────────────────────────────────────────────
 # Console output and baseline levels are configured in code (always on, so Docker
@@ -72,8 +76,10 @@ serilog:
 #     - 172.16.0.0/12
 
 # webhooks:
-#   - name: Send to telegram
+#   - name: Send anime to telegram
 #     url: https://tg-proxy.example.com/34234324
+#     names:            # only fires for torrents routed by the "anime" rule
+#       - anime
 #     params:
 #       - place: Body
 #         name: category
@@ -82,5 +88,5 @@ serilog:
 #         name: torrent
 #         value: name
 #
-#   - name: Simple query hook
+#   - name: Catch-all hook       # no `names` -> fires for every rule
 #     url: https://example.com/hook

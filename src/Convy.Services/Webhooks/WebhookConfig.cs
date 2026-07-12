@@ -5,6 +5,13 @@ public sealed class WebhookConfig
 {
     public string? Name { get; set; }
     public string Url { get; set; } = "";
+
+    /// <summary>
+    /// Names of the routing rules this webhook fires for. When empty (or null),
+    /// the webhook fires for torrents matched by any rule.
+    /// </summary>
+    public List<string>? Names { get; set; }
+
     public List<WebhookParam>? Params { get; set; }
 }
 

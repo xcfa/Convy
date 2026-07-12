@@ -27,17 +27,20 @@ public sealed class ConvyMappings
     /// <summary>An empty rule set (matches nothing).</summary>
     public static ConvyMappings Empty { get; } = new([]);
 
-    /// <summary>Returns the output path of the first rule that matches, or <c>null</c>.</summary>
-    public string? Resolve(TorrentInfo info)
+    /// <summary>Returns the first rule that matches, or <c>null</c>.</summary>
+    public MappingRule? ResolveRule(TorrentInfo info)
     {
         foreach (var rule in Rules)
         {
             if (rule.Matches(info))
-                return rule.OutputPath;
+                return rule;
         }
 
         return null;
     }
+
+    /// <summary>Returns the output path of the first rule that matches, or <c>null</c>.</summary>
+    public string? Resolve(TorrentInfo info) => ResolveRule(info)?.OutputPath;
 
     public static ConvyMappings LoadFromFile(string path) => ParseYaml(File.ReadAllText(path));
 
@@ -79,6 +82,7 @@ public sealed class ConvyMappings
                 {
                     Condition = TorrentFilter.Parse(entry.Condition),
                     OutputPath = entry.Path.Trim(),
+                    Name = string.IsNullOrWhiteSpace(entry.Name) ? null : entry.Name.Trim(),
                     RawCondition = entry.Condition.Trim(),
                 });
             }
@@ -99,6 +103,7 @@ public sealed class ConvyMappings
 
     private sealed class RuleEntry
     {
+        public string? Name { get; set; }
         public string? Condition { get; set; }
         public string? Path { get; set; }
     }

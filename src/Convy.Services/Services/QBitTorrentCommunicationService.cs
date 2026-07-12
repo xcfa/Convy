@@ -167,12 +167,14 @@ namespace Convy.Services.Services
 
             info.Hash = hash;
 
-            var targetPath = rules.Resolve(info);
-            if (targetPath is null)
+            var rule = rules.ResolveRule(info);
+            if (rule is null)
             {
                 _logger.LogDebug("No rule matched torrent {Hash}; marking skipped.", hash);
                 return ProcessOutcome.NoMatch;
             }
+
+            var targetPath = rule.OutputPath;
 
             if (string.IsNullOrEmpty(info.SavePath))
             {
@@ -236,7 +238,7 @@ namespace Convy.Services.Services
                     properties["tags"] = string.Join(",", info.TagList);
                 }
 
-                webhookBatch.Linked.Add(properties);
+                webhookBatch.AddLinked(rule.Name, properties);
                 return ProcessOutcome.Handled;
             }
 
