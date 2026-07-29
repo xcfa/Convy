@@ -1,4 +1,5 @@
 using Convy.Configuration;
+using Convy.Health;
 using Convy.Infrastructure.Helpers;
 using Convy.Middleware;
 using Convy.Services;
@@ -12,6 +13,7 @@ using Convy.Services.Settings;
 using Convy.Services.Tracking;
 using Convy.Services.Webhooks;
 using Microsoft.AspNetCore.Builder;
+using Microsoft.AspNetCore.Diagnostics.HealthChecks;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
@@ -117,6 +119,12 @@ public class Program
 			}
 		});
 
+		// Liveness/readiness: report unhealthy only when our own SQLite database is
+		// unreachable. qBittorrent is a separate service; its availability is not part
+		// of Convy's health.
+		builder.Services.AddHealthChecks()
+			.AddCheck<DatabaseHealthCheck>("database");
+
 		// Routing rules: loaded from a YAML file and reloaded when the file changes.
 		builder.Services.AddSingleton<IRulesProvider>(sp =>
 		{
@@ -212,6 +220,11 @@ public class Program
 		}
 
 		app.MapControllers();
+
+		app.MapHealthChecks("/health", new HealthCheckOptions
+		{
+			ResponseWriter = HealthCheckResponseWriter.WriteAsync,
+		});
 
 		try
 		{

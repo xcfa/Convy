@@ -206,6 +206,21 @@ Webhooks__0__Name=My hook
 Webhooks__0__Names__0=anime
 ```
 
+## Health check
+
+`GET /health` reports whether Convy's own SQLite database is reachable. It returns
+`200` with `"status": "Healthy"` when the database responds and `503` with
+`"status": "Unhealthy"` when it does not:
+
+```json
+{
+  "status": "Healthy",
+  "checks": [
+    { "name": "database", "status": "Healthy", "description": "Database is reachable." }
+  ]
+}
+```
+
 ## Running
 
 1. Copy `.env.example` to `.env` and fill in your qBittorrent details. `.env` is
@@ -227,9 +242,10 @@ services:
   convy:
     image: ghcr.io/xcfa/convy:latest
     container_name: convy
-    restart: unless-stopped                  
+    restart: unless-stopped
     environment:
-      CONVY_CONNECTIONSTRING: "Data Source=/var/lib/convy/convy.db"
+      # Optional — matches the default baked into the image; override to relocate the db.
+      ConnectionStrings__SQLite: "Data Source=/var/lib/convy/convy.db"
       QBITTORRENT__URL: ""
       QBITTORRENT__USERNAME: ""
       QBITTORRENT__PASSWORD: ""
@@ -242,6 +258,16 @@ services:
       - ./config:/app/config:ro
       # Persist the database. Optional — without it the db is ephemeral.
       - convy-db:/var/lib/convy
+    healthcheck:
+      # Probes /health, which reports unhealthy only when the SQLite database is
+      # unreachable (see Health check above). NOTE: the base aspnet image ships no
+      # curl/wget — either bake one in (RUN apt-get update && apt-get install -y curl)
+      # or drop this block and probe /health from an external monitor instead.
+      test: ["CMD", "curl", "-fsS", "http://localhost:8080/health"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 10s
 
 volumes:
   convy-db:
@@ -256,6 +282,8 @@ Notes:
 - The image runs as **root** by default and needs no mounts to start. To run as a non-root
   user, set `user:` in compose — then it's on you to make `/var/lib/convy` (the db) and the
   `/data` tree writable by that uid (e.g. `chown` them, or use volumes owned by it).
+- The `healthcheck` probes from inside the container (loopback), so it passes the IP
+  allow-list with the built-in defaults. Remove the block if you don't add curl to the image.
 
 ## Building and testing
 
