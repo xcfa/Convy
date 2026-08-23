@@ -25,6 +25,7 @@ using System.Text.Json.Serialization;
 using System.Threading.Tasks;
 using Convy.Data.Context;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.EntityFrameworkCore.Diagnostics;
 using Microsoft.Extensions.Options;
 using Serilog;
 using Serilog.Events;
@@ -33,11 +34,16 @@ namespace Convy;
 
 public class Program
 {
+	// Console template with a full date (yyyy-MM-dd) in addition to the time. Shared by
+	// the bootstrap logger and the main logger so startup and runtime lines match.
+	private const string ConsoleOutputTemplate =
+		"[{Timestamp:yyyy-MM-dd HH:mm:ss} {Level:u3}] {Message:lj}{NewLine}{Exception}";
+
 	public static async Task Main(string[] args)
 	{
 		// Capture failures during host construction until the full logger is built.
 		Log.Logger = new LoggerConfiguration()
-			.WriteTo.Console()
+			.WriteTo.Console(outputTemplate: ConsoleOutputTemplate)
 			.CreateBootstrapLogger();
 
 		var builder = WebApplication.CreateBuilder(args);
@@ -57,7 +63,7 @@ public class Program
 			.MinimumLevel.Information()
 			.MinimumLevel.Override("Microsoft.AspNetCore", LogEventLevel.Warning)
 			.Enrich.FromLogContext()
-			.WriteTo.Console()
+			.WriteTo.Console(outputTemplate: ConsoleOutputTemplate)
 			.ReadFrom.Configuration(context.Configuration));
 
 		builder.Services
@@ -99,6 +105,10 @@ public class Program
 		{
 			dbBuilder.UseSqlite(connectionString);
 
+			// SQL command logging is noisy at Information (every query + migration DDL).
+			// Emit it at Debug so it only shows when the log level is lowered on purpose.
+			dbBuilder.ConfigureWarnings(w => w.Log((RelationalEventId.CommandExecuted, LogLevel.Debug)));
+
 			if (builder.Environment.IsDevelopment())
 			{
 				dbBuilder.EnableSensitiveDataLogging();
@@ -112,6 +122,8 @@ public class Program
 		{
 			dbBuilder.UseSqlite(connectionString,
 				sqlite => sqlite.MigrationsHistoryTable("__EFMigrationsHistorySettings"));
+
+			dbBuilder.ConfigureWarnings(w => w.Log((RelationalEventId.CommandExecuted, LogLevel.Debug)));
 
 			if (builder.Environment.IsDevelopment())
 			{

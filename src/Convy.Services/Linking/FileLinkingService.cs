@@ -49,14 +49,14 @@ namespace Convy.Services.Linking
                 // saving). Record it instead of re-linking, which would fail with EEXIST.
                 if (_linker.Exists(dest))
                 {
-                    _logger.LogDebug("Destination already exists, recording only: {Destination}", dest);
+                    _logger.LogWarning("Destination already exists, recording without linking: {Destination}", dest);
                     newlyLinked.Add(name);
                     continue;
                 }
 
                 if (!_linker.Exists(source))
                 {
-                    _logger.LogDebug("Source not present yet, will retry: {Source}", source);
+                    _logger.LogWarning("Source not present yet, will retry: {Source}", source);
                     missingSources++;
                     allLinked = false;
                     continue;
