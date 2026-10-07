@@ -6,6 +6,8 @@ using Convy.Services;
 using Convy.Services.Downloaders.QBittorrent;
 using Convy.Services.Downloads;
 using Convy.Services.Files;
+using Convy.Services.Jobs;
+using Convy.Services.Storage;
 using Convy.Services.Linking;
 using Convy.Services.Sync;
 using Convy.Services.Rules;
@@ -136,7 +138,8 @@ public class Program
 		// unreachable. qBittorrent is a separate service; its availability is not part
 		// of Convy's health.
 		builder.Services.AddHealthChecks()
-			.AddCheck<DatabaseHealthCheck>("database");
+			.AddCheck<DatabaseHealthCheck>("database")
+			.AddCheck<StorageLayoutHealthCheck>("storage");
 
 		// Routing rules: loaded from a YAML file and reloaded when the file changes.
 		builder.Services.AddSingleton<IRulesProvider>(sp =>
@@ -150,9 +153,21 @@ public class Program
 		builder.Services.AddSingleton<IDownloadStateStore, EfDownloadStateStore>();
 		builder.Services.AddSingleton<IDownloadStateTracker, DownloadStateTracker>();
 
-		// Hard-link creation.
+		// Hard-link creation and filesystem checks (mounts, free space, symlink resolution).
 		builder.Services.AddSingleton<IFileLinker, FileLinker>();
+		builder.Services.AddSingleton<IFileSystemInspector, FileSystemInspector>();
 		builder.Services.AddSingleton<FileLinkingService>();
+		builder.Services.AddSingleton<StorageLayoutStatus>();
+		builder.Services.AddSingleton<StorageLayoutValidator>();
+
+		// Jobs: downloads started by the agent, with a unified status and placement wishes.
+		builder.Services
+			.AddOptions<JobOptions>()
+			.Bind(builder.Configuration.GetSection(JobOptions.SectionName));
+		builder.Services.AddSingleton<IJobStore, EfJobStore>();
+		builder.Services.AddSingleton<IJobEvents, LoggingJobEvents>();
+		builder.Services.AddSingleton<JobTransitions>();
+		builder.Services.AddSingleton<JobService>();
 
 		// Webhook notifications after successful linking.
 		builder.Services.AddSingleton<IWebhookNotifier>(sp =>

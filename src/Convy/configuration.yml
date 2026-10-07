@@ -75,6 +75,15 @@ serilog:
 #     - 192.168.0.0/16
 #     - 172.16.0.0/12
 
+# ── Jobs ───────────────────────────────────────────────────────────────────
+# Downloads started by the agent (MCP `download` tool) become jobs with a unified
+# status. All values are optional; the defaults are shown.
+# jobs:
+#   stalled_after_min: 30        # no progress for this long -> status "stalled"
+#   max_placement_attempts: 10   # failed hard-link attempts before the job fails
+#   max_size_gb: 0               # largest allowed job; 0 = no limit
+#   min_free_space_gb: 0         # space that must stay free in the download directory
+
 # webhooks:
 #   - name: Send anime to telegram
 #     url: https://tg-proxy.example.com/34234324

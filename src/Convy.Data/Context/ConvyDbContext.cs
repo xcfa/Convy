@@ -9,6 +9,8 @@ namespace Convy.Data.Context
 
 		public DbSet<DownloadStateEntry> DownloadStates => Set<DownloadStateEntry>();
 
+		public DbSet<JobEntry> Jobs => Set<JobEntry>();
+
 		public ConvyDbContext(DbContextOptions<ConvyDbContext> context)
 			: base(context)
 		{

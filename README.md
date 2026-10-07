@@ -215,20 +215,73 @@ Webhooks__0__Name=My hook
 Webhooks__0__Names__0=anime
 ```
 
+## Jobs and placement
+
+Downloads started by the agent (see [MCP](#mcp-search-and-download)) become **jobs**. The
+download is added to its client right away; once the client finishes, the sync worker
+places the files with hard links and the job is `completed` — "files are in place", not
+just "the client is done". Seeding continues from the original location.
+
+| Status | Meaning |
+| --- | --- |
+| `queued` | Added, not downloading yet (client queue, peer queue, fetching metadata) |
+| `downloading` | Downloading |
+| `stalled` | No progress for `jobs.stalled_after_min` minutes (no seeds, peer offline) |
+| `placing` | The client finished; placement waits for a sync cycle or a retry |
+| `completed` | Files are at the target path (or left in place, see below) |
+| `failed` | Client error, peer refusal, or `jobs.max_placement_attempts` exhausted |
+| `cancelled` | Cancelled with `cancel_job`; downloaded data and created links are kept |
+
+A job may carry a `subpath` chosen by the agent. Where the files go depends on whether a
+rule matches (the job's category is visible to the rules as `Category`) and on the sub-path:
+
+| Rule | `subpath` | Result |
+| --- | --- | --- |
+| matches | given | `rule path / subpath`; the sub-path replaces the download's root folder |
+| matches | — | `rule path` with the original structure, as for manual downloads |
+| none | given | `save path / subpath`, inside the client's download directory |
+| none | — | files stay where they are; the job is completed |
+
+Replacing the root folder: `Movie.2019.2160p.WEB-DL/movie.mkv` with `subpath = "Movie (2019)"`
+lands in `<rule path>/Movie (2019)/movie.mkv`; a single-file download goes straight into the
+sub-path. Only selected files are linked (qBittorrent files with priority 0 are skipped).
+
+A sub-path must be relative, use `/` as separator, contain no `.`/`..`/empty segments, no
+control characters and none of `<>:"|?*`, have segments of at most 255 bytes, and stay inside
+its base directory after resolving symbolic links. An invalid sub-path is rejected, never
+corrected silently. Manual downloads (without a job) are handled exactly as before.
+
+### Immediate placement
+
+The sync interval only decides how quickly finished downloads are placed. To place them
+right away, call `POST /sync`: it queues a cycle outside the schedule (a call during a running
+cycle starts another one right after it). It fits qBittorrent's *Run external program on
+torrent finished* option:
+
+```bash
+curl -fsS -X POST http://convy:8080/sync
+```
+
 ## Health check
 
-`GET /health` reports whether Convy's own SQLite database is reachable. It returns
-`200` with `"status": "Healthy"` when the database responds and `503` with
-`"status": "Unhealthy"` when it does not:
+`GET /health` reports whether Convy's own SQLite database is reachable and whether the
+storage layout allows hard links. It returns `200` with `"status": "Healthy"` when the
+database responds and `503` with `"status": "Unhealthy"` when it does not:
 
 ```json
 {
   "status": "Healthy",
   "checks": [
-    { "name": "database", "status": "Healthy", "description": "Database is reachable." }
+    { "name": "database", "status": "Healthy", "description": "Database is reachable." },
+    { "name": "storage", "status": "Healthy", "description": "Rule paths share a filesystem with the download directories." }
   ]
 }
 ```
+
+Whenever the rules are (re)loaded, Convy checks that every rule path is on the same mount as
+every download directory of every client, and that those directories are visible inside the
+container. Problems are logged as errors and turn the `storage` check (and the overall
+status) into `Degraded`, which still answers `200`.
 
 ## Running
 

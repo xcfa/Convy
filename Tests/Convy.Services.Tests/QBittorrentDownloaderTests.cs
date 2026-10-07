@@ -267,13 +267,6 @@ public class QBittorrentDownloaderTests
         Assert.Equal("abc", Assert.Single(api.Stopped));
     }
 
-    [Theory]
-    [InlineData("Show/Season 02/e1.mkv", true)]   // original layout: root folder included
-    [InlineData("Season 02/e1.mkv", true)]        // no-subfolder layout
-    [InlineData("Show/Season 01/e1.mkv", false)]
-    public void SelectionMatchesWithOrWithoutRootFolder(string name, bool expected) =>
-        Assert.Equal(expected, QBittorrentDownloader.IsSelected(name, new HashSet<string> { "Season 02/e1.mkv" }));
-
     [Fact]
     public void PublishedPropertiesAreKnownToTheRuleLanguageWithMatchingKinds()
     {

@@ -66,4 +66,7 @@ public sealed class SyncControlService : ISyncControlService
         _syncTrigger.TriggerSync();
         return true;
     }
+
+    /// <inheritdoc />
+    public void QueueSync() => _syncTrigger.TriggerSync();
 }

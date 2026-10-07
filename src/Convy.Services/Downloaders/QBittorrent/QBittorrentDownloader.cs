@@ -1,6 +1,7 @@
 using Banned.Qbittorrent.Models.Enums;
 using Banned.Qbittorrent.Models.Torrent;
 using Convy.Services.Downloads;
+using Convy.Services.Placement;
 using Convy.Sources;
 using Microsoft.Extensions.Logging;
 
@@ -162,7 +163,43 @@ public sealed class QBittorrentDownloader : IDownloader, IDisposable
         return ToItem(info, files.Select(ToFile).ToList());
     }
 
+    public async Task<IReadOnlyList<string>> GetDownloadDirectoriesAsync(CancellationToken cancellationToken)
+    {
+        var defaultPath = await _api.GetDefaultSavePathAsync(cancellationToken).ConfigureAwait(false);
+        var categories = await _api.GetCategoriesAsync(cancellationToken).ConfigureAwait(false);
+
+        return categories
+            .Where(c => !string.IsNullOrWhiteSpace(c.SavePath))
+            .Select(c => ResolveCategoryPath(defaultPath, c.SavePath))
+            .Prepend(defaultPath)
+            .Where(p => !string.IsNullOrWhiteSpace(p))
+            .Distinct(StringComparer.Ordinal)
+            .ToList();
+    }
+
+    public async Task<string?> GetDownloadDirectoryAsync(AddOptions options, CancellationToken cancellationToken)
+    {
+        var defaultPath = await _api.GetDefaultSavePathAsync(cancellationToken).ConfigureAwait(false);
+        if (options.Category is null)
+        {
+            return defaultPath;
+        }
+
+        var categories = await _api.GetCategoriesAsync(cancellationToken).ConfigureAwait(false);
+        var category = categories.FirstOrDefault(c => string.Equals(c.Name, options.Category, StringComparison.Ordinal));
+
+        return string.IsNullOrWhiteSpace(category?.SavePath)
+            ? defaultPath
+            : ResolveCategoryPath(defaultPath, category.SavePath);
+    }
+
     public void Dispose() => _syncGate.Dispose();
+
+    /// <summary>qBittorrent resolves a relative category save path against the default save path.</summary>
+    private static string ResolveCategoryPath(string defaultPath, string categoryPath) =>
+        categoryPath.StartsWith('/') || Path.IsPathRooted(categoryPath)
+            ? categoryPath
+            : Path.Combine(defaultPath, categoryPath);
 
     /// <summary>Maps a qBittorrent torrent state onto the downloader-independent state.</summary>
     public static DownloadState MapState(EnumTorrentState? state) => state switch
@@ -178,23 +215,6 @@ public sealed class QBittorrentDownloader : IDownloader, IDisposable
         EnumTorrentState.Error or EnumTorrentState.MissingFiles => DownloadState.Failed,
         _ => DownloadState.Unknown,
     };
-
-    /// <summary>
-    /// Matches qBittorrent's file names to selected result paths. Result paths are relative
-    /// to the torrent root, while qBittorrent names may or may not include the root folder
-    /// depending on its content layout, so both spellings are accepted.
-    /// </summary>
-    public static bool IsSelected(string qbittorrentName, IReadOnlySet<string> selectedPaths)
-    {
-        var name = qbittorrentName.Replace('\\', '/');
-        if (selectedPaths.Contains(name))
-        {
-            return true;
-        }
-
-        var slash = name.IndexOf('/');
-        return slash > 0 && selectedPaths.Contains(name[(slash + 1)..]);
-    }
 
     private async Task WaitForRegistrationAsync(string hash, CancellationToken cancellationToken)
     {
@@ -222,8 +242,10 @@ public sealed class QBittorrentDownloader : IDownloader, IDisposable
 
         for (var position = 0; position < files.Count; position++)
         {
+            // Result paths are relative to the torrent root, while qBittorrent names may or
+            // may not include the root folder depending on its content layout.
             var file = files[position];
-            if (IsSelected(file.Name, selected))
+            if (PlacementPlanner.IsInSelection(file.Name.Replace('\\', '/'), selected))
             {
                 matched++;
             }

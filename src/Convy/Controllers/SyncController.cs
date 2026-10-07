@@ -26,6 +26,17 @@ public class SyncController : ControllerBase
         [FromBody] SyncSettingsUpdateDto dto, CancellationToken cancellationToken)
         => _service.UpdateSettingsAsync(dto, cancellationToken);
 
+    /// <summary>
+    /// Queues a sync cycle outside the schedule so finished downloads are placed right away.
+    /// Meant for hooks such as qBittorrent's "run external program on torrent finished".
+    /// </summary>
+    [HttpPost("/sync")]
+    public IActionResult QueueSync()
+    {
+        _service.QueueSync();
+        return Accepted(new { message = "Sync queued." });
+    }
+
     /// <summary>Triggers a one-off sync cycle regardless of auto-sync state.</summary>
     [HttpPost("trigger")]
     public IActionResult TriggerSync()

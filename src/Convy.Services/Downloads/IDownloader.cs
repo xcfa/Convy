@@ -36,6 +36,15 @@ public interface IDownloader
 
     /// <summary>Returns one item with its files, or <c>null</c> if the downloader does not know it.</summary>
     Task<DownloadItem?> GetItemAsync(string itemRef, CancellationToken cancellationToken);
+
+    /// <summary>
+    /// Directories the downloader writes completed files into, as paths that must also be
+    /// valid inside Convy. Used to check that rule paths share their filesystem.
+    /// </summary>
+    Task<IReadOnlyList<string>> GetDownloadDirectoriesAsync(CancellationToken cancellationToken);
+
+    /// <summary>The directory a download added with <paramref name="options"/> lands in, when known.</summary>
+    Task<string?> GetDownloadDirectoryAsync(AddOptions options, CancellationToken cancellationToken);
 }
 
 /// <summary>Which files of a result to download.</summary>
