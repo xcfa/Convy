@@ -296,6 +296,48 @@ public sealed class SyncCycleServiceTests : IDisposable
     }
 
     [Fact]
+    public async Task TorrentPlacedManuallyBeforeIsLinkedAgainToTheJobTarget()
+    {
+        AddCompletedItem("h1", "Movies", "Movie/movie.mkv");
+        await Run(); // placed by the rule: /data/media/movies/Movie/movie.mkv
+
+        var job = await AddJob("h1", "Movies", "Movie (2019)", JobStatus.Queued);
+        await Run();
+
+        Assert.Equal(
+            ["/data/media/movies/Movie (2019)/movie.mkv", "/data/media/movies/Movie/movie.mkv"],
+            LinkedDestinations());
+        Assert.Equal(JobStatus.Completed, (await Reload(job)).Status);
+    }
+
+    [Fact]
+    public async Task JobWithoutCompleteSelectedFilesFailsInsteadOfCompleting()
+    {
+        _downloader.Items["h1"] = FakeDownloader.Item("h1", DownloadState.Completed,
+            files: [FakeDownloader.Done("Show/e1.mkv")]);
+        var job = await AddJob("h1", "Movies", "Show", selection: ["e9.mkv"]);
+
+        await Run();
+
+        Assert.Empty(_fs.Links);
+        var failed = await Reload(job);
+        Assert.Equal(JobStatus.Failed, failed.Status);
+        Assert.Contains("None of the selected files", failed.Error);
+    }
+
+    [Fact]
+    public async Task UnsafePathsReportedByADownloaderAreNeverLinked()
+    {
+        _fs.AddFile("/data/downloads/Album/01.flac");
+        _downloader.Items["h1"] = FakeDownloader.Item("h1", DownloadState.Completed, category: "Movies",
+            files: [FakeDownloader.Done("Album/01.flac"), FakeDownloader.Done("../escape.flac")]);
+
+        await Run();
+
+        Assert.Equal(["/data/media/movies/Album/01.flac"], LinkedDestinations());
+    }
+
+    [Fact]
     public async Task StorageCheckReportsRulePathsOnAnotherMount()
     {
         _fs.Directories.Add("/data/downloads");

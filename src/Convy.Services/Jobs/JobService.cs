@@ -106,6 +106,15 @@ public sealed class JobService
 
         var downloader = ResolveDownloader(request.Payload.Protocol);
         var options = new AddOptions(request.ClientCategory);
+
+        // One job per download: a repeated request (e.g. after a client timeout) must not
+        // create a second job that would never be placed.
+        var itemRef = downloader.GetItemRef(request.Payload);
+        if (await _store.FindActiveAsync(downloader.Provider, itemRef, cancellationToken).ConfigureAwait(false) is { } active)
+        {
+            throw new ConvyRequestException(
+                $"This download is already job {active.JobId} ({active.Status.ToName()}); check it with get_jobs or cancel it first.");
+        }
         var limits = _options.CurrentValue;
 
         if (limits.MaxSizeGb > 0 && request.SizeBytes > limits.MaxSizeGb * GiB)
@@ -130,7 +139,7 @@ public sealed class JobService
 
         EnsureFreeSpace(downloadDirectory, request.SizeBytes, limits);
 
-        var itemRef = await downloader.AddAsync(request.Payload, request.Selection, options, cancellationToken).ConfigureAwait(false);
+        itemRef = await downloader.AddAsync(request.Payload, request.Selection, options, cancellationToken).ConfigureAwait(false);
 
         // Forecast the placement with the item as the downloader reports it now, so the job
         // (and its first status event) already carries the expected rule and path.
@@ -183,27 +192,46 @@ public sealed class JobService
         var downloader = _downloaders.FindByProvider(job.Provider)
                          ?? throw new ConvyRequestException($"Downloader '{job.Provider}' is not configured.");
 
-        await downloader.CancelAsync(job.ItemRef, cancellationToken).ConfigureAwait(false);
-
-        // The sync worker may update the job concurrently; retry on its fresh state.
-        for (var attempt = 0; attempt < 5; attempt++)
+        // Record the cancellation first: once the job is final, the sync worker cannot turn
+        // the stopped download into "failed" in between. It may update the job concurrently
+        // before that, so retry on its fresh state.
+        JobRecord? cancelled = null;
+        for (var attempt = 0; attempt < 5 && cancelled is null; attempt++)
         {
             var now = _timeProvider.GetUtcNow();
-            var cancelled = job with { Status = JobStatus.Cancelled, UpdatedAt = now, CompletedAt = now };
-            if (await _transitions.ApplyAsync(job, cancelled, cancellationToken).ConfigureAwait(false) is { } saved)
-            {
-                _logger.LogInformation("Job {JobId} cancelled.", saved.JobId);
-                return saved;
-            }
+            cancelled = await _transitions.SaveAsync(
+                job, job with { Status = JobStatus.Cancelled, UpdatedAt = now, CompletedAt = now }, cancellationToken)
+                .ConfigureAwait(false);
 
-            job = await GetRequiredAsync(jobId, cancellationToken).ConfigureAwait(false);
-            if (job.Status.IsTerminal())
+            if (cancelled is null)
             {
-                throw new ConvyRequestException($"Job {job.JobId} is already {job.Status.ToName()}.");
+                job = await GetRequiredAsync(jobId, cancellationToken).ConfigureAwait(false);
+                if (job.Status.IsTerminal())
+                {
+                    throw new ConvyRequestException($"Job {job.JobId} is already {job.Status.ToName()}.");
+                }
             }
         }
 
-        throw new InvalidOperationException($"Job {job.JobId} kept changing; cancellation was not recorded.");
+        if (cancelled is null)
+        {
+            throw new InvalidOperationException($"Job {job.JobId} kept changing; cancellation was not recorded.");
+        }
+
+        try
+        {
+            await downloader.CancelAsync(job.ItemRef, cancellationToken).ConfigureAwait(false);
+        }
+        catch
+        {
+            // The download keeps running, so the job is not cancelled after all.
+            await _transitions.SaveAsync(cancelled, job, CancellationToken.None).ConfigureAwait(false);
+            throw;
+        }
+
+        await _transitions.PublishAsync(new JobStatusChange(cancelled, job.Status), cancellationToken).ConfigureAwait(false);
+        _logger.LogInformation("Job {JobId} cancelled.", cancelled.JobId);
+        return cancelled;
     }
 
     /// <summary>

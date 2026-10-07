@@ -131,8 +131,10 @@ public sealed class SoulseekSource : IContentSource
     }
 
     /// <summary>
-    /// Every file of the user's folder as the peer shares it now. When the peer cannot be
-    /// browsed (offline, browsing disabled), the files found by the search are used.
+    /// Every file of the user's folder as the peer shares it now. Subfolders are not part of
+    /// the result: slskd saves each remote folder into its own local folder, so they are
+    /// separate results. When the peer cannot be browsed (offline, browsing disabled), the
+    /// files found by the search are used.
     /// </summary>
     private async Task<IReadOnlyList<SlskdEnqueueFile>> GetFolderFilesAsync(SoulseekContentRef reference, CancellationToken cancellationToken)
     {
@@ -142,7 +144,7 @@ public sealed class SoulseekSource : IContentSource
                 .ConfigureAwait(false);
 
             var files = directories
-                .Where(d => d.Name == reference.Directory || d.Name.StartsWith(reference.Directory + "\\", StringComparison.Ordinal))
+                .Where(d => d.Name == reference.Directory)
                 .SelectMany(d => (d.Files ?? []).Select(f => new SlskdEnqueueFile(d.Name + "\\" + f.Filename, f.Size)))
                 .ToList();
 

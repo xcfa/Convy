@@ -126,7 +126,7 @@ public class PlacementPlannerTests
         Assert.Null(PlacementPlanner.FindRoot([F("movie.mkv")]));                       // single file
         Assert.Null(PlacementPlanner.FindRoot([F("Season 01/e1.mkv"), F("Season 02/e1.mkv")])); // no common root
         Assert.Null(PlacementPlanner.FindRoot([F("Show/e1.mkv"), F("extra.nfo")]));
-        Assert.Null(PlacementPlanner.FindRoot([]));
+        Assert.Null(PlacementPlanner.FindRoot(Array.Empty<DownloadFile>()));
     }
 
     [Fact]
@@ -150,13 +150,32 @@ public class PlacementPlannerTests
     }
 
     [Theory]
-    [InlineData("Show/Season 02/e1.mkv", true)]   // original layout: root folder included
-    [InlineData("Season 02/e1.mkv", true)]        // no-subfolder layout
-    [InlineData("Show/Season 01/e1.mkv", false)]
-    public void SelectionMatchesWithOrWithoutRootFolder(string path, bool expected) =>
-        Assert.Equal(expected, PlacementPlanner.IsInSelection(path, new HashSet<string> { "Season 02/e1.mkv" }));
+    [InlineData("Show/Season 02/e1.mkv", "Show", true)]   // original layout: root folder included
+    [InlineData("Season 02/e1.mkv", null, true)]          // no-subfolder layout
+    [InlineData("Show/Season 01/e1.mkv", "Show", false)]
+    public void SelectionMatchesWithOrWithoutRootFolder(string path, string? root, bool expected) =>
+        Assert.Equal(expected, PlacementPlanner.IsInSelection(path, root, new HashSet<string> { "Season 02/e1.mkv" }));
+
+    [Fact]
+    public void OnlyTheCommonRootIsStripped()
+    {
+        // No common root: "Extras/a.mkv" must not count as the selected "a.mkv".
+        var selection = new HashSet<string> { "a.mkv" };
+        Assert.True(PlacementPlanner.IsInSelection("a.mkv", null, selection));
+        Assert.False(PlacementPlanner.IsInSelection("Extras/a.mkv", null, selection));
+    }
 
     [Fact]
     public void NoSelectionMeansEverything() =>
-        Assert.True(PlacementPlanner.IsInSelection("anything", null));
+        Assert.True(PlacementPlanner.IsInSelection("anything", null, null));
+
+    [Theory]
+    [InlineData("Album/01.flac", true)]
+    [InlineData("../01.flac", false)]
+    [InlineData("Album/../../etc/passwd", false)]
+    [InlineData("./01.flac", false)]
+    [InlineData("/etc/passwd", false)]
+    [InlineData("a//b", false)]
+    public void UnsafeRelativePathsAreRecognised(string path, bool safe) =>
+        Assert.Equal(safe, PlacementPlanner.IsSafeRelativePath(path));
 }

@@ -4,7 +4,7 @@ using Microsoft.EntityFrameworkCore;
 
 namespace Convy.Data.Entities
 {
-	[PrimaryKey(nameof(Provider), nameof(InfoHash), nameof(FilePath))]
+	[PrimaryKey(nameof(Provider), nameof(InfoHash), nameof(FilePath), nameof(TargetPath))]
 	public class FileEntry
 	{
 		/// <summary>Downloader that owns the item (<c>qbittorrent</c>, <c>slskd</c>).</summary>

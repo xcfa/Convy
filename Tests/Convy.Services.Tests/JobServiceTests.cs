@@ -139,6 +139,40 @@ public sealed class JobServiceTests : IDisposable
         Assert.Contains("already cancelled", again.Message);
     }
 
+    [Fact]
+    public async Task SecondDownloadOfAnActiveItemIsRejected()
+    {
+        var first = await _service.StartAsync(Request(), CancellationToken.None);
+
+        var ex = await Assert.ThrowsAsync<ConvyRequestException>(() => _service.StartAsync(Request(), CancellationToken.None));
+
+        Assert.Contains(first.Job.JobId, ex.Message);
+        Assert.Single(_downloader.Added);
+    }
+
+    [Fact]
+    public async Task FinishedItemCanBeDownloadedAgain()
+    {
+        var first = await _service.StartAsync(Request(), CancellationToken.None);
+        await _service.CancelAsync(first.Job.JobId, CancellationToken.None);
+
+        var second = await _service.StartAsync(Request(), CancellationToken.None);
+
+        Assert.NotEqual(first.Job.Id, second.Job.Id);
+    }
+
+    [Fact]
+    public async Task CancelThatCannotStopTheDownloadKeepsTheJobActive()
+    {
+        var started = await _service.StartAsync(Request(), CancellationToken.None);
+        _downloader.CancelFailure = new HttpRequestException("qBittorrent is down");
+
+        await Assert.ThrowsAsync<HttpRequestException>(() => _service.CancelAsync(started.Job.JobId, CancellationToken.None));
+
+        Assert.Equal(JobStatus.Queued, (await _store.GetAsync(started.Job.Id, CancellationToken.None))!.Status);
+        Assert.DoesNotContain(_events.Changes, c => c.Job.Status == JobStatus.Cancelled);
+    }
+
     [Theory]
     [InlineData("j_99", "does not exist")]
     [InlineData("42", "not a job id")]

@@ -166,6 +166,23 @@ public sealed class SearchServiceTests : IDisposable
     }
 
     [Fact]
+    public async Task DuplicateCachedRowsDoNotBreakTheNextStep()
+    {
+        _a.Results["q"] = [FakeSource.Content("Shared", "aa")];
+        _b.Results["q"] = [FakeSource.Content("Shared", "aa")];
+        var service = Create("prowlarr:1", "prowlarr:2", "prowlarr:3");
+        var first = await service.StartAsync("music", ["q"], null, CancellationToken.None);
+
+        // What two concurrent search_next calls could leave behind.
+        var shown = await _cache.GetResultAsync(first.Results[0].Id, CancellationToken.None);
+        await _cache.SaveResultsAsync([shown! with { Id = "r_duplicate" }], CancellationToken.None);
+
+        var next = await service.NextAsync(first.SearchId, CancellationToken.None);
+
+        Assert.Empty(next.Results);
+    }
+
+    [Fact]
     public async Task ExpiredSearchCannotContinue()
     {
         var service = Create("prowlarr:1", "prowlarr:2", "prowlarr:3");

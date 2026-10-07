@@ -25,7 +25,16 @@ public sealed class WebhookJobEvents : IJobEvents
             "Job {JobId} ({Title}): {Previous} -> {Status}",
             change.Job.JobId, change.Job.Title, change.PreviousStatus?.ToName() ?? "new", change.Job.Status.ToName());
 
-        _queue.Enqueue(ToEvent(change));
+        try
+        {
+            _queue.Enqueue(ToEvent(change));
+        }
+        catch (Exception ex)
+        {
+            // The change is already saved; a notification problem must not fail it.
+            _logger.LogError(ex, "Could not queue the job_status event of {JobId}.", change.Job.JobId);
+        }
+
         return Task.CompletedTask;
     }
 

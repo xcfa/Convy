@@ -15,8 +15,14 @@ public enum DownloadState
     /// <summary>Every wanted file is on disk.</summary>
     Completed,
 
-    /// <summary>The downloader reports an error or the transfer was rejected.</summary>
+    /// <summary>The download failed for good (e.g. the peer rejected the files).</summary>
     Failed,
+
+    /// <summary>
+    /// The downloader reports a problem that may clear (missing files after a mount came up
+    /// late, an I/O error); see <see cref="DownloadItem.Error"/>.
+    /// </summary>
+    Errored,
 
     /// <summary>The downloader reports a state Convy does not map (e.g. moving files).</summary>
     Unknown,

@@ -11,8 +11,10 @@ public sealed record JobObservation(JobStatus Status, long DownloadedBytes, Date
 
 /// <summary>
 /// Derives a job's status from its downloader item. The downloader decides queued /
-/// downloading / failed; Convy adds <see cref="JobStatus.Stalled"/> (no progress for too long)
-/// and keeps <see cref="JobStatus.Placing"/> until the sync worker has placed the files.
+/// downloading / failed; Convy adds <see cref="JobStatus.Stalled"/> (no progress for too long,
+/// or a problem the downloader may recover from) and keeps <see cref="JobStatus.Placing"/>
+/// until the sync worker has placed the files. Time spent waiting in a queue is not counted
+/// as a stall.
 /// </summary>
 public static class JobStatusEvaluator
 {
@@ -34,23 +36,32 @@ public static class JobStatusEvaluator
                 $"The download was removed from {job.Provider}.");
         }
 
+        var waiting = item.State is DownloadState.Queued or DownloadState.Paused;
         var progressed = item.Downloaded > job.LastDownloadedBytes;
-        var lastProgressAt = progressed ? now : job.LastProgressAt;
+
+        // Leaving a queue starts the stall clock afresh: time spent waiting is not a stall.
+        // While waiting nothing changes, so a queued job is not rewritten every cycle.
+        var leftQueue = job.Status == JobStatus.Queued && !waiting;
+        var lastProgressAt = progressed || leftQueue ? now : job.LastProgressAt;
 
         var status = item.State switch
         {
             DownloadState.Completed => JobStatus.Placing,
             DownloadState.Failed => JobStatus.Failed,
-            DownloadState.Queued or DownloadState.Paused => JobStatus.Queued,
+            DownloadState.Errored => JobStatus.Stalled,
+            _ when waiting => JobStatus.Queued,
             // A placing job whose files are being moved/checked stays placing.
             _ when job.Status == JobStatus.Placing => JobStatus.Placing,
             _ when now - lastProgressAt >= stalledAfter => JobStatus.Stalled,
             _ => JobStatus.Downloading,
         };
 
-        var error = status == JobStatus.Failed
-            ? item.Error ?? $"{job.Provider} reports the download as failed."
-            : null;
+        var error = status switch
+        {
+            JobStatus.Failed => item.Error ?? $"{job.Provider} reports the download as failed.",
+            JobStatus.Stalled => item.Error,
+            _ => null,
+        };
 
         return new JobObservation(status, item.Downloaded, lastProgressAt, error);
     }

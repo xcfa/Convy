@@ -24,6 +24,12 @@ public interface IDownloader
     /// </summary>
     Task<string> AddAsync(DownloadPayload payload, FileSelection selection, AddOptions options, CancellationToken cancellationToken);
 
+    /// <summary>
+    /// The item reference <paramref name="payload"/> will get once added (the info hash, the
+    /// user's folder), so a duplicate can be detected before anything is added.
+    /// </summary>
+    string GetItemRef(DownloadPayload payload);
+
     /// <summary>Stops the download. Downloaded data and created links are kept.</summary>
     Task CancelAsync(string itemRef, CancellationToken cancellationToken);
 

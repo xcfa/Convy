@@ -170,8 +170,10 @@ public sealed class SearchService
     private async Task<(List<CachedResult> Shown, int Total, List<CachedResult> Updated)> MergeAsync(
         SearchSession session, IReadOnlyList<QueryOutcome> outcomes, CancellationToken cancellationToken)
     {
+        // Concurrent steps of one search may have stored the same identity twice; keep one.
         var previous = (await _cache.GetSessionResultsAsync(session.Id, cancellationToken).ConfigureAwait(false))
-            .ToDictionary(r => r.DedupKey, StringComparer.Ordinal);
+            .GroupBy(r => r.DedupKey, StringComparer.Ordinal)
+            .ToDictionary(g => g.Key, g => g.First(), StringComparer.Ordinal);
         var updated = new Dictionary<string, CachedResult>(StringComparer.Ordinal);
         var merged = new Dictionary<string, Candidate>(StringComparer.Ordinal);
 

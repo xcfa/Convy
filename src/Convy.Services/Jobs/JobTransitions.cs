@@ -26,12 +26,7 @@ public sealed class JobTransitions
         CancellationToken cancellationToken,
         IReadOnlyList<string>? placedFiles = null)
     {
-        if (updated == current)
-        {
-            return current;
-        }
-
-        if (!await _store.TryUpdateAsync(updated, current.Status, cancellationToken).ConfigureAwait(false))
+        if (await SaveCoreAsync(current, updated, cancellationToken).ConfigureAwait(false) is null)
         {
             return null;
         }
@@ -43,6 +38,29 @@ public sealed class JobTransitions
         }
 
         return updated;
+    }
+
+    /// <summary>
+    /// Persists <paramref name="updated"/> like <see cref="ApplyAsync"/> but without publishing;
+    /// the caller publishes once the change is final (<see cref="PublishAsync"/>).
+    /// </summary>
+    public Task<JobRecord?> SaveAsync(JobRecord current, JobRecord updated, CancellationToken cancellationToken) =>
+        SaveCoreAsync(current, updated, cancellationToken);
+
+    /// <summary>Announces a status change saved with <see cref="SaveAsync"/>.</summary>
+    public Task PublishAsync(JobStatusChange change, CancellationToken cancellationToken) =>
+        _events.PublishAsync(change, cancellationToken);
+
+    private async Task<JobRecord?> SaveCoreAsync(JobRecord current, JobRecord updated, CancellationToken cancellationToken)
+    {
+        if (updated == current)
+        {
+            return current;
+        }
+
+        return await _store.TryUpdateAsync(updated, current.Status, cancellationToken).ConfigureAwait(false)
+            ? updated
+            : null;
     }
 
     /// <summary>Stores a new job and publishes its initial status.</summary>

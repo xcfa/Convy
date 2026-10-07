@@ -28,6 +28,9 @@ public interface IQBittorrentApi
     /// <summary>Sets the download priority of the given file indexes.</summary>
     Task SetFilesPriorityAsync(string hash, IReadOnlyList<int> fileIndexes, EnumTorrentFilePriority priority, CancellationToken cancellationToken);
 
+    /// <summary>Removes a torrent from qBittorrent, keeping its files.</summary>
+    Task RemoveAsync(string hash, CancellationToken cancellationToken);
+
     /// <summary>Stops (pauses) a torrent without removing it or its data.</summary>
     Task StopAsync(string hash, CancellationToken cancellationToken);
 

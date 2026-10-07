@@ -43,6 +43,20 @@ public sealed class EfJobStore : IJobStore
         return entry is null ? null : ToRecord(entry);
     }
 
+    public async Task<JobRecord?> FindActiveAsync(string provider, string itemRef, CancellationToken cancellationToken)
+    {
+        await using var db = await _dbFactory.CreateDbContextAsync(cancellationToken).ConfigureAwait(false);
+
+        var finished = Enum.GetValues<JobStatus>().Where(s => s.IsTerminal()).Select(s => s.ToName()).ToList();
+        var entry = await db.Jobs.AsNoTracking()
+            .Where(j => j.Provider == provider && j.ItemRef == itemRef && !finished.Contains(j.Status))
+            .OrderByDescending(j => j.Id)
+            .FirstOrDefaultAsync(cancellationToken)
+            .ConfigureAwait(false);
+
+        return entry is null ? null : ToRecord(entry);
+    }
+
     public async Task<IReadOnlyList<JobRecord>> ListAsync(JobStatus? status, int limit, CancellationToken cancellationToken)
     {
         await using var db = await _dbFactory.CreateDbContextAsync(cancellationToken).ConfigureAwait(false);

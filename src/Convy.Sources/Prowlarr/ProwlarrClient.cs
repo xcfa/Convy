@@ -103,6 +103,11 @@ public sealed class ProwlarrClient
                 }
 
                 current = location.IsAbsoluteUri ? location : new Uri(current, location);
+                if (current.Scheme != Uri.UriSchemeHttp && current.Scheme != Uri.UriSchemeHttps)
+                {
+                    throw new SourceException(SourceErrorKind.Error, $"The download link redirects to an unsupported '{current.Scheme}:' URI.");
+                }
+
                 continue;
             }
 

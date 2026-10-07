@@ -135,8 +135,20 @@ internal sealed class FakeDownloader : IDownloader
         return Task.FromResult(item.ItemRef);
     }
 
+    public string GetItemRef(DownloadPayload payload) => payload switch
+    {
+        TorrentPayload torrent => torrent.InfoHash,
+        SoulseekPayload folder => $"{folder.Username}/{folder.Directory}",
+        _ => throw new ArgumentException("Unknown payload."),
+    };
+
+    public Exception? CancelFailure { get; set; }
+
     public Task CancelAsync(string itemRef, CancellationToken cancellationToken)
     {
+        if (CancelFailure is not null)
+            return Task.FromException(CancelFailure);
+
         Cancelled.Add(itemRef);
         return Task.CompletedTask;
     }

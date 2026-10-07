@@ -189,13 +189,18 @@ public class Program
 		// source errors) delivered with retries by a background dispatcher. The configuration
 		// is read on every send, so edits to configuration.yml apply without a restart.
 		builder.Services.Configure<List<WebhookConfig>>(builder.Configuration.GetSection("Webhooks"));
+		builder.Services.AddSingleton<WebhookConfigSource>();
 		builder.Services.AddSingleton<Func<IReadOnlyList<WebhookConfig>>>(sp =>
 		{
-			var monitor = sp.GetRequiredService<IOptionsMonitor<List<WebhookConfig>>>();
-			return () => monitor.CurrentValue;
+			var source = sp.GetRequiredService<WebhookConfigSource>();
+			return () => source.Current;
 		});
 		builder.Services.AddSingleton(sp => new WebhookSender(
-			new HttpClient(new SocketsHttpHandler { PooledConnectionLifetime = TimeSpan.FromMinutes(5) }),
+			new HttpClient(new SocketsHttpHandler { PooledConnectionLifetime = TimeSpan.FromMinutes(5) })
+			{
+				// A dead endpoint must not hold up the other webhooks for long.
+				Timeout = TimeSpan.FromSeconds(30),
+			},
 			sp.GetRequiredService<ILogger<WebhookSender>>()));
 		builder.Services.AddSingleton<IWebhookNotifier, WebhookNotifier>();
 		builder.Services.AddSingleton(new WebhookDeliveryOptions());

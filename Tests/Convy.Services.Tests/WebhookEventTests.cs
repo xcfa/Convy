@@ -167,6 +167,44 @@ public class WebhookEventDispatcherTests
     }
 }
 
+public class WebhookConfigSourceTests
+{
+    private sealed class BrokenMonitor : Microsoft.Extensions.Options.IOptionsMonitor<List<WebhookConfig>>
+    {
+        public bool Broken { get; set; }
+
+        public List<WebhookConfig> CurrentValue => Broken
+            ? throw new InvalidOperationException("Failed to convert configuration value 'header' to type 'WebhookParamPlace'.")
+            : [new WebhookConfig { Url = "http://ok/" }];
+
+        public List<WebhookConfig> Get(string? name) => CurrentValue;
+
+        public IDisposable? OnChange(Action<List<WebhookConfig>, string?> listener) => null;
+    }
+
+    [Fact]
+    public void InvalidConfigurationKeepsTheLastGoodOne()
+    {
+        var monitor = new BrokenMonitor();
+        var source = new WebhookConfigSource(monitor, NullLogger<WebhookConfigSource>.Instance);
+
+        Assert.Single(source.Current);
+        monitor.Broken = true;
+        Assert.Equal("http://ok/", Assert.Single(source.Current).Url);
+    }
+
+    [Fact]
+    public void EnqueueNeverThrows()
+    {
+        var dispatcher = new WebhookEventDispatcher(
+            () => throw new InvalidOperationException("bad config"),
+            new WebhookSender(new HttpClient(), NullLogger<WebhookSender>.Instance),
+            new WebhookDeliveryOptions(), TimeProvider.System, NullLogger<WebhookEventDispatcher>.Instance);
+
+        dispatcher.Enqueue(new WebhookEvent(WebhookEvents.JobStatus, null, new Dictionary<string, object?>()));
+    }
+}
+
 public class JobStatusEventTests
 {
     [Fact]

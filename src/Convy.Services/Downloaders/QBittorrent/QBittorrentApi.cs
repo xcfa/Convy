@@ -20,12 +20,15 @@ namespace Convy.Services.Downloaders.QBittorrent;
 /// Both sessions log in lazily and log in again after the session is rejected.
 /// </summary>
 /// <remarks>
-/// The client library does not accept cancellation tokens, so its calls are awaited with
-/// <see cref="Task.WaitAsync(CancellationToken)"/>: cancellation stops the wait, the HTTP
-/// request itself finishes in the background on its own timeout.
+/// The client library does not accept cancellation tokens. Its calls are bounded by
+/// <see cref="LibraryTimeout"/> and always awaited to the end; cancellation is honoured
+/// right after, so no request is ever left running unobserved.
 /// </remarks>
 public sealed class QBittorrentApi : IQBittorrentApi, IDisposable
 {
+    /// <summary>Upper bound of one call through the client library.</summary>
+    private static readonly TimeSpan LibraryTimeout = TimeSpan.FromSeconds(30);
+
     private readonly QBitTorrentConnectionSettings _settings;
     private readonly SemaphoreSlim _connectGate = new(1, 1);
     private readonly SemaphoreSlim _loginGate = new(1, 1);
@@ -107,6 +110,9 @@ public sealed class QBittorrentApi : IQBittorrentApi, IDisposable
             ["priority"] = value,
         }), cancellationToken).ConfigureAwait(false);
     }
+
+    public Task RemoveAsync(string hash, CancellationToken cancellationToken) =>
+        CallAsync(c => c.Torrent.DeleteTorrent(hash, deleteFile: false), cancellationToken);
 
     public Task StopAsync(string hash, CancellationToken cancellationToken) =>
         CallAsync(c => c.Torrent.PauseTorrent(hash), cancellationToken);
@@ -244,7 +250,8 @@ public sealed class QBittorrentApi : IQBittorrentApi, IDisposable
         var client = await GetClientAsync(cancellationToken).ConfigureAwait(false);
         try
         {
-            await call(client).WaitAsync(cancellationToken).ConfigureAwait(false);
+            await call(client).ConfigureAwait(false);
+            cancellationToken.ThrowIfCancellationRequested();
         }
         catch (QbittorrentException ex) when (IsSessionRejected(ex))
         {
@@ -258,7 +265,9 @@ public sealed class QBittorrentApi : IQBittorrentApi, IDisposable
         var client = await GetClientAsync(cancellationToken).ConfigureAwait(false);
         try
         {
-            return await call(client).WaitAsync(cancellationToken).ConfigureAwait(false);
+            var result = await call(client).ConfigureAwait(false);
+            cancellationToken.ThrowIfCancellationRequested();
+            return result;
         }
         catch (QbittorrentException ex) when (IsSessionRejected(ex))
         {
@@ -271,8 +280,13 @@ public sealed class QBittorrentApi : IQBittorrentApi, IDisposable
         ex is QbittorrentUnauthorizedException or QbittorrentForbiddenException or QbittorrentLoginFailedException;
 
     /// <summary>Drops a client whose session was rejected so the next call logs in again.</summary>
-    private void Invalidate(QBittorrentClient client) =>
-        Interlocked.CompareExchange(ref _client, null, client);
+    private void Invalidate(QBittorrentClient client)
+    {
+        if (Interlocked.CompareExchange(ref _client, null, client) == client)
+        {
+            client.Dispose();
+        }
+    }
 
     private async Task<QBittorrentClient> GetClientAsync(CancellationToken cancellationToken)
     {
@@ -291,13 +305,12 @@ public sealed class QBittorrentApi : IQBittorrentApi, IDisposable
             }
 
             var client = await QBittorrentClient
-                .Create(_settings.Url, _settings.Username, _settings.Password ?? string.Empty)
-                .WaitAsync(cancellationToken)
+                .Create(_settings.Url, _settings.Username, _settings.Password ?? string.Empty, timeout: LibraryTimeout)
                 .ConfigureAwait(false);
 
             try
             {
-                await client.Authentication.Login().WaitAsync(cancellationToken).ConfigureAwait(false);
+                await client.Authentication.Login().ConfigureAwait(false);
             }
             catch
             {

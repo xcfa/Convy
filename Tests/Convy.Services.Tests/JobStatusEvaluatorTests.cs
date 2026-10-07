@@ -58,6 +58,32 @@ public class JobStatusEvaluatorTests
     }
 
     [Fact]
+    public void RecoverableClientErrorIsAStallNotAFailure()
+    {
+        var observation = JobStatusEvaluator.Observe(
+            Job(JobStatus.Downloading), Item(DownloadState.Errored, error: "qBittorrent reports state MissingFiles."), T0, StalledAfter);
+
+        Assert.Equal(JobStatus.Stalled, observation.Status);
+        Assert.Equal("qBittorrent reports state MissingFiles.", observation.Error);
+    }
+
+    [Fact]
+    public void TimeInAQueueIsNotAStall()
+    {
+        var queuedSince = T0;
+        var job = Job(JobStatus.Queued, lastBytes: 0, lastProgress: queuedSince);
+
+        // An hour in the remote queue, then the transfer starts with zero bytes.
+        var stillQueued = JobStatusEvaluator.Observe(job, Item(DownloadState.Queued), T0 + TimeSpan.FromHours(1), StalledAfter);
+        Assert.Equal(JobStatus.Queued, stillQueued.Status);
+
+        var started = JobStatusEvaluator.Observe(
+            job with { LastProgressAt = stillQueued.LastProgressAt }, Item(DownloadState.Downloading),
+            T0 + TimeSpan.FromHours(1) + TimeSpan.FromMinutes(1), StalledAfter);
+        Assert.Equal(JobStatus.Downloading, started.Status);
+    }
+
+    [Fact]
     public void RemovedItemFailsTheJob()
     {
         var observation = JobStatusEvaluator.Observe(Job(JobStatus.Downloading), null, T0, StalledAfter);

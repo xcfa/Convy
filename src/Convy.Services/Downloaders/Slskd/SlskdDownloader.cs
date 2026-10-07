@@ -62,6 +62,11 @@ public sealed class SlskdDownloader : IDownloader
         return SoulseekPaths.ItemRef(folder.Username, folder.Directory);
     }
 
+    public string GetItemRef(DownloadPayload payload) =>
+        payload is SoulseekPayload folder
+            ? SoulseekPaths.ItemRef(folder.Username, folder.Directory)
+            : throw new ArgumentException($"slskd cannot download a {payload.Protocol} payload.", nameof(payload));
+
     public async Task CancelAsync(string itemRef, CancellationToken cancellationToken)
     {
         if (!SoulseekPaths.TryParseItemRef(itemRef, out var username, out var directory))

@@ -253,10 +253,11 @@ public class SoulseekSourceTests
         var source = new SoulseekSource(FakeSlskd.Client(http), SourceStatus.Ok, null, NullLogger<SoulseekSource>.Instance);
 
         var listing = await source.ListFilesAsync(contentId, CancellationToken.None);
-        Assert.Equal(["01.flac", "cover.jpg", "Scans/back.png"], listing.Files.Select(f => f.Path));
+        // Subfolders are separate results: slskd stores them in separate local folders.
+        Assert.Equal(["01.flac", "cover.jpg"], listing.Files.Select(f => f.Path));
 
         var payload = Assert.IsType<SoulseekPayload>(await source.ResolveAsync(contentId, CancellationToken.None));
-        Assert.Equal(dir + @"\Scans\back.png", payload.Files[^1].Filename);
+        Assert.Equal(dir + @"\cover.jpg", payload.Files[^1].Filename);
 
         browseFails = true;
         Assert.Equal(["01.flac"], (await source.ListFilesAsync(contentId, CancellationToken.None)).Files.Select(f => f.Path));

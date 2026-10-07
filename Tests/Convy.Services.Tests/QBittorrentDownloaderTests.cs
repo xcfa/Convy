@@ -21,6 +21,8 @@ public class QBittorrentDownloaderTests
         public List<(string Hash, List<int> Indexes, EnumTorrentFilePriority Priority)> Priorities { get; } = [];
         public List<string> Started { get; } = [];
         public List<string> Stopped { get; } = [];
+        public List<string> Removed { get; } = [];
+        public Exception? PriorityFailure { get; set; }
 
         /// <summary>What appears in qBittorrent after an add call.</summary>
         public Action? OnAdd { get; set; }
@@ -55,7 +57,17 @@ public class QBittorrentDownloaderTests
 
         public Task SetFilesPriorityAsync(string hash, IReadOnlyList<int> fileIndexes, EnumTorrentFilePriority priority, CancellationToken ct)
         {
+            if (PriorityFailure is not null)
+                return Task.FromException(PriorityFailure);
+
             Priorities.Add((hash, fileIndexes.ToList(), priority));
+            return Task.CompletedTask;
+        }
+
+        public Task RemoveAsync(string hash, CancellationToken ct)
+        {
+            Removed.Add(hash);
+            Torrents.Remove(hash);
             return Task.CompletedTask;
         }
 
@@ -162,8 +174,8 @@ public class QBittorrentDownloaderTests
     [InlineData(EnumTorrentState.MetaDownload, DownloadState.Queued)]
     [InlineData(EnumTorrentState.QueuedDownload, DownloadState.Queued)]
     [InlineData(EnumTorrentState.StoppedDownload, DownloadState.Paused)]
-    [InlineData(EnumTorrentState.Error, DownloadState.Failed)]
-    [InlineData(EnumTorrentState.MissingFiles, DownloadState.Failed)]
+    [InlineData(EnumTorrentState.Error, DownloadState.Errored)]
+    [InlineData(EnumTorrentState.MissingFiles, DownloadState.Errored)]
     [InlineData(EnumTorrentState.Moving, DownloadState.Unknown)]
     public void MapsTorrentStates(EnumTorrentState state, DownloadState expected) =>
         Assert.Equal(expected, QBittorrentDownloader.MapState(state));
@@ -217,6 +229,47 @@ public class QBittorrentDownloaderTests
         Assert.Equal("abc", Assert.Single(api.Started));
     }
 
+    private static void ShowWithTwoSeasons(FakeApi api) => api.OnAdd = () =>
+    {
+        api.Torrents["abc"] = new TorrentInfo { Hash = "abc", State = EnumTorrentState.StoppedDownload };
+        api.Files["abc"] =
+        [
+            new TorrentFileInfo { Index = 0, Name = "Show/Season 01/e1.mkv" },
+            new TorrentFileInfo { Index = 1, Name = "Show/Season 02/e1.mkv" },
+        ];
+    };
+
+    [Fact]
+    public async Task FailedSelectionRemovesTheHalfAddedTorrent()
+    {
+        var api = new FakeApi { PriorityFailure = new HttpRequestException("409 metadata not ready") };
+        ShowWithTwoSeasons(api);
+
+        await Assert.ThrowsAsync<HttpRequestException>(() => Create(api).AddAsync(
+            new TorrentPayload("abc", null, [1]), new FileSelection(["Season 02/e1.mkv"]), new AddOptions(null), CancellationToken.None));
+
+        Assert.Equal("abc", Assert.Single(api.Removed));
+        Assert.Empty(api.Started);
+    }
+
+    [Fact]
+    public async Task SelectionThatDoesNotMatchTheTorrentIsAnError()
+    {
+        var api = new FakeApi();
+        ShowWithTwoSeasons(api);
+
+        var ex = await Assert.ThrowsAsync<InvalidOperationException>(() => Create(api).AddAsync(
+            new TorrentPayload("abc", null, [1]), new FileSelection(["Season 03/e1.mkv"]), new AddOptions(null), CancellationToken.None));
+
+        Assert.Contains("0 of the 1", ex.Message);
+        Assert.Empty(api.Priorities);
+        Assert.Equal("abc", Assert.Single(api.Removed));
+    }
+
+    [Fact]
+    public void ItemRefIsTheLowerCaseInfoHash() =>
+        Assert.Equal("abc", Create(new FakeApi()).GetItemRef(new TorrentPayload("ABC", "magnet:?xt=urn:btih:ABC", null)));
+
     [Fact]
     public async Task AddWithoutSelectionPrefersMagnetOnlyWhenNoFile()
     {
@@ -245,6 +298,28 @@ public class QBittorrentDownloaderTests
         Assert.Equal("abc", hash);
         Assert.Empty(api.Added);
         Assert.Empty(api.Priorities);
+    }
+
+    [Fact]
+    public async Task ReusedTorrentGetsTheWantedFilesSwitchedOnButNothingSwitchedOff()
+    {
+        var api = new FakeApi();
+        api.Torrents["abc"] = new TorrentInfo { Hash = "abc", State = EnumTorrentState.Uploading };
+        api.Files["abc"] =
+        [
+            new TorrentFileInfo { Index = 0, Name = "Album/01.flac", Priority = EnumTorrentFilePriority.Normal },
+            new TorrentFileInfo { Index = 1, Name = "Album/02.flac", Priority = EnumTorrentFilePriority.DoNotDownload },
+            new TorrentFileInfo { Index = 2, Name = "Album/cover.jpg", Priority = EnumTorrentFilePriority.DoNotDownload },
+        ];
+
+        await Create(api).AddAsync(
+            new TorrentPayload("abc", null, [1]), new FileSelection(["02.flac"]), new AddOptions(null), CancellationToken.None);
+
+        var priority = Assert.Single(api.Priorities);
+        Assert.Equal([1], priority.Indexes);
+        Assert.Equal(EnumTorrentFilePriority.Normal, priority.Priority);
+        Assert.Equal("abc", Assert.Single(api.Started));
+        Assert.Empty(api.Added);
     }
 
     [Fact]

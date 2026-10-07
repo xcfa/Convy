@@ -60,10 +60,18 @@ public sealed class WebhookEventDispatcher : IWebhookEventQueue
 
     public void Enqueue(WebhookEvent webhookEvent)
     {
-        // Skip the queue entirely when nobody listens.
-        if (_webhooks().Any(w => WebhookEvents.Subscribes(w, webhookEvent.Name)))
+        try
         {
-            _channel.Writer.TryWrite(webhookEvent);
+            // Skip the queue entirely when nobody listens.
+            if (_webhooks().Any(w => WebhookEvents.Subscribes(w, webhookEvent.Name)))
+            {
+                _channel.Writer.TryWrite(webhookEvent);
+            }
+        }
+        catch (Exception ex)
+        {
+            // Producers have already done their work (e.g. saved a job); never fail them.
+            _logger.LogError(ex, "Could not queue a {Event} webhook event.", webhookEvent.Name);
         }
     }
 
@@ -74,7 +82,15 @@ public sealed class WebhookEventDispatcher : IWebhookEventQueue
         {
             await foreach (var webhookEvent in _channel.Reader.ReadAllAsync(cancellationToken).ConfigureAwait(false))
             {
-                await DeliverAsync(webhookEvent, cancellationToken).ConfigureAwait(false);
+                try
+                {
+                    await DeliverAsync(webhookEvent, cancellationToken).ConfigureAwait(false);
+                }
+                catch (Exception ex) when (ex is not OperationCanceledException)
+                {
+                    // One bad event must not stop the dispatcher (and with it the host).
+                    _logger.LogError(ex, "Delivering a {Event} webhook event failed.", webhookEvent.Name);
+                }
             }
         }
         catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)

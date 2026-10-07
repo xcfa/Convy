@@ -8,6 +8,9 @@ public interface IJobStore
 
     Task<JobRecord?> GetAsync(int id, CancellationToken cancellationToken);
 
+    /// <summary>The newest job of the item that is not finished, or <c>null</c>.</summary>
+    Task<JobRecord?> FindActiveAsync(string provider, string itemRef, CancellationToken cancellationToken);
+
     /// <summary>Newest jobs first, optionally filtered by status.</summary>
     Task<IReadOnlyList<JobRecord>> ListAsync(JobStatus? status, int limit, CancellationToken cancellationToken);
 

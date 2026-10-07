@@ -354,9 +354,10 @@ an error. For qBittorrent the selection becomes file priorities set before the t
 
 A Soulseek result is one user's folder: search hits are grouped by user and remote folder
 and filtered by the category's `soulseek.extensions`; availability shows the peer's free
-upload slot, queue length and speed instead of seeders. `list_files` browses the whole folder
-(falling back to the search hits when the peer cannot be browsed), so covers and booklets can
-be included or excluded like any other file. `download` queues only the selected files.
+upload slot, queue length and speed instead of seeders. `list_files` browses the folder (falling back to
+the search hits when the peer cannot be browsed), so covers and booklets can be included or
+excluded like any other file; subfolders (`CD2`, `Scans`) are separate results, because slskd
+stores every remote folder in its own local folder. `download` queues only the selected files.
 
 slskd stores a download under `<downloads>/<last remote folder>/` — its default destination
 (`transfers.download.destination.subdirectory: ${SOURCE_DIRECTORY}`), which Convy relies on.
@@ -381,7 +382,7 @@ just "the client is done". Seeding continues from the original location.
 | --- | --- |
 | `queued` | Added, not downloading yet (client queue, peer queue, fetching metadata) |
 | `downloading` | Downloading |
-| `stalled` | No progress for `jobs.stalled_after_min` minutes (no seeds, peer offline) |
+| `stalled` | No progress for `jobs.stalled_after_min` minutes (no seeds, peer offline), or a client problem that may clear (qBittorrent `error` / `missingFiles`); time in a queue does not count |
 | `placing` | The client finished; placement waits for a sync cycle or a retry |
 | `completed` | Files are at the target path (or left in place, see below) |
 | `failed` | Client error, peer refusal, or `jobs.max_placement_attempts` exhausted |
@@ -400,6 +401,11 @@ rule matches (the job's category is visible to the rules as `Category`) and on t
 Replacing the root folder: `Movie.2019.2160p.WEB-DL/movie.mkv` with `subpath = "Movie (2019)"`
 lands in `<rule path>/Movie (2019)/movie.mkv`; a single-file download goes straight into the
 sub-path. Only selected files are linked (qBittorrent files with priority 0 are skipped).
+
+There is one job per download: requesting a download that already has an unfinished job is
+rejected with that job's id. A download that was placed before (by a rule, or by an earlier
+job) is linked again to the new job's target. Paths a client reports that would leave the save
+or target directory (`..` in a peer's folder name) are never linked.
 
 A sub-path must be relative, use `/` as separator, contain no `.`/`..`/empty segments, no
 control characters and none of `<>:"|?*`, have segments of at most 255 bytes, and stay inside

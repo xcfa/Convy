@@ -49,21 +49,24 @@ public static class PlacementPlanner
     /// same one (a multi-file torrent, a Soulseek folder). <c>null</c> for single-file
     /// downloads and layouts without a common root.
     /// </summary>
-    public static string? FindRoot(IEnumerable<DownloadFile> allFiles)
+    public static string? FindRoot(IEnumerable<DownloadFile> allFiles) => FindRoot(allFiles.Select(f => f.Path));
+
+    /// <inheritdoc cref="FindRoot(IEnumerable{DownloadFile})"/>
+    public static string? FindRoot(IEnumerable<string> allPaths)
     {
         string? root = null;
         var any = false;
 
-        foreach (var file in allFiles)
+        foreach (var path in allPaths)
         {
             any = true;
-            var slash = file.Path.IndexOf('/');
+            var slash = path.IndexOf('/');
             if (slash <= 0)
             {
                 return null;
             }
 
-            var first = file.Path[..slash];
+            var first = path[..slash];
             if (root is null)
             {
                 root = first;
@@ -100,16 +103,22 @@ public static class PlacementPlanner
 
     /// <summary>
     /// Whether an item file belongs to the job's selection. Selected paths are relative to the
-    /// result root; item paths may include the root folder, so both spellings match.
+    /// result root; item paths may include the download's root folder (<paramref name="root"/>,
+    /// see <see cref="FindRoot(IEnumerable{string})"/>), so both spellings match.
     /// </summary>
-    public static bool IsInSelection(string itemPath, IReadOnlySet<string>? selection)
-    {
-        if (selection is null || selection.Contains(itemPath))
-        {
-            return true;
-        }
+    public static bool IsInSelection(string itemPath, string? root, IReadOnlySet<string>? selection) =>
+        selection is null
+        || selection.Contains(itemPath)
+        || (root is not null && selection.Contains(MapPath(itemPath, root)));
 
-        var slash = itemPath.IndexOf('/');
-        return slash > 0 && selection.Contains(itemPath[(slash + 1)..]);
-    }
+    /// <summary>
+    /// Whether a relative path stays inside its base: not rooted and without empty,
+    /// <c>.</c> or <c>..</c> segments. Paths reported by downloaders (e.g. Soulseek folder
+    /// names) are not trusted to be safe.
+    /// </summary>
+    public static bool IsSafeRelativePath(string path) =>
+        path.Length > 0
+        && !Path.IsPathRooted(path)
+        && path[0] != '/'
+        && path.Split('/', '\\').All(segment => segment.Length > 0 && segment != "." && segment != "..");
 }

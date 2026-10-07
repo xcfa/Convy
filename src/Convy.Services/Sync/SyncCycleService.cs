@@ -317,19 +317,30 @@ public sealed class SyncCycleService
         }
 
         var selection = job.SelectedFiles is null ? null : new HashSet<string>(job.SelectedFiles, StringComparer.Ordinal);
-        var root = target.ReplaceRoot ? PlacementPlanner.FindRoot(item.Files) : null;
-        var wanted = item.Files
-            .Where(f => f.IsComplete && PlacementPlanner.IsInSelection(f.Path, selection))
-            .Select(f => f.Path)
-            .ToList();
+        var itemRoot = PlacementPlanner.FindRoot(item.Files);
+        var root = target.ReplaceRoot ? itemRoot : null;
+        var wanted = SafePaths(item, item.Files
+            .Where(f => f.IsComplete && PlacementPlanner.IsInSelection(f.Path, itemRoot, selection))
+            .Select(f => f.Path));
 
-        var alreadyLinked = await LoadLinkedAsync(context, item.Provider, item.ItemRef, cancellationToken).ConfigureAwait(false);
-        var links = PlacementPlanner.PlanLinks(wanted.Where(p => !alreadyLinked.Contains(p)), target.Directory!, root);
+        if (wanted.Count == 0)
+        {
+            // Never report "completed" for a job that placed nothing.
+            await FailJobAsync(job, $"None of the selected files is complete in {item.Provider}.", now, cancellationToken)
+                .ConfigureAwait(false);
+            return ProcessOutcome.NoMatch;
+        }
+
+        // A file counts as placed only when it is linked to this very destination: the item
+        // may have been placed elsewhere before (manually, by a rule) and is placed again here.
+        var links = PlacementPlanner.PlanLinks(wanted, target.Directory!, root);
+        var alreadyLinked = await LoadLinkedTargetsAsync(context, item.Provider, item.ItemRef, cancellationToken).ConfigureAwait(false);
+        var pending = links.Where(l => !alreadyLinked.Contains((l.Source, l.Destination))).ToList();
 
         _logger.LogInformation("Job {JobId}: {Provider} item {ItemRef} -> {Target}", job.JobId, item.Provider, item.ItemRef, target.Directory);
 
-        var outcome = _linkingService.LinkPlanned(item.SavePath, links);
-        RecordLinks(context, item, links, outcome);
+        var outcome = _linkingService.LinkPlanned(item.SavePath, pending);
+        RecordLinks(context, item, pending, outcome);
 
         if (!outcome.AllLinked)
         {
@@ -399,10 +410,10 @@ public sealed class SyncCycleService
         var alreadyLinked = await LoadLinkedAsync(context, provider, itemRef, cancellationToken).ConfigureAwait(false);
 
         // Only hand the linker the complete, selected files we haven't linked yet.
-        var pending = item.Files
+        var pending = SafePaths(item, item.Files
             .Where(f => f.IsComplete)
             .Select(f => f.Path)
-            .Where(path => !alreadyLinked.Contains(path));
+            .Where(path => !alreadyLinked.Contains(path)));
 
         var links = PlacementPlanner.PlanLinks(pending, targetPath, stripRoot: null);
         var outcome = _linkingService.LinkPlanned(item.SavePath, links);
@@ -456,6 +467,38 @@ public sealed class SyncCycleService
             .Select(x => x.FilePath)
             .ToListAsync(cancellationToken)
             .ConfigureAwait(false)).ToHashSet();
+
+    private static async Task<HashSet<(string FilePath, string TargetPath)>> LoadLinkedTargetsAsync(
+        ConvyDbContext context, string provider, string itemRef, CancellationToken cancellationToken) =>
+        (await context.FileEntries
+            .Where(x => x.Provider == provider && x.InfoHash == itemRef)
+            .Select(x => new { x.FilePath, x.TargetPath })
+            .ToListAsync(cancellationToken)
+            .ConfigureAwait(false))
+        .Select(x => (x.FilePath, x.TargetPath))
+        .ToHashSet();
+
+    /// <summary>
+    /// Drops paths that would leave the save or target directory (<c>..</c> in a name a
+    /// downloader reported, e.g. a Soulseek folder); they are never linked.
+    /// </summary>
+    private List<string> SafePaths(DownloadItem item, IEnumerable<string> paths)
+    {
+        var safe = new List<string>();
+        foreach (var path in paths)
+        {
+            if (PlacementPlanner.IsSafeRelativePath(path))
+            {
+                safe.Add(path);
+            }
+            else
+            {
+                _logger.LogError("{Provider} item {ItemRef}: refusing to link unsafe path '{Path}'.", item.Provider, item.ItemRef, path);
+            }
+        }
+
+        return safe;
+    }
 
     private static void RecordLinks(ConvyDbContext context, DownloadItem item, IReadOnlyList<PlannedLink> links, LinkOutcome outcome)
     {

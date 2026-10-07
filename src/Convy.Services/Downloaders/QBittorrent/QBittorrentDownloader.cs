@@ -50,9 +50,10 @@ public sealed class QBittorrentDownloader : IDownloader, IDisposable
 
         if (await _api.GetTorrentInfoAsync(hash, cancellationToken).ConfigureAwait(false) is not null)
         {
-            // Already in qBittorrent (added manually or by an earlier job): reuse it as is,
-            // without touching its category or file priorities.
+            // Already in qBittorrent (added manually or by an earlier job): reuse it, keeping its
+            // category, and only switch on the files this download needs.
             _logger.LogInformation("Torrent {Hash} is already in qBittorrent; reusing it.", hash);
+            await EnableWantedFilesAsync(hash, selection, cancellationToken).ConfigureAwait(false);
             return hash;
         }
 
@@ -60,34 +61,50 @@ public sealed class QBittorrentDownloader : IDownloader, IDisposable
         // fetched before the priorities are applied. That needs the metadata up front.
         var stopped = !selection.IsAll;
 
-        if (torrent.TorrentFile is { Length: > 0 } torrentFile)
-        {
-            await _api.AddTorrentFileAsync(torrentFile, options.Category, stopped, cancellationToken).ConfigureAwait(false);
-        }
-        else if (!string.IsNullOrEmpty(torrent.Magnet))
-        {
-            if (stopped)
-            {
-                throw new InvalidOperationException("Selecting files requires the torrent metadata, which is not available.");
-            }
-
-            await _api.AddMagnetAsync(torrent.Magnet, options.Category, stopped: false, cancellationToken).ConfigureAwait(false);
-        }
-        else
+        if (torrent.TorrentFile is not { Length: > 0 } && string.IsNullOrEmpty(torrent.Magnet))
         {
             throw new ArgumentException("The torrent payload has neither a .torrent file nor a magnet link.", nameof(payload));
         }
 
-        await WaitForRegistrationAsync(hash, cancellationToken).ConfigureAwait(false);
-
-        if (stopped)
+        if (stopped && torrent.TorrentFile is not { Length: > 0 })
         {
-            await ApplySelectionAsync(hash, selection, cancellationToken).ConfigureAwait(false);
-            await _api.StartAsync(hash, cancellationToken).ConfigureAwait(false);
+            throw new InvalidOperationException("Selecting files requires the torrent metadata, which is not available.");
+        }
+
+        try
+        {
+            if (torrent.TorrentFile is { Length: > 0 } torrentFile)
+            {
+                await _api.AddTorrentFileAsync(torrentFile, options.Category, stopped, cancellationToken).ConfigureAwait(false);
+            }
+            else
+            {
+                await _api.AddMagnetAsync(torrent.Magnet!, options.Category, stopped: false, cancellationToken).ConfigureAwait(false);
+            }
+
+            await WaitForRegistrationAsync(hash, cancellationToken).ConfigureAwait(false);
+
+            if (stopped)
+            {
+                await ApplySelectionAsync(hash, selection, cancellationToken).ConfigureAwait(false);
+                await _api.StartAsync(hash, cancellationToken).ConfigureAwait(false);
+            }
+        }
+        catch (Exception)
+        {
+            // The torrent was not in qBittorrent before: take back a half-done add (stopped,
+            // without its selection), so a retry starts clean instead of reusing it.
+            await RemoveAfterFailedAddAsync(hash).ConfigureAwait(false);
+            throw;
         }
 
         return hash;
     }
+
+    public string GetItemRef(DownloadPayload payload) =>
+        payload is TorrentPayload torrent
+            ? torrent.InfoHash.ToLowerInvariant()
+            : throw new ArgumentException($"qBittorrent cannot download a {payload.Protocol} payload.", nameof(payload));
 
     public Task CancelAsync(string itemRef, CancellationToken cancellationToken) =>
         _api.StopAsync(itemRef, cancellationToken);
@@ -212,9 +229,66 @@ public sealed class QBittorrentDownloader : IDownloader, IDisposable
             or EnumTorrentState.Allocating or EnumTorrentState.CheckingResumeData
             => DownloadState.Queued,
         EnumTorrentState.StoppedDownload => DownloadState.Paused,
-        EnumTorrentState.Error or EnumTorrentState.MissingFiles => DownloadState.Failed,
+        // qBittorrent recovers from these (recheck, remount), so they are not final.
+        EnumTorrentState.Error or EnumTorrentState.MissingFiles => DownloadState.Errored,
         _ => DownloadState.Unknown,
     };
+
+    /// <summary>
+    /// For a reused torrent: raises the priority of wanted files that are switched off (an
+    /// earlier job may have skipped them) and starts it. Never switches a file off, so a
+    /// selection made by the user or another job is not narrowed.
+    /// </summary>
+    private async Task EnableWantedFilesAsync(string hash, FileSelection selection, CancellationToken cancellationToken)
+    {
+        var files = await _api.GetTorrentFilesAsync(hash, cancellationToken).ConfigureAwait(false);
+        if (files is null)
+        {
+            return;
+        }
+
+        var selected = selection.Paths is null ? null : new HashSet<string>(selection.Paths, StringComparer.Ordinal);
+        var names = files.Select(f => f.Name.Replace('\\', '/')).ToList();
+        var root = PlacementPlanner.FindRoot(names);
+
+        var wanted = Enumerable.Range(0, files.Count)
+            .Where(i => PlacementPlanner.IsInSelection(names[i], root, selected))
+            .ToList();
+
+        if (selected is not null && wanted.Count != selected.Count)
+        {
+            throw new InvalidOperationException(
+                $"Only {wanted.Count} of the {selected.Count} selected file(s) were found in torrent {hash}.");
+        }
+
+        var switchedOff = wanted
+            .Where(i => files[i].Priority == EnumTorrentFilePriority.DoNotDownload)
+            .Select(i => files[i].Index ?? i)
+            .ToList();
+
+        if (switchedOff.Count > 0)
+        {
+            await _api.SetFilesPriorityAsync(hash, switchedOff, EnumTorrentFilePriority.Normal, cancellationToken).ConfigureAwait(false);
+            await _api.StartAsync(hash, cancellationToken).ConfigureAwait(false);
+        }
+    }
+
+    /// <summary>
+    /// Removes a torrent whose add failed half-way. Runs even when the request was cancelled,
+    /// bounded by its own timeout; nothing is downloaded yet, and files are kept anyway.
+    /// </summary>
+    private async Task RemoveAfterFailedAddAsync(string hash)
+    {
+        using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(10));
+        try
+        {
+            await _api.RemoveAsync(hash, timeout.Token).ConfigureAwait(false);
+        }
+        catch (Exception ex)
+        {
+            _logger.LogWarning(ex, "Could not remove torrent {Hash} after a failed add; remove it in qBittorrent.", hash);
+        }
+    }
 
     private async Task WaitForRegistrationAsync(string hash, CancellationToken cancellationToken)
     {
@@ -237,29 +311,30 @@ public sealed class QBittorrentDownloader : IDownloader, IDisposable
                     ?? throw new InvalidOperationException($"qBittorrent returned no file list for torrent {hash}.");
 
         var selected = new HashSet<string>(selection.Paths!, StringComparer.Ordinal);
+        var names = files.Select(f => f.Name.Replace('\\', '/')).ToList();
+
+        // Result paths are relative to the torrent root, while qBittorrent names may or may
+        // not include the root folder depending on its content layout.
+        var root = PlacementPlanner.FindRoot(names);
         var unselected = new List<int>();
         var matched = 0;
 
         for (var position = 0; position < files.Count; position++)
         {
-            // Result paths are relative to the torrent root, while qBittorrent names may or
-            // may not include the root folder depending on its content layout.
-            var file = files[position];
-            if (PlacementPlanner.IsInSelection(file.Name.Replace('\\', '/'), selected))
+            if (PlacementPlanner.IsInSelection(names[position], root, selected))
             {
                 matched++;
             }
             else
             {
-                unselected.Add(file.Index ?? position);
+                unselected.Add(files[position].Index ?? position);
             }
         }
 
         if (matched != selected.Count)
         {
-            _logger.LogWarning(
-                "Torrent {Hash}: {Matched} of {Selected} selected file(s) matched qBittorrent's file list.",
-                hash, matched, selected.Count);
+            throw new InvalidOperationException(
+                $"Only {matched} of the {selected.Count} selected file(s) were found in torrent {hash}.");
         }
 
         if (unselected.Count > 0)
@@ -284,7 +359,7 @@ public sealed class QBittorrentDownloader : IDownloader, IDisposable
             Size = info.Size,
             Downloaded = info.Completed ?? 0,
             DownloadSpeed = info.DownloadSpeed,
-            Error = state == DownloadState.Failed ? $"qBittorrent reports state {info.State}." : null,
+            Error = state == DownloadState.Errored ? $"qBittorrent reports state {info.State}." : null,
             Files = files,
             Properties = properties,
         };
