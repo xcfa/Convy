@@ -215,6 +215,94 @@ Webhooks__0__Name=My hook
 Webhooks__0__Names__0=anime
 ```
 
+## MCP: search and download
+
+Convy exposes an [MCP](https://modelcontextprotocol.io) endpoint at `/mcp` (streamable HTTP)
+for an LLM agent such as opencode. The agent searches several sources, looks into a result's
+files and starts the download; Convy adds it to the download client right away and later
+places the files with the same rules as everything else. Choosing a release is the agent's
+job — Convy does not parse release names.
+
+Sources in this version: torrent trackers through **Prowlarr** (one source per indexer, id
+`prowlarr:<indexer id>`). Torrents are downloaded by qBittorrent.
+
+### Connecting
+
+| Variable | Purpose |
+| --- | --- |
+| `MCP__APIKEY` | Key the agent must send as `X-Api-Key` or `Authorization: Bearer`. Without it `/mcp` answers `503`. |
+| `PROWLARR__URL`, `PROWLARR__APIKEY` | Prowlarr connection. Without them no tracker source is offered. |
+| `TORRENTMETADATA__CACHEDIRECTORY`, `TORRENTMETADATA__DHTPORT` | Optional: DHT cache directory and UDP port (0 = any) used to read magnet metadata. |
+
+`/mcp` is also subject to the IP allow-list. Example opencode configuration:
+
+```json
+{
+  "mcp": {
+    "convy": {
+      "type": "remote",
+      "url": "http://convy:8080/mcp",
+      "headers": { "X-Api-Key": "{env:CONVY_MCP_KEY}" }
+    }
+  }
+}
+```
+
+Categories, search and file-list settings live in `config/configuration.yml` (see the
+commented example there). The `other` category is mandatory.
+
+### Tools
+
+| Tool | Parameters | Returns |
+| --- | --- | --- |
+| `get_categories` | — | categories with `description`, `path_hint` and sources in priority order |
+| `get_sources` | — | sources with protocol and status (`ok` / `error` / `disabled`) |
+| `search` | `category`, `queries[]`, `sources[]?` | `search_id`, results of the first batch, a status per source, `has_more` |
+| `search_next` | `search_id` | results of the next batch of sources, `has_more` |
+| `list_files` | `result_id`, `path?`, `glob?`, `offset?` | top-level tree with per-directory summary, one expanded directory, or glob matches; or `status: timeout` |
+| `download` | `result_id`, `category`, `subpath?`, `include[]?`, `exclude[]?` | `job_id`, expected path and rule, file count and size |
+| `get_jobs` | `status?`, `limit?` | jobs with status, progress, speed and path (active jobs are read from the client directly) |
+| `cancel_job` | `job_id` | stops the download; data and links are kept |
+
+Responses are compact JSON; a rejected request (unknown category, invalid sub-path, a pattern
+that matches nothing, …) comes back as a tool error with the reason.
+
+### How a search runs
+
+1. `search` takes a category and several title variants (spelling, dashes, original title);
+   at most `search.max_query_variants` are used.
+2. The first `search.batch_size` sources of the category (or of `sources`, if the agent
+   passes them) are searched with every variant in parallel, each request limited to
+   `search.source_timeout_sec`.
+3. Results are merged — torrents by info hash across sources and variants, keeping every
+   source and matched variant — and sorted by source priority, then by seeders. A step
+   returns at most `search.max_results` results ("shown N of M").
+4. Each source reports `ok`, `empty`, `timeout`, `auth_failed` or `error`. A Prowlarr indexer
+   that answers with nothing but is failing (it shows up in Prowlarr's indexer status) is
+   reported as `error`, not `empty`.
+5. If nothing fits, the agent calls `search_next` for the next batch. Results already shown
+   are not repeated.
+
+Results and file lists are cached in SQLite for `search.cache_ttl_hours` and addressed by
+opaque `result_id`s; the agent never sees URLs, magnet links or credentials.
+
+### File lists and file selection
+
+`list_files` reads the file list without starting a download: a `.torrent` is fetched through
+the Prowlarr proxy and parsed; for magnet-only releases the metadata is fetched from the swarm
+(DHT and the magnet's trackers) by an embedded client — nothing is added to qBittorrent. If the
+list does not arrive within `files.metadata_timeout_sec`, the answer is `timeout` and nothing
+keeps loading in the background.
+
+`download` accepts `include`/`exclude` globs (or exact paths) relative to the result root;
+`exclude` applies after `include`. They need the file list, so they are rejected when it could
+not be obtained; without them the whole result is downloaded. A pattern that matches no file is
+an error. For qBittorrent the selection becomes file priorities set before the torrent starts.
+
+Before adding, Convy checks the per-job size limit (`jobs.max_size_gb`) and the free space in
+the client's download directory (`jobs.min_free_space_gb` is kept free). Asking the user before
+downloading is up to the agent's instructions, not the service.
+
 ## Jobs and placement
 
 Downloads started by the agent (see [MCP](#mcp-search-and-download)) become **jobs**. The
@@ -365,7 +453,8 @@ downloads a JRE automatically the first time, so no separate Java installation i
 | --- | --- |
 | `Convy` | ASP.NET host: the polling worker, dependency injection, HTTP endpoints |
 | `Convy.Services` | downloaders (qBittorrent behind `IDownloader`), sync cycle, file linking, state tracker, webhook notifier |
-| `Convy.Sources` | contracts shared by sources and downloaders (protocols, download payloads) |
+| `Convy.Sources` | search sources (Prowlarr), torrent metadata (.torrent parsing, magnet metadata from DHT), shared contracts |
+| `Convy.Mcp` | MCP tool definitions, a thin layer over the services |
 | `Convy.PathExpressions` | the rule language: ANTLR grammar, expression tree over item properties, mapping-file loader |
 | `Convy.Data` | EF Core (SQLite) entities and migrations |
 | `Convy.Infrastructure` | low-level helpers (the native hard-link wrapper) |

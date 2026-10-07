@@ -11,6 +11,12 @@ namespace Convy.Data.Context
 
 		public DbSet<JobEntry> Jobs => Set<JobEntry>();
 
+		public DbSet<SearchSessionEntry> SearchSessions => Set<SearchSessionEntry>();
+
+		public DbSet<SearchResultEntry> SearchResults => Set<SearchResultEntry>();
+
+		public DbSet<FileListingEntry> FileListings => Set<FileListingEntry>();
+
 		public ConvyDbContext(DbContextOptions<ConvyDbContext> context)
 			: base(context)
 		{

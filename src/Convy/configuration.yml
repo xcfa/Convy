@@ -75,6 +75,47 @@ serilog:
 #     - 192.168.0.0/16
 #     - 172.16.0.0/12
 
+# ── Search and download for the agent (MCP) ────────────────────────────────
+# Categories tell the agent where to search and how to label a download; where the
+# files go is decided by rules.yaml (a job's qbittorrent_category is visible to the
+# rules as Category, for every protocol). The `other` category is mandatory: a
+# version without it is not applied. Order in `sources` is the priority; without
+# `sources` every active source is used, by name. Ids: get_sources (MCP) or
+# prowlarr:<indexer id> / soulseek. The prowlarr/soulseek blocks are read only by
+# that provider. This file is reloaded on change; a broken edit keeps the previous
+# version in effect.
+# categories:
+#   movies:
+#     description: Movies for Jellyfin
+#     path_hint: Title (Year)
+#     qbittorrent_category: Movies
+#     sources: [prowlarr:12, prowlarr:20, prowlarr:7]
+#     prowlarr:
+#       categories: [2000]        # Newznab ids: 2000 movies, 3000 audio, 5000 TV
+#   music:
+#     description: Music for Navidrome
+#     path_hint: Artist/Year - Album
+#     qbittorrent_category: Music
+#     sources: [soulseek, prowlarr:15]
+#     prowlarr:
+#       categories: [3000]
+#     soulseek:
+#       extensions: [flac, mp3, m4a]
+#   other:
+#     description: Anything that fits no other category
+#     qbittorrent_category: Other
+#
+# search:
+#   batch_size: 3              # sources per search / search_next step
+#   max_query_variants: 3      # extra title variants are dropped
+#   source_timeout_sec: 20     # per source request
+#   max_results: 30            # per step; the rest is dropped ("shown N of M")
+#   cache_ttl_hours: 6         # how long result ids stay valid
+#
+# files:
+#   metadata_timeout_sec: 15   # list_files gives up after this (magnet metadata, peers)
+#   max_entries: 100           # lines per list_files page
+
 # ── Jobs ───────────────────────────────────────────────────────────────────
 # Downloads started by the agent (MCP `download` tool) become jobs with a unified
 # status. All values are optional; the defaults are shown.

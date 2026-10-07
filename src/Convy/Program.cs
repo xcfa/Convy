@@ -1,13 +1,18 @@
 using Convy.Configuration;
 using Convy.Health;
 using Convy.Infrastructure.Helpers;
+using Convy.Mcp;
 using Convy.Middleware;
 using Convy.Services;
 using Convy.Services.Downloaders.QBittorrent;
 using Convy.Services.Downloads;
 using Convy.Services.Files;
 using Convy.Services.Jobs;
+using Convy.Services.Media;
 using Convy.Services.Storage;
+using Convy.Sources;
+using Convy.Sources.Prowlarr;
+using Convy.Sources.Torrents;
 using Convy.Services.Linking;
 using Convy.Services.Sync;
 using Convy.Services.Rules;
@@ -42,6 +47,8 @@ public class Program
 	private const string ConsoleOutputTemplate =
 		"[{Timestamp:yyyy-MM-dd HH:mm:ss} {Level:u3}] {Message:lj}{NewLine}{Exception}";
 
+	private const string TorrentMetadataOptionsSection = "TorrentMetadata";
+
 	public static async Task Main(string[] args)
 	{
 		// Capture failures during host construction until the full logger is built.
@@ -53,7 +60,14 @@ public class Program
 
 		builder.Configuration.AddJsonFile("config/appsettings.json", optional: true, reloadOnChange: true);
 		builder.Configuration.AddJsonFile($"config/appsettings.{builder.Environment.EnvironmentName}.json", optional: true, reloadOnChange: true);
-		builder.Configuration.AddYamlFile("config/configuration.yml", optional: true, reloadOnChange: true);
+		// User configuration; a broken edit keeps the previous version in effect.
+		builder.Configuration.Add<ResilientYamlConfigurationSource>(source =>
+		{
+			source.Path = "config/configuration.yml";
+			source.Optional = true;
+			source.ReloadOnChange = true;
+			source.ResolveFileProvider();
+		});
 		builder.Configuration.AddEnvironmentVariables();
 		builder.Configuration.AddKeyPerFile("/run/secrets", optional: true);  // секреты перекрывают env
 		var dbConfigSource = builder.Configuration.AddDbConfiguration();
@@ -198,6 +212,43 @@ public class Program
 				ct => dbConfigSource.Provider?.ReloadAsync(ct) ?? Task.CompletedTask);
 		});
 
+		// ── Search and download for the agent (MCP) ─────────────────────────
+		builder.Services.AddOptions<CategoriesOptions>().Bind(builder.Configuration);
+		builder.Services.AddOptions<SearchOptions>().Bind(builder.Configuration.GetSection(SearchOptions.SectionName));
+		builder.Services.AddOptions<FilesOptions>().Bind(builder.Configuration.GetSection(FilesOptions.SectionName));
+		builder.Services.AddOptions<McpOptions>().Bind(builder.Configuration.GetSection(McpOptions.SectionName));
+
+		builder.Services.AddSingleton(builder.Configuration.GetSection(TorrentMetadataOptionsSection).Get<TorrentMetadataOptions>()
+		                              ?? new TorrentMetadataOptions());
+		builder.Services.AddSingleton<ITorrentMetadataService, TorrentMetadataService>();
+
+		// Prowlarr: one source per indexer. Its own HttpClient never follows redirects, because
+		// download links redirect to magnet: URIs (and must not leak the key to other hosts).
+		var prowlarrOptions = builder.Configuration.GetSection(ProwlarrOptions.SectionName).Get<ProwlarrOptions>()
+		                      ?? new ProwlarrOptions();
+		builder.Services.AddSingleton(prowlarrOptions);
+		builder.Services.AddSingleton(_ => new ProwlarrClient(
+			new HttpClient(new SocketsHttpHandler
+			{
+				AllowAutoRedirect = false,
+				PooledConnectionLifetime = TimeSpan.FromMinutes(5),
+			})
+			{
+				BaseAddress = prowlarrOptions.IsConfigured ? new Uri(prowlarrOptions.Url!.TrimEnd('/') + "/") : null,
+			},
+			prowlarrOptions));
+		builder.Services.AddSingleton<ISourceProvider, ProwlarrSourceProvider>();
+
+		builder.Services.AddSingleton<ISourceRegistry, SourceRegistry>();
+		builder.Services.AddSingleton<CategoryCatalog>();
+		builder.Services.AddSingleton<ISearchCache, EfSearchCache>();
+		builder.Services.AddSingleton<SearchService>();
+		builder.Services.AddSingleton<FileListingService>();
+		builder.Services.AddSingleton<MediaDownloadService>();
+		builder.Services.AddSingleton<MediaCatalogService>();
+		builder.Services.AddSingleton<McpApiKeyValidator>();
+		builder.Services.AddConvyMcp();
+
 		// Controller-facing services: all endpoint logic lives here, controllers only delegate.
 		builder.Services.AddScoped<IFileEntryQueryService, FileEntryQueryService>();
 		builder.Services.AddSingleton<ISyncControlService, SyncControlService>();
@@ -255,6 +306,9 @@ public class Program
 		}
 
 		app.MapControllers();
+
+		// MCP endpoint for the agent; behind the IP allow-list and MCP__APIKEY.
+		app.MapConvyMcp();
 
 		app.MapHealthChecks("/health", new HealthCheckOptions
 		{
