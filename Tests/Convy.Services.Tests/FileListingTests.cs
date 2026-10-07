@@ -127,7 +127,7 @@ public sealed class FileListingServiceTests : IDisposable
         _cache = new EfSearchCache(_db, _time);
         _service = new FileListingService(
             _cache,
-            new SourceRegistry([new StaticProvider(_source)], _time, NullLogger<SourceRegistry>.Instance),
+            new SourceRegistry([new StaticProvider(_source)], Media.Health(), _time, NullLogger<SourceRegistry>.Instance),
             new StaticOptions<FilesOptions>(new FilesOptions { MetadataTimeoutSeconds = 1, MaxEntries = 100 }),
             NullLogger<FileListingService>.Instance);
     }

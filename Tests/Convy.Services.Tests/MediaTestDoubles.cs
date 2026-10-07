@@ -1,5 +1,6 @@
 using System.Runtime.CompilerServices;
 using Convy.Services.Media;
+using Convy.Services.Webhooks;
 using Convy.Sources;
 using Microsoft.Extensions.Logging.Abstractions;
 
@@ -87,8 +88,22 @@ internal sealed class StaticProvider : ISourceProvider
     }
 }
 
+/// <summary>Collects enqueued webhook events.</summary>
+internal sealed class RecordingQueue : IWebhookEventQueue
+{
+    public List<WebhookEvent> Events { get; } = [];
+
+    public void Enqueue(WebhookEvent webhookEvent)
+    {
+        lock (Events) Events.Add(webhookEvent);
+    }
+}
+
 internal static class Media
 {
+    public static SourceHealthMonitor Health(RecordingQueue? queue = null) =>
+        new(queue ?? new RecordingQueue(), NullLogger<SourceHealthMonitor>.Instance);
+
     public static CategoryCatalog Catalog(Dictionary<string, CategoryOptions> categories) =>
         new(new StaticOptions<CategoriesOptions>(new CategoriesOptions { Categories = categories }),
             NullLogger<CategoryCatalog>.Instance);

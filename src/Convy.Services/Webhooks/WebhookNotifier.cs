@@ -1,41 +1,36 @@
-using System.Net.Http.Json;
-using Microsoft.Extensions.Logging;
-
 namespace Convy.Services.Webhooks;
 
 /// <summary>
-/// Sends a single POST per configured webhook at the end of a sync cycle.
-/// The JSON body contains <c>linked</c> (array of torrent property objects)
-/// and <c>errors</c> (array of <c>{hash, error}</c> objects).
+/// Sends a single POST per configured webhook at the end of a sync cycle (the
+/// <c>linked</c> event). The JSON body contains <c>linked</c> (array of item property
+/// objects) and <c>errors</c> (array of <c>{hash, error}</c> objects).
 /// When explicit <see cref="WebhookConfig.Params"/> are set, only the
 /// configured body-place params appear in each linked item; query-place
 /// params are appended to the URL.
-/// When no params are configured, every torrent property is included.
+/// When no params are configured, every item property is included.
+/// Only webhooks subscribed to <c>linked</c> (the default) are called.
 /// </summary>
 public sealed class WebhookNotifier : IWebhookNotifier
 {
-    private readonly IReadOnlyList<WebhookConfig> _webhooks;
-    private readonly HttpClient _httpClient;
-    private readonly ILogger<WebhookNotifier> _logger;
+    private readonly Func<IReadOnlyList<WebhookConfig>> _webhooks;
+    private readonly WebhookSender _sender;
 
-    public WebhookNotifier(
-        IReadOnlyList<WebhookConfig> webhooks,
-        HttpClient httpClient,
-        ILogger<WebhookNotifier> logger)
+    /// <param name="webhooks">Returns the current webhook configuration (it may be reloaded).</param>
+    /// <param name="sender">Sends the requests.</param>
+    public WebhookNotifier(Func<IReadOnlyList<WebhookConfig>> webhooks, WebhookSender sender)
     {
         _webhooks = webhooks;
-        _httpClient = httpClient;
-        _logger = logger;
+        _sender = sender;
     }
 
     public async Task NotifyAsync(WebhookBatch batch, CancellationToken cancellationToken)
     {
-        if (_webhooks.Count == 0 || !batch.HasEntries)
+        if (!batch.HasEntries)
         {
             return;
         }
 
-        foreach (var webhook in _webhooks)
+        foreach (var webhook in _webhooks().Where(w => WebhookEvents.Subscribes(w, WebhookEvents.Linked)))
         {
             var linked = FilterLinked(webhook, batch.Linked);
 
@@ -46,19 +41,8 @@ public sealed class WebhookNotifier : IWebhookNotifier
                 continue;
             }
 
-            try
-            {
-                await SendAsync(webhook, linked, batch.Errors, cancellationToken).ConfigureAwait(false);
-                _logger.LogInformation("Webhook '{Name}' sent successfully.", webhook.Name ?? webhook.Url);
-            }
-            catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
-            {
-                throw;
-            }
-            catch (Exception ex)
-            {
-                _logger.LogError(ex, "Webhook '{Name}' ({Url}) failed.", webhook.Name ?? "(unnamed)", webhook.Url);
-            }
+            var (body, query) = Build(webhook, linked, batch.Errors);
+            await _sender.SendAsync(webhook, body, query, cancellationToken).ConfigureAwait(false);
         }
     }
 
@@ -80,11 +64,10 @@ public sealed class WebhookNotifier : IWebhookNotifier
             .ToList();
     }
 
-    private async Task SendAsync(
+    private static (object Body, IReadOnlyDictionary<string, string> Query) Build(
         WebhookConfig webhook,
         IReadOnlyList<WebhookLinkedItem> linked,
-        IReadOnlyList<WebhookError> errors,
-        CancellationToken cancellationToken)
+        IReadOnlyList<WebhookError> errors)
     {
         var hasExplicitParams = webhook.Params is { Count: > 0 };
         var queryParams = new Dictionary<string, string>();
@@ -126,25 +109,6 @@ public sealed class WebhookNotifier : IWebhookNotifier
             ["error"] = e.Message,
         }).ToList();
 
-        var url = webhook.Url;
-        if (queryParams.Count > 0)
-        {
-            var query = string.Join("&", queryParams.Select(kvp =>
-                $"{Uri.EscapeDataString(kvp.Key)}={Uri.EscapeDataString(kvp.Value)}"));
-            url += (url.Contains('?') ? '&' : '?') + query;
-        }
-
-        using var request = new HttpRequestMessage(HttpMethod.Post, url);
-        request.Content = JsonContent.Create(new { linked = linkedItems, errors = errorItems });
-
-        using var response = await _httpClient.SendAsync(request, cancellationToken).ConfigureAwait(false);
-
-        if (!response.IsSuccessStatusCode)
-        {
-            var body = await response.Content.ReadAsStringAsync(cancellationToken).ConfigureAwait(false);
-            _logger.LogWarning(
-                "Webhook '{Name}' returned {StatusCode}: {Body}",
-                webhook.Name ?? webhook.Url, (int)response.StatusCode, body);
-        }
+        return (new { linked = linkedItems, errors = errorItems }, queryParams);
     }
 }

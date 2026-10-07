@@ -128,6 +128,12 @@ public sealed class SyncCycleServiceTests : IDisposable
         Assert.Equal("movies", done.Rule);
         Assert.Equal("/data/media/movies/Movie (2019)", FakeFileSystem.Norm(done.TargetPath!));
 
+        var linked = Assert.Single(Assert.Single(_webhooks.Batches).Linked);
+        Assert.Equal("movies", linked.RuleName);
+        Assert.Equal(job.JobId, linked.Properties["job_id"]);
+        Assert.Equal("qbittorrent", linked.Properties["provider"]);
+        Assert.Equal("Movies", linked.Properties["category"]);
+
         // downloading -> placing -> completed, the last one carrying the placed files.
         Assert.Equal([JobStatus.Placing, JobStatus.Completed], _events.Changes.Select(c => c.Job.Status));
         Assert.Equal(["Subs/en.srt", "movie.mkv"], _events.Changes[^1].PlacedFiles!.Order(StringComparer.Ordinal));

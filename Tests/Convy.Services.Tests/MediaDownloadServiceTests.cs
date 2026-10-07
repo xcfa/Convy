@@ -19,7 +19,7 @@ public sealed class MediaDownloadServiceTests : IDisposable
     public MediaDownloadServiceTests()
     {
         _cache = new EfSearchCache(_db, _time);
-        var registry = new SourceRegistry([new StaticProvider(_source)], _time, NullLogger<SourceRegistry>.Instance);
+        var registry = new SourceRegistry([new StaticProvider(_source)], Media.Health(), _time, NullLogger<SourceRegistry>.Instance);
         var catalog = Media.Catalog(Media.Categories());
         var store = new EfJobStore(_db);
         var rules = new FakeRules
@@ -225,7 +225,7 @@ public class SourceRegistryTests
     {
         var time = new FakeTime();
         var provider = new StaticProvider(new FakeSource("prowlarr:1"));
-        var registry = new SourceRegistry([provider], time, NullLogger<SourceRegistry>.Instance);
+        var registry = new SourceRegistry([provider], Media.Health(), time, NullLogger<SourceRegistry>.Instance);
 
         await registry.GetSourcesAsync(CancellationToken.None);
         await registry.GetSourcesAsync(CancellationToken.None);

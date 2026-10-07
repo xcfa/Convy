@@ -155,7 +155,51 @@ qBittorrent credentials in environment variables or Docker secrets.
 
 ### Webhooks
 
-A webhook fires once at the end of each sync cycle if at least one torrent was linked
+Webhooks subscribe to events with `events` (default: only `linked`, so existing setups behave
+as before):
+
+| Event | When | Body |
+| --- | --- | --- |
+| `linked` | once per sync cycle, if something was placed or failed | `{ "linked": [...], "errors": [...] }` (below); items of agent jobs also carry `job_id` and `provider` |
+| `job_status` | on every job status change, one POST each | see below |
+| `source_error` | a source turns `auth_failed` or `error` | `{ "event", "source", "status", "message" }` |
+
+`job_status` and `source_error` are delivered in order by a background queue and retried up to
+5 times with a growing delay. `job_status` body (`files` lists at most 200 placed files;
+`files_total` has the full count):
+
+```json
+{
+  "event": "job_status",
+  "job_id": "j_42",
+  "status": "completed",
+  "previous_status": "placing",
+  "provider": "slskd",
+  "category": "music",
+  "rule": "music",
+  "title": "…",
+  "path": "/data/media/music/Evanescence/2003 - Fallen",
+  "files": ["01 - Going Under.flac", "…"],
+  "files_total": 12,
+  "size_bytes": 432000000,
+  "error": null
+}
+```
+
+The `names` filter applies to `job_status` through the job's `rule`; `source_error` events go to
+every subscribed webhook. With `params`, an event body contains only the selected fields (query
+params are added to the URL). Post-processing such as tagging or a library rescan belongs in the
+receiver (e.g. n8n) reacting to `job_status`. Webhook changes in `configuration.yml` apply
+without a restart.
+
+```yaml
+webhooks:
+  - name: Jobs to n8n
+    url: http://n8n:5678/webhook/media
+    events: [job_status, source_error]
+```
+
+The `linked` webhook fires once at the end of each sync cycle if at least one item was linked
 or an error occurred. The request is a single POST with a JSON body containing all
 results at once. Configured in `config/configuration.yml`:
 
@@ -200,7 +244,7 @@ Each param maps a torrent property to a field in each `linked` item:
 | `value` | Torrent property to read (case-insensitive) |
 
 Available property values: `hash`, `name`, `category`, `savePath`, `targetPath`, `size`,
-`state`, `tags`.
+`state`, `tags`; for items of agent jobs also `job_id` and `provider`.
 
 When `params` is omitted, every property is included in each `linked` item.
 

@@ -181,20 +181,28 @@ public class Program
 			.AddOptions<JobOptions>()
 			.Bind(builder.Configuration.GetSection(JobOptions.SectionName));
 		builder.Services.AddSingleton<IJobStore, EfJobStore>();
-		builder.Services.AddSingleton<IJobEvents, LoggingJobEvents>();
+		builder.Services.AddSingleton<IJobEvents, WebhookJobEvents>();
 		builder.Services.AddSingleton<JobTransitions>();
 		builder.Services.AddSingleton<JobService>();
 
-		// Webhook notifications after successful linking.
-		builder.Services.AddSingleton<IWebhookNotifier>(sp =>
+		// Webhooks: the `linked` batch after each sync cycle, plus single events (job status,
+		// source errors) delivered with retries by a background dispatcher. The configuration
+		// is read on every send, so edits to configuration.yml apply without a restart.
+		builder.Services.Configure<List<WebhookConfig>>(builder.Configuration.GetSection("Webhooks"));
+		builder.Services.AddSingleton<Func<IReadOnlyList<WebhookConfig>>>(sp =>
 		{
-			var configs = builder.Configuration.GetSection("Webhooks").Get<List<WebhookConfig>>()
-			               ?? new List<WebhookConfig>();
-			return new WebhookNotifier(
-				configs,
-				new HttpClient(),
-				sp.GetRequiredService<ILogger<WebhookNotifier>>());
+			var monitor = sp.GetRequiredService<IOptionsMonitor<List<WebhookConfig>>>();
+			return () => monitor.CurrentValue;
 		});
+		builder.Services.AddSingleton(sp => new WebhookSender(
+			new HttpClient(new SocketsHttpHandler { PooledConnectionLifetime = TimeSpan.FromMinutes(5) }),
+			sp.GetRequiredService<ILogger<WebhookSender>>()));
+		builder.Services.AddSingleton<IWebhookNotifier, WebhookNotifier>();
+		builder.Services.AddSingleton(new WebhookDeliveryOptions());
+		builder.Services.AddSingleton<WebhookEventDispatcher>();
+		builder.Services.AddSingleton<IWebhookEventQueue>(sp => sp.GetRequiredService<WebhookEventDispatcher>());
+		builder.Services.AddHostedService<WebhookDispatchWorker>();
+		builder.Services.AddSingleton<ISourceHealth, SourceHealthMonitor>();
 
 		builder.Services.AddSingleton(TimeProvider.System);
 

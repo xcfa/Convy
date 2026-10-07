@@ -356,7 +356,7 @@ public sealed class SyncCycleService
 
         if (outcome.NewlyLinked.Count > 0)
         {
-            webhookBatch.AddLinked(rule?.Name, BuildWebhookProperties(item, target.Directory!));
+            webhookBatch.AddLinked(rule?.Name, BuildWebhookProperties(item, target.Directory!, job));
         }
 
         return ProcessOutcome.Handled;
@@ -476,10 +476,10 @@ public sealed class SyncCycleService
     }
 
     /// <summary>
-    /// The per-item properties sent in the <c>linked</c> webhook batch
-    /// (hash, name, category, savePath, targetPath, size, state, tags).
+    /// The per-item properties sent in the <c>linked</c> webhook batch (hash, name, category,
+    /// savePath, targetPath, size, state, tags; plus job_id and provider for job items).
     /// </summary>
-    private static Dictionary<string, string> BuildWebhookProperties(DownloadItem item, string targetPath)
+    private static Dictionary<string, string> BuildWebhookProperties(DownloadItem item, string targetPath, JobRecord? job = null)
     {
         var properties = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase)
         {
@@ -495,6 +495,13 @@ public sealed class SyncCycleService
         if (item.Properties.GetValueOrDefault("Tags") is IEnumerable<string> tags)
         {
             properties["tags"] = string.Join(",", tags);
+        }
+
+        if (job is not null)
+        {
+            properties["job_id"] = job.JobId;
+            properties["provider"] = item.Provider;
+            properties["category"] = job.ClientCategory ?? properties["category"];
         }
 
         return properties;

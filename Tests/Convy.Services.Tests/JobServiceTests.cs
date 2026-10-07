@@ -77,6 +77,8 @@ public sealed class JobServiceTests : IDisposable
 
         var created = Assert.Single(_events.Changes);
         Assert.Null(created.PreviousStatus);
+        Assert.Equal("movies", created.Job.Rule);                       // the first event is complete
+        Assert.Equal(result.ExpectedPath, created.Job.TargetPath);
     }
 
     [Fact]

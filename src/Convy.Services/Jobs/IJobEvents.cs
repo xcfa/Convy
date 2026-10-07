@@ -1,5 +1,3 @@
-using Microsoft.Extensions.Logging;
-
 namespace Convy.Services.Jobs;
 
 /// <summary>A job changed its status.</summary>
@@ -12,20 +10,4 @@ public sealed record JobStatusChange(JobRecord Job, JobStatus? PreviousStatus, I
 public interface IJobEvents
 {
     Task PublishAsync(JobStatusChange change, CancellationToken cancellationToken);
-}
-
-/// <summary><see cref="IJobEvents"/> that only logs the change.</summary>
-public sealed class LoggingJobEvents : IJobEvents
-{
-    private readonly ILogger<LoggingJobEvents> _logger;
-
-    public LoggingJobEvents(ILogger<LoggingJobEvents> logger) => _logger = logger;
-
-    public Task PublishAsync(JobStatusChange change, CancellationToken cancellationToken)
-    {
-        _logger.LogInformation(
-            "Job {JobId} ({Title}): {Previous} -> {Status}",
-            change.Job.JobId, change.Job.Title, change.PreviousStatus?.ToName() ?? "new", change.Job.Status.ToName());
-        return Task.CompletedTask;
-    }
 }

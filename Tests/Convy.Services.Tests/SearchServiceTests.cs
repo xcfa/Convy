@@ -20,8 +20,9 @@ public sealed class SearchServiceTests : IDisposable
 
     private SearchService Create(params string[] musicSources) => new(
         Media.Catalog(Media.Categories(musicSources)),
-        new SourceRegistry([new StaticProvider(_a, _b, _c)], _time, NullLogger<SourceRegistry>.Instance),
+        new SourceRegistry([new StaticProvider(_a, _b, _c)], Media.Health(), _time, NullLogger<SourceRegistry>.Instance),
         _cache,
+        Media.Health(),
         new StaticOptions<SearchOptions>(_options),
         _time,
         NullLogger<SearchService>.Instance);
@@ -52,8 +53,8 @@ public sealed class SearchServiceTests : IDisposable
         var empty = new FakeSource("prowlarr:4", "Delta");
         var service = new SearchService(
             Media.Catalog(Media.Categories("prowlarr:1", "prowlarr:2", "prowlarr:3", "prowlarr:4")),
-            new SourceRegistry([new StaticProvider(_a, _b, _c, empty)], _time, NullLogger<SourceRegistry>.Instance),
-            _cache, new StaticOptions<SearchOptions>(_options), _time, NullLogger<SearchService>.Instance);
+            new SourceRegistry([new StaticProvider(_a, _b, _c, empty)], Media.Health(), _time, NullLogger<SourceRegistry>.Instance),
+            _cache, Media.Health(), new StaticOptions<SearchOptions>(_options), _time, NullLogger<SearchService>.Instance);
 
         var first = await service.StartAsync("music", ["q"], null, CancellationToken.None);
         var next = await service.NextAsync(first.SearchId, CancellationToken.None);

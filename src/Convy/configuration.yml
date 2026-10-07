@@ -4,14 +4,22 @@
 # supports hot-reload: changes take effect on the next sync cycle
 # without a restart.
 #
-# Webhooks are called once per sync cycle (batch) after linking finishes,
-# with a JSON body { "linked": [ ... ], "errors": [ ... ] }. Available
-# property values for params:
-#   hash, name, category, savePath, targetPath, size, state, tags
+# Webhooks. Each one subscribes to events (default: linked only):
+#   linked        once per sync cycle (batch) after linking finishes, JSON body
+#                 { "linked": [ ... ], "errors": [ ... ] }. Item properties for params:
+#                 hash, name, category, savePath, targetPath, size, state, tags,
+#                 plus job_id and provider for items of agent jobs.
+#   job_status    one POST per job status change (see README for the body).
+#   source_error  one POST when a source turns auth_failed or error:
+#                 { "event", "source", "status", "message" }.
+# job_status and source_error are retried up to 5 times with a growing delay.
 #
-# When params are omitted, all properties are sent for each linked torrent.
-# names — optional list of rule names (see rules.yaml) this webhook fires for.
-#   When omitted/empty the webhook fires for torrents matched by any rule.
+# When params are omitted, all properties are sent. For job_status/source_error,
+# params pick fields of the event body.
+# names — optional list of rule names (see rules.yaml) this webhook fires for
+#   (linked items and job_status by the job's rule). When omitted/empty the webhook
+#   fires for items matched by any rule.
+# Webhook changes in this file apply without a restart.
 # Environment variable alternative:
 #   Webhooks__0__Url=https://example.com/hook
 #   Webhooks__0__Name=My hook
@@ -140,3 +148,7 @@ serilog:
 #
 #   - name: Catch-all hook       # no `names` -> fires for every rule
 #     url: https://example.com/hook
+#
+#   - name: Jobs to n8n          # agent jobs and failing sources
+#     url: http://n8n:5678/webhook/media
+#     events: [job_status, source_error]

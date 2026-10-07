@@ -1,3 +1,4 @@
+using Convy.Services.Webhooks;
 using Convy.Sources;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
@@ -25,6 +26,7 @@ public sealed class SearchService
     private readonly CategoryCatalog _catalog;
     private readonly ISourceRegistry _registry;
     private readonly ISearchCache _cache;
+    private readonly ISourceHealth _health;
     private readonly IOptionsMonitor<SearchOptions> _options;
     private readonly TimeProvider _timeProvider;
     private readonly ILogger<SearchService> _logger;
@@ -33,6 +35,7 @@ public sealed class SearchService
         CategoryCatalog catalog,
         ISourceRegistry registry,
         ISearchCache cache,
+        ISourceHealth health,
         IOptionsMonitor<SearchOptions> options,
         TimeProvider timeProvider,
         ILogger<SearchService> logger)
@@ -40,6 +43,7 @@ public sealed class SearchService
         _catalog = catalog;
         _registry = registry;
         _cache = cache;
+        _health = health;
         _options = options;
         _timeProvider = timeProvider;
         _logger = logger;
@@ -132,7 +136,9 @@ public sealed class SearchService
 
         foreach (var group in outcomes.GroupBy(o => o.Source.Id))
         {
-            statuses.Add(Summarize(group.Key, group.ToList()));
+            var status = Summarize(group.Key, group.ToList());
+            _health.Report(status.Id, status.Status, status.Message);
+            statuses.Add(status);
         }
 
         // Keep the batch order in the status list.

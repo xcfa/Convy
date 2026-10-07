@@ -131,6 +131,15 @@ public sealed class JobService
         EnsureFreeSpace(downloadDirectory, request.SizeBytes, limits);
 
         var itemRef = await downloader.AddAsync(request.Payload, request.Selection, options, cancellationToken).ConfigureAwait(false);
+
+        // Forecast the placement with the item as the downloader reports it now, so the job
+        // (and its first status event) already carries the expected rule and path.
+        var item = await TryGetItemAsync(downloader, itemRef, cancellationToken).ConfigureAwait(false);
+        var properties = item is null ? preliminary : RuleInputs.For(item, request.ClientCategory);
+        var savePath = item?.SavePath is { Length: > 0 } itemPath ? itemPath : downloadDirectory;
+        var rule = rules.ResolveRule(properties);
+        var expected = PlacementPlanner.ResolveTarget(rule, subpath, savePath ?? string.Empty);
+        var expectedPath = expected.LeaveInPlace ? savePath : expected.Directory;
         var now = _timeProvider.GetUtcNow();
 
         var job = await _transitions.CreateAsync(new JobRecord
@@ -148,23 +157,14 @@ public sealed class JobService
             ResultId = request.ResultId,
             SourceId = request.SourceId,
             Status = JobStatus.Queued,
+            Rule = rule?.Name,
+            TargetPath = expectedPath,
             LastProgressAt = now,
             CreatedAt = now,
             UpdatedAt = now,
         }, cancellationToken).ConfigureAwait(false);
 
         _logger.LogInformation("Job {JobId} started: {Title} via {Provider} ({ItemRef}).", job.JobId, job.Title, job.Provider, itemRef);
-
-        // Forecast the placement with the item as the downloader reports it now.
-        var item = await TryGetItemAsync(downloader, itemRef, cancellationToken).ConfigureAwait(false);
-        var properties = item is null ? preliminary : RuleInputs.For(item, request.ClientCategory);
-        var savePath = item?.SavePath is { Length: > 0 } itemPath ? itemPath : downloadDirectory;
-        var rule = rules.ResolveRule(properties);
-        var expected = PlacementPlanner.ResolveTarget(rule, subpath, savePath ?? string.Empty);
-        var expectedPath = expected.LeaveInPlace ? savePath : expected.Directory;
-
-        var forecast = job with { Rule = rule?.Name, TargetPath = expectedPath };
-        job = await _transitions.ApplyAsync(job, forecast, cancellationToken).ConfigureAwait(false) ?? job;
 
         return new StartJobResult(job, expectedPath, rule?.Name);
     }

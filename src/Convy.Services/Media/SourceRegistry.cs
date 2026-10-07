@@ -1,3 +1,4 @@
+using Convy.Services.Webhooks;
 using Convy.Sources;
 using Microsoft.Extensions.Logging;
 
@@ -24,6 +25,7 @@ public sealed class SourceRegistry : ISourceRegistry, IDisposable
     private static readonly TimeSpan CacheDuration = TimeSpan.FromMinutes(5);
 
     private readonly IReadOnlyList<ISourceProvider> _providers;
+    private readonly ISourceHealth _health;
     private readonly TimeProvider _timeProvider;
     private readonly ILogger<SourceRegistry> _logger;
     private readonly SemaphoreSlim _refreshGate = new(1, 1);
@@ -32,9 +34,11 @@ public sealed class SourceRegistry : ISourceRegistry, IDisposable
     // Swapped as a whole so readers outside the lock never see a torn update.
     private volatile Snapshot? _snapshot;
 
-    public SourceRegistry(IEnumerable<ISourceProvider> providers, TimeProvider timeProvider, ILogger<SourceRegistry> logger)
+    public SourceRegistry(
+        IEnumerable<ISourceProvider> providers, ISourceHealth health, TimeProvider timeProvider, ILogger<SourceRegistry> logger)
     {
         _providers = providers.ToList();
+        _health = health;
         _timeProvider = timeProvider;
         _logger = logger;
     }
@@ -62,6 +66,11 @@ public sealed class SourceRegistry : ISourceRegistry, IDisposable
                     var provided = await provider.GetSourcesAsync(cancellationToken).ConfigureAwait(false);
                     _lastKnown[provider.Name] = provided;
                     sources.AddRange(provided);
+
+                    foreach (var source in provided.Where(s => s.Status != SourceStatus.Disabled))
+                    {
+                        _health.Report(source.Id, source.Status == SourceStatus.Ok ? "ok" : "error", source.StatusMessage);
+                    }
                 }
                 catch (Exception ex) when (ex is not OperationCanceledException || !cancellationToken.IsCancellationRequested)
                 {
@@ -69,6 +78,14 @@ public sealed class SourceRegistry : ISourceRegistry, IDisposable
                     _logger.LogWarning(ex,
                         "Could not list the sources of {Provider}; keeping {Count} known source(s).", provider.Name, previous.Count);
                     sources.AddRange(previous);
+
+                    // Every source of the provider is affected; before any is known, the
+                    // provider itself is reported (e.g. a rejected Prowlarr key at startup).
+                    var status = ex is SourceException { Kind: SourceErrorKind.AuthFailed } ? "auth_failed" : "error";
+                    foreach (var id in previous.Count > 0 ? previous.Select(s => s.Id) : [provider.Name])
+                    {
+                        _health.Report(id, status, ex.Message);
+                    }
                 }
             }
 
