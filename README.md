@@ -94,10 +94,13 @@ The optional `name` on a rule lets you scope webhooks to specific rules — see
 
 ### Properties
 
-The left-hand side of a comparison is any qBittorrent torrent property. Common ones:
+The left-hand side of a comparison is a property of the download. `Provider` is available
+on every item; the rest come from the downloader (for qBittorrent, any torrent property).
+Common ones:
 
 | Property | Meaning |
 | --- | --- |
+| `Provider` | downloader that owns the item: `qbittorrent` or `slskd` |
 | `Size`, `TotalSize`, `Downloaded`, `Uploaded` | byte counts |
 | `Ratio`, `Progress`, `Availability` | floats |
 | `Category`, `Name`, `Tracker`, `SavePath`, `ContentPath` | strings |
@@ -106,6 +109,12 @@ The left-hand side of a comparison is any qBittorrent torrent property. Common o
 | `AutoTmmEnabled`, `SequentialDownloadEnabled`, `SuperSeedingEnabled` | booleans |
 | `SeedingTime`, `TimeActive`, `EstimatedTimeArrival` | durations, compared in **seconds** |
 | `AddedOn`, `CompletionOn`, `LastActivity` | timestamps, compared as **unix seconds** |
+
+**Missing properties.** Downloaders publish only the properties they know about: a Soulseek
+download has no `Ratio` or `Tags`. If a rule references at least one property the item
+doesn't have, the whole rule is skipped for that item — a single comparison is not treated as
+false, otherwise `!Tags.Contains(skip)` would be true for every Soulseek download. A property
+that exists but is unset (e.g. no category) still takes part and simply never matches.
 
 An unknown property, an illegal operator for a type, or a malformed rule fails fast with a
 parse error that names the offending rule. A parse failure keeps the previously loaded

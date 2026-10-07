@@ -43,6 +43,64 @@ public class ConvyMappingsTests
         Assert.Null(mappings.Resolve(Anime()));
     }
 
+    private static Dictionary<string, object?> SoulseekAlbum() => new(StringComparer.OrdinalIgnoreCase)
+    {
+        ["Provider"] = "slskd",
+        ["Name"] = "Fallen",
+        ["Size"] = 432000000.0,
+        ["Category"] = "Music",
+    };
+
+    [Fact]
+    public void RuleReferencingAMissingPropertyIsSkippedAsAWhole()
+    {
+        var mappings = ConvyMappings.ParseYaml(
+            """
+            rules:
+              - name: keep-unless-skip
+                condition: "!Tags.Contains(skip)"
+                path: /data/media/kept
+              - name: seeded
+                condition: "Ratio >= 2 || Category == Music"
+                path: /data/media/seeded
+              - name: soulseek
+                condition: "Provider == slskd"
+                path: /data/media/soulseek
+            """);
+
+        // A Soulseek item has neither Tags nor Ratio: both rules are skipped, even though
+        // the first would be "true" and the second has a matching Category alternative.
+        Assert.Equal("soulseek", mappings.ResolveRule(SoulseekAlbum())?.Name);
+    }
+
+    [Fact]
+    public void PresentButNullPropertyStillTakesPartInTheEvaluation()
+    {
+        var mappings = ConvyMappings.ParseYaml(
+            """
+            rules:
+              - condition: "!Tags.Contains(skip)"
+                path: /data/media/kept
+            """);
+
+        var torrent = new Dictionary<string, object?> { ["Provider"] = "qbittorrent", ["Tags"] = null };
+
+        Assert.Equal("/data/media/kept", mappings.Resolve(torrent));
+    }
+
+    [Fact]
+    public void ReferencedPropertiesAreCollectedWithCanonicalNames()
+    {
+        var rule = Assert.Single(ConvyMappings.ParseYaml(
+            """
+            rules:
+              - condition: "(size > 1 || provider == slskd) && !tags.Contains(x)"
+                path: /p
+            """).Rules);
+
+        Assert.Equal(new[] { "Provider", "Size", "Tags" }, rule.ReferencedProperties.Order());
+    }
+
     [Fact]
     public void EmptyDocumentYieldsNoRules()
     {

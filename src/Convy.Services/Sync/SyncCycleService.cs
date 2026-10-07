@@ -171,7 +171,7 @@ public sealed class SyncCycleService
             return ProcessOutcome.Retry;
         }
 
-        var rule = rules.ResolveRule(item.Properties);
+        var rule = rules.ResolveRule(RuleInputs.For(item));
         if (rule is null)
         {
             _logger.LogDebug("No rule matched {Provider} item {ItemRef}; marking skipped.", provider, itemRef);

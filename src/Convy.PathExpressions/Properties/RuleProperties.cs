@@ -6,7 +6,9 @@ namespace Convy.PathExpressions.Properties;
 /// downloaders publish values in an item's property bag.
 ///
 /// The set is the union of what all downloaders can provide. A downloader publishes only
-/// the properties it knows about, so an individual item may lack some of them.
+/// the properties it knows about, so an individual item may lack some of them; a rule
+/// that references a property the item lacks is skipped as a whole
+/// (<see cref="Mappings.MappingRule.Matches"/>). <c>Provider</c> is present on every item.
 ///
 /// Value conventions: numbers are compared as <see cref="double"/>, durations in whole
 /// seconds and timestamps as unix seconds (e.g. <c>SeedingTime &gt; 86400</c>). The torrent
@@ -58,6 +60,7 @@ public static class RuleProperties
         Num("SeenComplete");
 
         // ---- strings ----------------------------------------------------------
+        Str("Provider"); // downloader owning the item: qbittorrent, slskd
         Str("Category");
         Str("ContentPath");
         Str("Hash");
