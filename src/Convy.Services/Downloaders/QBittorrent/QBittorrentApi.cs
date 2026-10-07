@@ -1,5 +1,6 @@
 using System.Net;
 using System.Net.Http.Headers;
+using System.Text.Json;
 using Banned.Qbittorrent;
 using Banned.Qbittorrent.Exceptions;
 using Banned.Qbittorrent.Models.Enums;
@@ -11,9 +12,11 @@ namespace Convy.Services.Downloaders.QBittorrent;
 
 /// <summary>
 /// <see cref="IQBittorrentApi"/> over the qBittorrent Web API. Reads and start/stop go
-/// through the Banned.Qbittorrent client; adding torrents and setting file priorities are
-/// sent directly, because the library always sends a save path (<c>/download</c> by default,
-/// overriding the category's) and names the file-id parameter <c>ids</c> instead of <c>id</c>.
+/// through the Banned.Qbittorrent client; adding torrents, setting file priorities and
+/// reading categories are sent directly, because the library always sends a save path
+/// (<c>/download</c> by default, overriding the category's), names the file-id parameter
+/// <c>ids</c> instead of <c>id</c>, and expects the categories as an array while qBittorrent
+/// returns an object keyed by name.
 /// Both sessions log in lazily and log in again after the session is rejected.
 /// </summary>
 /// <remarks>
@@ -97,7 +100,7 @@ public sealed class QBittorrentApi : IQBittorrentApi, IDisposable
             _ => "7",
         };
 
-        using var response = await PostAsync("torrents/filePrio", () => new FormUrlEncodedContent(new Dictionary<string, string>
+        using var response = await SendAsync(HttpMethod.Post, "torrents/filePrio", () => new FormUrlEncodedContent(new Dictionary<string, string>
         {
             ["hash"] = hash,
             ["id"] = string.Join('|', fileIndexes),
@@ -114,10 +117,23 @@ public sealed class QBittorrentApi : IQBittorrentApi, IDisposable
     public Task<string> GetDefaultSavePathAsync(CancellationToken cancellationToken) =>
         CallAsync(c => c.Application.GetDefaultSavePath(), cancellationToken);
 
-    public Task<IReadOnlyList<TorrentCategory>> GetCategoriesAsync(CancellationToken cancellationToken) =>
-        CallAsync<IReadOnlyList<TorrentCategory>>(
-            async c => await c.Torrent.GetAllCategories().ConfigureAwait(false) ?? [],
-            cancellationToken);
+    public async Task<IReadOnlyList<TorrentCategory>> GetCategoriesAsync(CancellationToken cancellationToken)
+    {
+        using var response = await SendAsync(HttpMethod.Get, "torrents/categories", null, cancellationToken).ConfigureAwait(false);
+        await using var stream = await response.Content.ReadAsStreamAsync(cancellationToken).ConfigureAwait(false);
+        using var document = await JsonDocument.ParseAsync(stream, cancellationToken: cancellationToken).ConfigureAwait(false);
+
+        // { "Movies": { "name": "Movies", "savePath": "/data/movies" }, ... }
+        return document.RootElement.ValueKind != JsonValueKind.Object
+            ? []
+            : document.RootElement.EnumerateObject()
+                .Select(category => new TorrentCategory
+                {
+                    Name = category.Value.TryGetProperty("name", out var name) ? name.GetString() ?? category.Name : category.Name,
+                    SavePath = category.Value.TryGetProperty("savePath", out var path) ? path.GetString() ?? string.Empty : string.Empty,
+                })
+                .ToList();
+    }
 
     public void Dispose()
     {
@@ -133,7 +149,7 @@ public sealed class QBittorrentApi : IQBittorrentApi, IDisposable
     /// </summary>
     private async Task AddAsync(Action<MultipartFormDataContent> addSource, string? category, bool stopped, CancellationToken cancellationToken)
     {
-        using var response = await PostAsync("torrents/add", () =>
+        using var response = await SendAsync(HttpMethod.Post, "torrents/add", () =>
         {
             var form = new MultipartFormDataContent();
             addSource(form);
@@ -155,15 +171,16 @@ public sealed class QBittorrentApi : IQBittorrentApi, IDisposable
         }
     }
 
-    /// <summary>Posts to the Web API with Convy's own session; logs in again once on 403.</summary>
-    private async Task<HttpResponseMessage> PostAsync(string path, Func<HttpContent> content, CancellationToken cancellationToken)
+    /// <summary>Calls the Web API with Convy's own session; logs in again once on 403.</summary>
+    private async Task<HttpResponseMessage> SendAsync(
+        HttpMethod method, string path, Func<HttpContent>? content, CancellationToken cancellationToken)
     {
         for (var attempt = 0; ; attempt++)
         {
             await EnsureLoggedInAsync(cancellationToken).ConfigureAwait(false);
 
-            using var body = content();
-            var response = await _http.PostAsync(path, body, cancellationToken).ConfigureAwait(false);
+            using var request = new HttpRequestMessage(method, path) { Content = content?.Invoke() };
+            var response = await _http.SendAsync(request, cancellationToken).ConfigureAwait(false);
 
             if (response.StatusCode == HttpStatusCode.Forbidden && attempt == 0)
             {
