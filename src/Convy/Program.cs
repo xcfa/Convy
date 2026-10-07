@@ -5,6 +5,7 @@ using Convy.Mcp;
 using Convy.Middleware;
 using Convy.Services;
 using Convy.Services.Downloaders.QBittorrent;
+using Convy.Services.Downloaders.Slskd;
 using Convy.Services.Downloads;
 using Convy.Services.Files;
 using Convy.Services.Jobs;
@@ -12,6 +13,7 @@ using Convy.Services.Media;
 using Convy.Services.Storage;
 using Convy.Sources;
 using Convy.Sources.Prowlarr;
+using Convy.Sources.Slskd;
 using Convy.Sources.Torrents;
 using Convy.Services.Linking;
 using Convy.Services.Sync;
@@ -200,6 +202,21 @@ public class Program
 		builder.Services.AddSingleton<IQBittorrentApi, QBittorrentApi>();
 		builder.Services.AddSingleton<IDownloader, QBittorrentDownloader>();
 		builder.Services.AddSingleton<IDownloaderResolver, DownloaderResolver>();
+
+		// slskd is both a source (Soulseek search) and a downloader; both use one client.
+		var slskdOptions = builder.Configuration.GetSection(SlskdOptions.SectionName).Get<SlskdOptions>()
+		                   ?? new SlskdOptions();
+		builder.Services.AddSingleton(_ => new SlskdClient(
+			new HttpClient(new SocketsHttpHandler { PooledConnectionLifetime = TimeSpan.FromMinutes(5) })
+			{
+				BaseAddress = slskdOptions.IsConfigured ? new Uri(slskdOptions.Url!.TrimEnd('/') + "/api/v0/") : null,
+			},
+			slskdOptions));
+		builder.Services.AddSingleton<ISourceProvider, SoulseekSourceProvider>();
+		if (slskdOptions.IsConfigured)
+		{
+			builder.Services.AddSingleton<IDownloader, SlskdDownloader>();
+		}
 
 		// Business logic for a single sync cycle over all downloaders.
 		builder.Services.AddSingleton<SyncCycleService>();

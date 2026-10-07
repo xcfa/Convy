@@ -78,6 +78,9 @@ rules:
     path: /data/media/shows/favourite
   - condition: "SeedingTime > 86400"
     path: /data/media/archive
+  - name: soulseek-other                          # Soulseek downloads not placed above
+    condition: "Provider == slskd"
+    path: /data/media/soulseek
 ```
 
 The optional `name` on a rule lets you scope webhooks to specific rules — see
@@ -101,6 +104,7 @@ Common ones:
 | Property | Meaning |
 | --- | --- |
 | `Provider` | downloader that owns the item: `qbittorrent` or `slskd` |
+| `Username` | Soulseek peer the files come from (slskd items only) |
 | `Size`, `TotalSize`, `Downloaded`, `Uploaded` | byte counts |
 | `Ratio`, `Progress`, `Availability` | floats |
 | `Category`, `Name`, `Tracker`, `SavePath`, `ContentPath` | strings |
@@ -224,7 +228,8 @@ places the files with the same rules as everything else. Choosing a release is t
 job — Convy does not parse release names.
 
 Sources in this version: torrent trackers through **Prowlarr** (one source per indexer, id
-`prowlarr:<indexer id>`). Torrents are downloaded by qBittorrent.
+`prowlarr:<indexer id>`) and **Soulseek** through slskd (id `soulseek`). Torrents are
+downloaded by qBittorrent, Soulseek folders by slskd.
 
 ### Connecting
 
@@ -232,6 +237,8 @@ Sources in this version: torrent trackers through **Prowlarr** (one source per i
 | --- | --- |
 | `MCP__APIKEY` | Key the agent must send as `X-Api-Key` or `Authorization: Bearer`. Without it `/mcp` answers `503`. |
 | `PROWLARR__URL`, `PROWLARR__APIKEY` | Prowlarr connection. Without them no tracker source is offered. |
+| `SLSKD__URL`, `SLSKD__APIKEY` | slskd connection. Without them there is no Soulseek source and no slskd downloader. |
+| `SLSKD__DOWNLOADSPATH` | Optional: slskd's downloads directory as seen inside Convy, when it differs from slskd's own `directories.downloads`. |
 | `TORRENTMETADATA__CACHEDIRECTORY`, `TORRENTMETADATA__DHTPORT` | Optional: DHT cache directory and UDP port (0 = any) used to read magnet metadata. |
 
 `/mcp` is also subject to the IP allow-list. Example opencode configuration:
@@ -298,6 +305,22 @@ keeps loading in the background.
 `exclude` applies after `include`. They need the file list, so they are rejected when it could
 not be obtained; without them the whole result is downloaded. A pattern that matches no file is
 an error. For qBittorrent the selection becomes file priorities set before the torrent starts.
+
+### Soulseek
+
+A Soulseek result is one user's folder: search hits are grouped by user and remote folder
+and filtered by the category's `soulseek.extensions`; availability shows the peer's free
+upload slot, queue length and speed instead of seeders. `list_files` browses the whole folder
+(falling back to the search hits when the peer cannot be browsed), so covers and booklets can
+be included or excluded like any other file. `download` queues only the selected files.
+
+slskd stores a download under `<downloads>/<last remote folder>/` — its default destination
+(`transfers.download.destination.subdirectory: ${SOURCE_DIRECTORY}`), which Convy relies on.
+That folder is the root replaced by `subpath`. Convy treats all transfers from one user's folder
+as one item (`Provider == slskd`, plus `Username`; there is no `Ratio`, `Tags` or `State`).
+When some files fail for good (rejected, errored, timed out, with no retry pending), the job
+fails and lists them; placement does not happen. slskd's downloads directory must be on the
+same filesystem as the rule paths, like qBittorrent's.
 
 Before adding, Convy checks the per-job size limit (`jobs.max_size_gb`) and the free space in
 the client's download directory (`jobs.min_free_space_gb` is kept free). Asking the user before

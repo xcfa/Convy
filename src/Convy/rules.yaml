@@ -37,3 +37,8 @@ rules:
 
   - condition: "SeedingTime > 86400"
     path: /data/media/archive
+
+  # Soulseek downloads that no category rule above placed.
+  - name: soulseek-other
+    condition: "Provider == slskd"
+    path: /data/media/soulseek

@@ -61,6 +61,7 @@ public static class RuleProperties
 
         // ---- strings ----------------------------------------------------------
         Str("Provider"); // downloader owning the item: qbittorrent, slskd
+        Str("Username"); // Soulseek peer the files come from (slskd only)
         Str("Category");
         Str("ContentPath");
         Str("Hash");

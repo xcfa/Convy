@@ -312,6 +312,60 @@ public sealed class SyncCycleServiceTests : IDisposable
     }
 
     [Fact]
+    public async Task SoulseekJobUsesTheJobCategoryAndReplacesTheUserFolder()
+    {
+        var slskd = new FakeDownloader(DownloadProviders.Slskd, Sources.Protocol.Soulseek) { DownloadDirectory = "/data/slskd" };
+        var resolver = new DownloaderResolver([slskd]);
+        var cycle = new SyncCycleService(
+            resolver, _db, _rules, new DownloadStateTracker(new EfDownloadStateStore(_db)),
+            new FileLinkingService(_fs, NullLogger<FileLinkingService>.Instance), _webhooks, _jobs,
+            new JobTransitions(_jobs, _events), new StaticOptions<JobOptions>(_jobOptions), _fs,
+            new StorageLayoutValidator(resolver, _fs, _storage, _time, NullLogger<StorageLayoutValidator>.Instance),
+            _time, NullLogger<SyncCycleService>.Instance);
+
+        // A rule on Tags comes first: Soulseek items have no tags, so it must be skipped.
+        _rules.Yaml =
+            """
+            rules:
+              - name: untagged
+                condition: "!Tags.Contains(skip)"
+                path: /data/media/untagged
+              - name: music
+                condition: "Category == Music"
+                path: /data/media/music
+            """;
+
+        _fs.AddFile("/data/slskd/2003 - Fallen/01.flac");
+        _fs.AddFile("/data/slskd/2003 - Fallen/cover.jpg");
+        slskd.Items["bob/album"] = new DownloadItem
+        {
+            Provider = DownloadProviders.Slskd,
+            ItemRef = "bob/album",
+            Name = "2003 - Fallen",
+            SavePath = "/data/slskd",
+            State = DownloadState.Completed,
+            Files = [FakeDownloader.Done("2003 - Fallen/01.flac"), FakeDownloader.Done("2003 - Fallen/cover.jpg")],
+            Properties = new Dictionary<string, object?> { ["Name"] = "2003 - Fallen", ["Username"] = "bob" },
+        };
+
+        var job = await _jobs.CreateAsync(new JobRecord
+        {
+            Id = 0, Provider = DownloadProviders.Slskd, ItemRef = "bob/album", Category = "music", ClientCategory = "Music",
+            Subpath = "Evanescence/2003 - Fallen", Title = "Fallen", Status = JobStatus.Queued,
+            LastProgressAt = _time.Now, CreatedAt = _time.Now, UpdatedAt = _time.Now,
+        }, CancellationToken.None);
+
+        await cycle.RunAsync(CancellationToken.None);
+
+        Assert.Equal(
+            ["/data/media/music/Evanescence/2003 - Fallen/01.flac", "/data/media/music/Evanescence/2003 - Fallen/cover.jpg"],
+            LinkedDestinations());
+        var done = await Reload(job);
+        Assert.Equal(JobStatus.Completed, done.Status);
+        Assert.Equal("music", done.Rule);
+    }
+
+    [Fact]
     public async Task UnreachableDownloaderDoesNotBreakTheCycle()
     {
         _downloader.Unreachable = true;
