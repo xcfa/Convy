@@ -3,6 +3,7 @@ using System;
 using Convy.Data.Context;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Infrastructure;
+using Microsoft.EntityFrameworkCore.Migrations;
 using Microsoft.EntityFrameworkCore.Storage.ValueConversion;
 
 #nullable disable
@@ -10,9 +11,11 @@ using Microsoft.EntityFrameworkCore.Storage.ValueConversion;
 namespace Convy.Data.Migrations
 {
     [DbContext(typeof(ConvyDbContext))]
-    partial class ConvyDbContextModelSnapshot : ModelSnapshot
+    [Migration("20261007160112_ReplaceTorrentStatesWithDownloadStates")]
+    partial class ReplaceTorrentStatesWithDownloadStates
     {
-        protected override void BuildModel(ModelBuilder modelBuilder)
+        /// <inheritdoc />
+        protected override void BuildTargetModel(ModelBuilder modelBuilder)
         {
 #pragma warning disable 612, 618
             modelBuilder.HasAnnotation("ProductVersion", "10.0.9");
@@ -43,12 +46,8 @@ namespace Convy.Data.Migrations
 
             modelBuilder.Entity("Convy.Data.Entities.FileEntry", b =>
                 {
-                    b.Property<string>("Provider")
-                        .HasMaxLength(32)
-                        .HasColumnType("TEXT");
-
                     b.Property<string>("InfoHash")
-                        .HasMaxLength(1024)
+                        .HasMaxLength(128)
                         .HasColumnType("TEXT");
 
                     b.Property<string>("FilePath")
@@ -67,7 +66,7 @@ namespace Convy.Data.Migrations
                         .HasMaxLength(1024)
                         .HasColumnType("TEXT");
 
-                    b.HasKey("Provider", "InfoHash", "FilePath");
+                    b.HasKey("InfoHash", "FilePath");
 
                     b.ToTable("FileEntries");
                 });

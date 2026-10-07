@@ -1,4 +1,3 @@
-using Banned.Qbittorrent.Models.Torrent;
 using Convy.PathExpressions.Mappings;
 using Convy.PathExpressions.Parsing;
 using Xunit;
@@ -7,11 +6,11 @@ namespace Convy.PathExpressions.Tests;
 
 public class ConvyMappingsTests
 {
-    private static TorrentInfo Anime() => new()
+    private static Dictionary<string, object?> Anime() => new(StringComparer.OrdinalIgnoreCase)
     {
-        Size = 500,
-        Category = "Series",
-        TagList = ["anime"],
+        ["Size"] = 500.0,
+        ["Category"] = "Series",
+        ["Tags"] = new[] { "anime" },
     };
 
     [Fact]

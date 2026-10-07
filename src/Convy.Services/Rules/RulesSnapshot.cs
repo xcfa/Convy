@@ -1,4 +1,3 @@
-using Banned.Qbittorrent.Models.Torrent;
 using Convy.PathExpressions.Mappings;
 
 namespace Convy.Services.Rules
@@ -21,9 +20,9 @@ namespace Convy.Services.Rules
         public long Version { get; }
 
         /// <summary>The output path of the first matching rule, or <c>null</c>.</summary>
-        public string? Resolve(TorrentInfo info) => Mappings.Resolve(info);
+        public string? Resolve(IReadOnlyDictionary<string, object?> properties) => Mappings.Resolve(properties);
 
         /// <summary>The first matching rule, or <c>null</c>.</summary>
-        public MappingRule? ResolveRule(TorrentInfo info) => Mappings.ResolveRule(info);
+        public MappingRule? ResolveRule(IReadOnlyDictionary<string, object?> properties) => Mappings.ResolveRule(properties);
     }
 }

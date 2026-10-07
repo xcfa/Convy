@@ -42,13 +42,13 @@ internal sealed class FilterExpressionBuilder : TorrentFilterBaseVisitor<IExpres
         return prop.Kind switch
         {
             PropertyKind.Numeric => new NumericCompareExpression(
-                prop.Name, prop.Number!, op, ParseNumber(prop.Name, literal)),
+                prop.Name, op, ParseNumber(prop.Name, literal)),
 
             PropertyKind.Text => new StringCompareExpression(
-                prop.Name, prop.Text!, RequireEquality(prop, op), literal.AsString()),
+                prop.Name, RequireEquality(prop, op), literal.AsString()),
 
             PropertyKind.Boolean => new BoolCompareExpression(
-                prop.Name, prop.Boolean!, RequireEquality(prop, op), ParseBool(prop.Name, literal)),
+                prop.Name, RequireEquality(prop, op), ParseBool(prop.Name, literal)),
 
             PropertyKind.Collection => throw new FilterParseException(
                 $"Property '{prop.Name}' is a list and cannot be compared with '{op.ToSymbol()}'. " +
@@ -67,16 +67,16 @@ internal sealed class FilterExpressionBuilder : TorrentFilterBaseVisitor<IExpres
             throw new FilterParseException(
                 $"'.Contains(...)' is only valid on list properties; '{prop.Name}' is {prop.Kind}.");
 
-        return new ContainsExpression(prop.Name, prop.Collection!, ReadLiteral(context.value()).AsString());
+        return new ContainsExpression(prop.Name, ReadLiteral(context.value()).AsString());
     }
 
     // ---------------------------------------------------------------- helpers
 
-    private static TorrentProperty Resolve(string name) =>
-        TorrentInfoProperties.Find(name)
+    private static RuleProperty Resolve(string name) =>
+        RuleProperties.Find(name)
         ?? throw new FilterParseException($"Unknown property '{name}'.");
 
-    private static ComparisonOperator RequireEquality(TorrentProperty prop, ComparisonOperator op)
+    private static ComparisonOperator RequireEquality(RuleProperty prop, ComparisonOperator op)
     {
         if (!op.IsEquality())
             throw new FilterParseException(

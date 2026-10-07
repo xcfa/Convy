@@ -3,12 +3,13 @@ using Convy.Health;
 using Convy.Infrastructure.Helpers;
 using Convy.Middleware;
 using Convy.Services;
+using Convy.Services.Downloaders.QBittorrent;
+using Convy.Services.Downloads;
 using Convy.Services.Files;
 using Convy.Services.Linking;
 using Convy.Services.Sync;
 using Convy.Services.Rules;
 using Convy.Services.Security;
-using Convy.Services.Services;
 using Convy.Services.Settings;
 using Convy.Services.Tracking;
 using Convy.Services.Webhooks;
@@ -144,10 +145,10 @@ public class Program
 			return new RulesProvider(path, sp.GetRequiredService<ILogger<RulesProvider>>());
 		});
 
-		// State tracking: persists each torrent's completion/size so that after a
-		// restart only torrents that changed while we were down are reprocessed.
-		builder.Services.AddSingleton<ITorrentStateStore, EfTorrentStateStore>();
-		builder.Services.AddSingleton<ITorrentStateTracker, TorrentStateTracker>();
+		// State tracking: persists each download item's completion/size so that after a
+		// restart only items that changed while we were down are reprocessed.
+		builder.Services.AddSingleton<IDownloadStateStore, EfDownloadStateStore>();
+		builder.Services.AddSingleton<IDownloadStateTracker, DownloadStateTracker>();
 
 		// Hard-link creation.
 		builder.Services.AddSingleton<IFileLinker, FileLinker>();
@@ -164,8 +165,15 @@ public class Program
 				sp.GetRequiredService<ILogger<WebhookNotifier>>());
 		});
 
-		// Business logic for a single sync cycle (owns the qBittorrent connection).
-		builder.Services.AddSingleton<QBitTorrentCommunicationService>();
+		builder.Services.AddSingleton(TimeProvider.System);
+
+		// Downloaders: each client sits behind IDownloader; the resolver picks one by protocol.
+		builder.Services.AddSingleton<IQBittorrentApi, QBittorrentApi>();
+		builder.Services.AddSingleton<IDownloader, QBittorrentDownloader>();
+		builder.Services.AddSingleton<IDownloaderResolver, DownloaderResolver>();
+
+		// Business logic for a single sync cycle over all downloaders.
+		builder.Services.AddSingleton<SyncCycleService>();
 
 		// User settings persistence: writes to DB and triggers config provider reload.
 		builder.Services.AddSingleton<IUserSettingsService>(sp =>
@@ -180,9 +188,9 @@ public class Program
 		builder.Services.AddSingleton<ISyncControlService, SyncControlService>();
 
 		// Background sync loop — registered as singleton for DI + hosted service.
-		builder.Services.AddSingleton<QBitTorrentSyncService>();
-		builder.Services.AddSingleton<ISyncTrigger>(sp => sp.GetRequiredService<QBitTorrentSyncService>());
-		builder.Services.AddHostedService(sp => sp.GetRequiredService<QBitTorrentSyncService>());
+		builder.Services.AddSingleton<SyncWorker>();
+		builder.Services.AddSingleton<ISyncTrigger>(sp => sp.GetRequiredService<SyncWorker>());
+		builder.Services.AddHostedService(sp => sp.GetRequiredService<SyncWorker>());
 
 		var app = builder.Build();
 

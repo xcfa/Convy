@@ -7,7 +7,7 @@ namespace Convy.Data.Context
 	{
 		public DbSet<FileEntry> FileEntries => Set<FileEntry>();
 
-		public DbSet<TorrentStateEntry> TorrentStates => Set<TorrentStateEntry>();
+		public DbSet<DownloadStateEntry> DownloadStates => Set<DownloadStateEntry>();
 
 		public ConvyDbContext(DbContextOptions<ConvyDbContext> context)
 			: base(context)

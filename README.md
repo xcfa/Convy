@@ -302,8 +302,9 @@ downloads a JRE automatically the first time, so no separate Java installation i
 | Project | Responsibility |
 | --- | --- |
 | `Convy` | ASP.NET host: the polling worker, dependency injection, HTTP endpoints |
-| `Convy.Services` | qBittorrent communication, file linking, state tracker, webhook notifier |
-| `Convy.PathExpressions` | the rule language: ANTLR grammar, expression tree, mapping-file loader |
+| `Convy.Services` | downloaders (qBittorrent behind `IDownloader`), sync cycle, file linking, state tracker, webhook notifier |
+| `Convy.Sources` | contracts shared by sources and downloaders (protocols, download payloads) |
+| `Convy.PathExpressions` | the rule language: ANTLR grammar, expression tree over item properties, mapping-file loader |
 | `Convy.Data` | EF Core (SQLite) entities and migrations |
 | `Convy.Infrastructure` | low-level helpers (the native hard-link wrapper) |
 | `Tests/*` | unit tests for the rule language and the state tracker |
