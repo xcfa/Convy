@@ -1,14 +1,24 @@
 using Convy.Configuration;
 using Convy.Health;
 using Convy.Infrastructure.Helpers;
+using Convy.Mcp;
 using Convy.Middleware;
 using Convy.Services;
+using Convy.Services.Downloaders.QBittorrent;
+using Convy.Services.Downloaders.Slskd;
+using Convy.Services.Downloads;
 using Convy.Services.Files;
+using Convy.Services.Jobs;
+using Convy.Services.Media;
+using Convy.Services.Storage;
+using Convy.Sources;
+using Convy.Sources.Prowlarr;
+using Convy.Sources.Slskd;
+using Convy.Sources.Torrents;
 using Convy.Services.Linking;
 using Convy.Services.Sync;
 using Convy.Services.Rules;
 using Convy.Services.Security;
-using Convy.Services.Services;
 using Convy.Services.Settings;
 using Convy.Services.Tracking;
 using Convy.Services.Webhooks;
@@ -39,6 +49,8 @@ public class Program
 	private const string ConsoleOutputTemplate =
 		"[{Timestamp:yyyy-MM-dd HH:mm:ss} {Level:u3}] {Message:lj}{NewLine}{Exception}";
 
+	private const string TorrentMetadataOptionsSection = "TorrentMetadata";
+
 	public static async Task Main(string[] args)
 	{
 		// Capture failures during host construction until the full logger is built.
@@ -50,7 +62,14 @@ public class Program
 
 		builder.Configuration.AddJsonFile("config/appsettings.json", optional: true, reloadOnChange: true);
 		builder.Configuration.AddJsonFile($"config/appsettings.{builder.Environment.EnvironmentName}.json", optional: true, reloadOnChange: true);
-		builder.Configuration.AddYamlFile("config/configuration.yml", optional: true, reloadOnChange: true);
+		// User configuration; a broken edit keeps the previous version in effect.
+		builder.Configuration.Add<ResilientYamlConfigurationSource>(source =>
+		{
+			source.Path = "config/configuration.yml";
+			source.Optional = true;
+			source.ReloadOnChange = true;
+			source.ResolveFileProvider();
+		});
 		builder.Configuration.AddEnvironmentVariables();
 		builder.Configuration.AddKeyPerFile("/run/secrets", optional: true);  // секреты перекрывают env
 		var dbConfigSource = builder.Configuration.AddDbConfiguration();
@@ -135,7 +154,8 @@ public class Program
 		// unreachable. qBittorrent is a separate service; its availability is not part
 		// of Convy's health.
 		builder.Services.AddHealthChecks()
-			.AddCheck<DatabaseHealthCheck>("database");
+			.AddCheck<DatabaseHealthCheck>("database")
+			.AddCheck<StorageLayoutHealthCheck>("storage");
 
 		// Routing rules: loaded from a YAML file and reloaded when the file changes.
 		builder.Services.AddSingleton<IRulesProvider>(sp =>
@@ -144,28 +164,75 @@ public class Program
 			return new RulesProvider(path, sp.GetRequiredService<ILogger<RulesProvider>>());
 		});
 
-		// State tracking: persists each torrent's completion/size so that after a
-		// restart only torrents that changed while we were down are reprocessed.
-		builder.Services.AddSingleton<ITorrentStateStore, EfTorrentStateStore>();
-		builder.Services.AddSingleton<ITorrentStateTracker, TorrentStateTracker>();
+		// State tracking: persists each download item's completion/size so that after a
+		// restart only items that changed while we were down are reprocessed.
+		builder.Services.AddSingleton<IDownloadStateStore, EfDownloadStateStore>();
+		builder.Services.AddSingleton<IDownloadStateTracker, DownloadStateTracker>();
 
-		// Hard-link creation.
+		// Hard-link creation and filesystem checks (mounts, free space, symlink resolution).
 		builder.Services.AddSingleton<IFileLinker, FileLinker>();
+		builder.Services.AddSingleton<IFileSystemInspector, FileSystemInspector>();
 		builder.Services.AddSingleton<FileLinkingService>();
+		builder.Services.AddSingleton<StorageLayoutStatus>();
+		builder.Services.AddSingleton<StorageLayoutValidator>();
 
-		// Webhook notifications after successful linking.
-		builder.Services.AddSingleton<IWebhookNotifier>(sp =>
+		// Jobs: downloads started by the agent, with a unified status and placement wishes.
+		builder.Services
+			.AddOptions<JobOptions>()
+			.Bind(builder.Configuration.GetSection(JobOptions.SectionName));
+		builder.Services.AddSingleton<IJobStore, EfJobStore>();
+		builder.Services.AddSingleton<IJobEvents, WebhookJobEvents>();
+		builder.Services.AddSingleton<JobTransitions>();
+		builder.Services.AddSingleton<JobService>();
+
+		// Webhooks: the `linked` batch after each sync cycle, plus single events (job status,
+		// source errors) delivered with retries by a background dispatcher. The configuration
+		// is read on every send, so edits to configuration.yml apply without a restart.
+		builder.Services.Configure<List<WebhookConfig>>(builder.Configuration.GetSection("Webhooks"));
+		builder.Services.AddSingleton<WebhookConfigSource>();
+		builder.Services.AddSingleton<Func<IReadOnlyList<WebhookConfig>>>(sp =>
 		{
-			var configs = builder.Configuration.GetSection("Webhooks").Get<List<WebhookConfig>>()
-			               ?? new List<WebhookConfig>();
-			return new WebhookNotifier(
-				configs,
-				new HttpClient(),
-				sp.GetRequiredService<ILogger<WebhookNotifier>>());
+			var source = sp.GetRequiredService<WebhookConfigSource>();
+			return () => source.Current;
 		});
+		builder.Services.AddSingleton(sp => new WebhookSender(
+			new HttpClient(new SocketsHttpHandler { PooledConnectionLifetime = TimeSpan.FromMinutes(5) })
+			{
+				// A dead endpoint must not hold up the other webhooks for long.
+				Timeout = TimeSpan.FromSeconds(30),
+			},
+			sp.GetRequiredService<ILogger<WebhookSender>>()));
+		builder.Services.AddSingleton<IWebhookNotifier, WebhookNotifier>();
+		builder.Services.AddSingleton(new WebhookDeliveryOptions());
+		builder.Services.AddSingleton<WebhookEventDispatcher>();
+		builder.Services.AddSingleton<IWebhookEventQueue>(sp => sp.GetRequiredService<WebhookEventDispatcher>());
+		builder.Services.AddHostedService<WebhookDispatchWorker>();
+		builder.Services.AddSingleton<ISourceHealth, SourceHealthMonitor>();
 
-		// Business logic for a single sync cycle (owns the qBittorrent connection).
-		builder.Services.AddSingleton<QBitTorrentCommunicationService>();
+		builder.Services.AddSingleton(TimeProvider.System);
+
+		// Downloaders: each client sits behind IDownloader; the resolver picks one by protocol.
+		builder.Services.AddSingleton<IQBittorrentApi, QBittorrentApi>();
+		builder.Services.AddSingleton<IDownloader, QBittorrentDownloader>();
+		builder.Services.AddSingleton<IDownloaderResolver, DownloaderResolver>();
+
+		// slskd is both a source (Soulseek search) and a downloader; both use one client.
+		var slskdOptions = builder.Configuration.GetSection(SlskdOptions.SectionName).Get<SlskdOptions>()
+		                   ?? new SlskdOptions();
+		builder.Services.AddSingleton(_ => new SlskdClient(
+			new HttpClient(new SocketsHttpHandler { PooledConnectionLifetime = TimeSpan.FromMinutes(5) })
+			{
+				BaseAddress = slskdOptions.IsConfigured ? new Uri(slskdOptions.Url!.TrimEnd('/') + "/api/v0/") : null,
+			},
+			slskdOptions));
+		builder.Services.AddSingleton<ISourceProvider, SoulseekSourceProvider>();
+		if (slskdOptions.IsConfigured)
+		{
+			builder.Services.AddSingleton<IDownloader, SlskdDownloader>();
+		}
+
+		// Business logic for a single sync cycle over all downloaders.
+		builder.Services.AddSingleton<SyncCycleService>();
 
 		// User settings persistence: writes to DB and triggers config provider reload.
 		builder.Services.AddSingleton<IUserSettingsService>(sp =>
@@ -175,14 +242,51 @@ public class Program
 				ct => dbConfigSource.Provider?.ReloadAsync(ct) ?? Task.CompletedTask);
 		});
 
+		// ── Search and download for the agent (MCP) ─────────────────────────
+		builder.Services.AddOptions<CategoriesOptions>().Bind(builder.Configuration);
+		builder.Services.AddOptions<SearchOptions>().Bind(builder.Configuration.GetSection(SearchOptions.SectionName));
+		builder.Services.AddOptions<FilesOptions>().Bind(builder.Configuration.GetSection(FilesOptions.SectionName));
+		builder.Services.AddOptions<McpOptions>().Bind(builder.Configuration.GetSection(McpOptions.SectionName));
+
+		builder.Services.AddSingleton(builder.Configuration.GetSection(TorrentMetadataOptionsSection).Get<TorrentMetadataOptions>()
+		                              ?? new TorrentMetadataOptions());
+		builder.Services.AddSingleton<ITorrentMetadataService, TorrentMetadataService>();
+
+		// Prowlarr: one source per indexer. Its own HttpClient never follows redirects, because
+		// download links redirect to magnet: URIs (and must not leak the key to other hosts).
+		var prowlarrOptions = builder.Configuration.GetSection(ProwlarrOptions.SectionName).Get<ProwlarrOptions>()
+		                      ?? new ProwlarrOptions();
+		builder.Services.AddSingleton(prowlarrOptions);
+		builder.Services.AddSingleton(_ => new ProwlarrClient(
+			new HttpClient(new SocketsHttpHandler
+			{
+				AllowAutoRedirect = false,
+				PooledConnectionLifetime = TimeSpan.FromMinutes(5),
+			})
+			{
+				BaseAddress = prowlarrOptions.IsConfigured ? new Uri(prowlarrOptions.Url!.TrimEnd('/') + "/") : null,
+			},
+			prowlarrOptions));
+		builder.Services.AddSingleton<ISourceProvider, ProwlarrSourceProvider>();
+
+		builder.Services.AddSingleton<ISourceRegistry, SourceRegistry>();
+		builder.Services.AddSingleton<CategoryCatalog>();
+		builder.Services.AddSingleton<ISearchCache, EfSearchCache>();
+		builder.Services.AddSingleton<SearchService>();
+		builder.Services.AddSingleton<FileListingService>();
+		builder.Services.AddSingleton<MediaDownloadService>();
+		builder.Services.AddSingleton<MediaCatalogService>();
+		builder.Services.AddSingleton<McpApiKeyValidator>();
+		builder.Services.AddConvyMcp();
+
 		// Controller-facing services: all endpoint logic lives here, controllers only delegate.
 		builder.Services.AddScoped<IFileEntryQueryService, FileEntryQueryService>();
 		builder.Services.AddSingleton<ISyncControlService, SyncControlService>();
 
 		// Background sync loop — registered as singleton for DI + hosted service.
-		builder.Services.AddSingleton<QBitTorrentSyncService>();
-		builder.Services.AddSingleton<ISyncTrigger>(sp => sp.GetRequiredService<QBitTorrentSyncService>());
-		builder.Services.AddHostedService(sp => sp.GetRequiredService<QBitTorrentSyncService>());
+		builder.Services.AddSingleton<SyncWorker>();
+		builder.Services.AddSingleton<ISyncTrigger>(sp => sp.GetRequiredService<SyncWorker>());
+		builder.Services.AddHostedService(sp => sp.GetRequiredService<SyncWorker>());
 
 		var app = builder.Build();
 
@@ -232,6 +336,9 @@ public class Program
 		}
 
 		app.MapControllers();
+
+		// MCP endpoint for the agent; behind the IP allow-list and MCP__APIKEY.
+		app.MapConvyMcp();
 
 		app.MapHealthChecks("/health", new HealthCheckOptions
 		{

@@ -1,5 +1,3 @@
-using Banned.Qbittorrent.Models.Enums;
-using Banned.Qbittorrent.Models.Torrent;
 using Convy.PathExpressions.Parsing;
 using Xunit;
 
@@ -7,17 +5,17 @@ namespace Convy.PathExpressions.Tests;
 
 public class TorrentFilterTests
 {
-    private static TorrentInfo Sample() => new()
+    private static Dictionary<string, object?> Sample() => new(StringComparer.OrdinalIgnoreCase)
     {
-        Size = 500,
-        Uploaded = 0,
-        Category = "Test",
-        TagList = ["Test", "anime"],
-        Ratio = 1.8f,
-        Name = "My Favourite Show",
-        SeedingTime = TimeSpan.FromHours(30),
-        AutoTmmEnabled = true,
-        State = EnumTorrentState.StalledUpload,
+        ["Size"] = 500L,
+        ["Uploaded"] = 0L,
+        ["Category"] = "Test",
+        ["Tags"] = new List<string> { "Test", "anime" },
+        ["Ratio"] = 1.8f,
+        ["Name"] = "My Favourite Show",
+        ["SeedingTime"] = TimeSpan.FromHours(30),
+        ["AutoTmmEnabled"] = true,
+        ["State"] = "StalledUpload",
     };
 
     private static bool Eval(string filter) => TorrentFilter.Parse(filter).Evaluate(Sample());
@@ -88,9 +86,9 @@ public class TorrentFilterTests
     public void NullPropertyDoesNotMatch()
     {
         // Category left null -> any comparison against it is false, not an exception.
-        var info = new TorrentInfo { Size = 10 };
-        Assert.False(TorrentFilter.Parse("Category == Test").Evaluate(info));
-        Assert.False(TorrentFilter.Parse("Tags.Contains(x)").Evaluate(info));
+        var item = new Dictionary<string, object?> { ["Size"] = 10.0, ["Category"] = null, ["Tags"] = null };
+        Assert.False(TorrentFilter.Parse("Category == Test").Evaluate(item));
+        Assert.False(TorrentFilter.Parse("Tags.Contains(x)").Evaluate(item));
     }
 
     [Theory]

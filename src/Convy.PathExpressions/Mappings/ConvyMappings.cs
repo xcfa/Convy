@@ -1,4 +1,3 @@
-using Banned.Qbittorrent.Models.Torrent;
 using Convy.PathExpressions.Parsing;
 using YamlDotNet.Core;
 using YamlDotNet.Serialization;
@@ -27,12 +26,12 @@ public sealed class ConvyMappings
     /// <summary>An empty rule set (matches nothing).</summary>
     public static ConvyMappings Empty { get; } = new([]);
 
-    /// <summary>Returns the first rule that matches, or <c>null</c>.</summary>
-    public MappingRule? ResolveRule(TorrentInfo info)
+    /// <summary>Returns the first rule that matches the item's properties, or <c>null</c>.</summary>
+    public MappingRule? ResolveRule(IReadOnlyDictionary<string, object?> properties)
     {
         foreach (var rule in Rules)
         {
-            if (rule.Matches(info))
+            if (rule.Matches(properties))
                 return rule;
         }
 
@@ -40,7 +39,7 @@ public sealed class ConvyMappings
     }
 
     /// <summary>Returns the output path of the first rule that matches, or <c>null</c>.</summary>
-    public string? Resolve(TorrentInfo info) => ResolveRule(info)?.OutputPath;
+    public string? Resolve(IReadOnlyDictionary<string, object?> properties) => ResolveRule(properties)?.OutputPath;
 
     public static ConvyMappings LoadFromFile(string path) => ParseYaml(File.ReadAllText(path));
 

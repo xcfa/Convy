@@ -27,6 +27,7 @@
 
   <ItemGroup>
     <ProjectReference Include="..\Convy.Data\Convy.Data.csproj" />
+    <ProjectReference Include="..\Convy.Mcp\Convy.Mcp.csproj" />
     <ProjectReference Include="..\Convy.Services\Convy.Services.csproj" />
   </ItemGroup>
 

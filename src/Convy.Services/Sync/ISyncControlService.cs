@@ -19,6 +19,12 @@ public interface ISyncControlService
     /// already running, in which case nothing is triggered.
     /// </summary>
     bool TryTriggerSync();
+
+    /// <summary>
+    /// Queues a sync cycle outside the schedule. Never rejected: if a cycle is running,
+    /// another one starts right after it, so nothing finished in the meantime is missed.
+    /// </summary>
+    void QueueSync();
 }
 
 /// <summary>Current sync state.</summary>

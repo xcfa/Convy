@@ -1,23 +1,26 @@
 using Convy.Infrastructure.Helpers;
+using Convy.Services.Placement;
 using Microsoft.Extensions.Logging;
 
 namespace Convy.Services.Linking
 {
-    /// <summary>The result of linking a torrent's files into its destination.</summary>
+    /// <summary>The result of linking an item's files into its destination.</summary>
     /// <param name="NewlyLinked">
-    /// File names that should now be recorded as linked (freshly linked, or found already
-    /// present on disk and only needing a record).
+    /// Source paths (relative to the save path) that should now be recorded as linked (freshly
+    /// linked, or found already present on disk and only needing a record).
     /// </param>
     /// <param name="MissingSources">Files whose source wasn't present yet.</param>
     /// <param name="AllLinked">
     /// <c>true</c> when every file is now linked (nothing missing, no link failure).
     /// </param>
-    public readonly record struct LinkOutcome(IReadOnlyList<string> NewlyLinked, int MissingSources, bool AllLinked);
+    /// <param name="Errors">Messages of failed link attempts.</param>
+    public readonly record struct LinkOutcome(
+        IReadOnlyList<string> NewlyLinked, int MissingSources, bool AllLinked, IReadOnlyList<string> Errors);
 
     /// <summary>
     /// Pure linking logic over an <see cref="IFileLinker"/>: hard-links the given files
     /// into their destination (skipping ones already present on disk). The caller decides
-    /// which files still need linking; this has no dependency on qBittorrent or the
+    /// which files still need linking; this has no dependency on a downloader or the
     /// database, so it is straightforward to unit-test with a fake linker.
     /// </summary>
     public sealed class FileLinkingService
@@ -31,19 +34,24 @@ namespace Convy.Services.Linking
             _logger = logger;
         }
 
+        /// <summary>Links each file to the same relative path under <paramref name="targetPath"/>.</summary>
         public LinkOutcome LinkFiles(
             string savePath,
             string targetPath,
-            IEnumerable<string> fileNames)
+            IEnumerable<string> fileNames) =>
+            LinkPlanned(savePath, PlacementPlanner.PlanLinks(fileNames, targetPath, stripRoot: null));
+
+        /// <summary>Creates the planned links; sources are relative to <paramref name="savePath"/>.</summary>
+        public LinkOutcome LinkPlanned(string savePath, IEnumerable<PlannedLink> links)
         {
             var newlyLinked = new List<string>();
+            var errors = new List<string>();
             var missingSources = 0;
             var allLinked = true;
 
-            foreach (var name in fileNames)
+            foreach (var (name, dest) in links)
             {
                 var source = Path.Combine(savePath, name);
-                var dest = Path.Combine(targetPath, name);
 
                 // Already on disk but not recorded (e.g. a crash between linking and
                 // saving). Record it instead of re-linking, which would fail with EEXIST.
@@ -71,11 +79,12 @@ namespace Convy.Services.Linking
                 catch (Exception ex)
                 {
                     _logger.LogError(ex, "Failed to link {Source} -> {Dest}; will retry.", source, dest);
+                    errors.Add(ex.Message);
                     allLinked = false;
                 }
             }
 
-            return new LinkOutcome(newlyLinked, missingSources, allLinked);
+            return new LinkOutcome(newlyLinked, missingSources, allLinked, errors);
         }
     }
 }

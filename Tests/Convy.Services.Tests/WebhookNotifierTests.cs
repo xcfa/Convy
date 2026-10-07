@@ -36,7 +36,7 @@ public class WebhookNotifierTests
     private static WebhookNotifier Create(
         IReadOnlyList<WebhookConfig> configs,
         FakeHandler handler) =>
-        new(configs, new HttpClient(handler), NullLogger<WebhookNotifier>.Instance);
+        new(() => configs, new WebhookSender(new HttpClient(handler), NullLogger<WebhookSender>.Instance));
 
     private static WebhookBatch BatchWith(
         IReadOnlyDictionary<string, string>[]? linked = null,
@@ -389,6 +389,21 @@ public class WebhookNotifierTests
         await notifier.NotifyAsync(batch, CancellationToken.None);
 
         Assert.Empty(handler.Requests);
+    }
+
+    [Fact]
+    public async Task WebhooksWithoutLinkedEventAreNotCalled()
+    {
+        var handler = new FakeHandler();
+        var notifier = Create(
+        [
+            new WebhookConfig { Url = "https://jobs.example.com/hook", Events = ["job_status"] },
+            new WebhookConfig { Url = "https://both.example.com/hook", Events = ["job_status", "linked"] },
+        ], handler);
+
+        await notifier.NotifyAsync(BatchWith([Torrent1]), CancellationToken.None);
+
+        Assert.Equal("both.example.com", Assert.Single(handler.Requests).Uri.Host);
     }
 
     internal sealed class FakeHandler : HttpMessageHandler

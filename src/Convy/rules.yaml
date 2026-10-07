@@ -13,6 +13,9 @@
 #   logic:        &&   ||   !   ( )
 #   strings:      bare words, or "quoted when they contain spaces"
 #   durations are seconds, timestamps unix-seconds, State matches its name
+#   Provider is the downloader that owns the item: qbittorrent or slskd
+#   a rule that references a property the item lacks (e.g. Ratio or Tags on a
+#   Soulseek download) is skipped as a whole for that item
 #
 # path — destination directory. It must be on the SAME filesystem as the torrent's
 # save path (hard links cannot cross filesystems).
@@ -34,3 +37,8 @@ rules:
 
   - condition: "SeedingTime > 86400"
     path: /data/media/archive
+
+  # Soulseek downloads that no category rule above placed.
+  - name: soulseek-other
+    condition: "Provider == slskd"
+    path: /data/media/soulseek

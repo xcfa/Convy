@@ -24,6 +24,8 @@ COPY ["src/Convy.Services/Convy.Services.csproj", "src/Convy.Services/"]
 COPY ["src/Convy.Data/Convy.Data.csproj", "src/Convy.Data/"]
 COPY ["src/Convy.PathExpressions/Convy.PathExpressions.csproj", "src/Convy.PathExpressions/"]
 COPY ["src/Convy.Infrastructure/Convy.Infrastructure.csproj", "src/Convy.Infrastructure/"]
+COPY ["src/Convy.Sources/Convy.Sources.csproj", "src/Convy.Sources/"]
+COPY ["src/Convy.Mcp/Convy.Mcp.csproj", "src/Convy.Mcp/"]
 RUN dotnet restore "src/Convy/Convy.csproj"
 
 COPY . .

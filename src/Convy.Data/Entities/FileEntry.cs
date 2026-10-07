@@ -4,10 +4,15 @@ using Microsoft.EntityFrameworkCore;
 
 namespace Convy.Data.Entities
 {
-	[PrimaryKey(nameof(InfoHash), nameof(FilePath))]
+	[PrimaryKey(nameof(Provider), nameof(InfoHash), nameof(FilePath), nameof(TargetPath))]
 	public class FileEntry
 	{
-		[MaxLength(128)]
+		/// <summary>Downloader that owns the item (<c>qbittorrent</c>, <c>slskd</c>).</summary>
+		[MaxLength(32)]
+		public required string Provider { get; set; }
+
+		/// <summary>Item reference inside the downloader: the info hash for torrents.</summary>
+		[MaxLength(1024)]
 		public required string InfoHash { get; set; }
 
 		[MaxLength(2048)]

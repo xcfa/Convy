@@ -1,4 +1,4 @@
-using Banned.Qbittorrent.Models.Torrent;
+using Convy.PathExpressions.Properties;
 
 namespace Convy.PathExpressions.Expressions;
 
@@ -10,25 +10,22 @@ namespace Convy.PathExpressions.Expressions;
 public sealed class ContainsExpression : IExpression
 {
     private readonly string _propertyName;
-    private readonly Func<TorrentInfo, IEnumerable<string>?> _accessor;
     private readonly string _value;
     private readonly StringComparison _comparison;
 
     public ContainsExpression(
         string propertyName,
-        Func<TorrentInfo, IEnumerable<string>?> accessor,
         string value,
         StringComparison comparison = StringComparison.OrdinalIgnoreCase)
     {
         _propertyName = propertyName;
-        _accessor = accessor;
         _value = value;
         _comparison = comparison;
     }
 
-    public bool Evaluate(TorrentInfo info)
+    public bool Evaluate(IReadOnlyDictionary<string, object?> properties)
     {
-        var items = _accessor(info);
+        var items = PropertyValues.Collection(properties, _propertyName);
         if (items is null)
             return false;
 
@@ -40,6 +37,8 @@ public sealed class ContainsExpression : IExpression
 
         return false;
     }
+
+    public void CollectProperties(ISet<string> names) => names.Add(_propertyName);
 
     public override string ToString() => $"{_propertyName}.Contains({_value})";
 }
