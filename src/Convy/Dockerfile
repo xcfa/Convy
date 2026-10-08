@@ -40,10 +40,14 @@ RUN dotnet restore "src/Convy/Convy.csproj"
 COPY . .
 # The built UI is published with the app as wwwroot.
 COPY --from=ui /ui src/Convy/wwwroot
+# App version, e.g. 2.0.0 from the git tag v2.0.0 (set by CI); empty keeps the project default.
+# Declared after the restore so a new version does not invalidate the restore cache.
+ARG VERSION=
 # Map Docker's TARGETARCH (amd64/arm64) to the .NET RID arch (x64/arm64). The -a flag
 # pulls the right native bits (e.g. SQLite's e_sqlite3) for the target.
 RUN DOTNET_ARCH="$(echo "$TARGETARCH" | sed 's/amd64/x64/')" \
- && dotnet publish "src/Convy/Convy.csproj" -c "$BUILD_CONFIGURATION" -a "$DOTNET_ARCH" -o /app/publish /p:UseAppHost=false
+ && dotnet publish "src/Convy/Convy.csproj" -c "$BUILD_CONFIGURATION" -a "$DOTNET_ARCH" -o /app/publish /p:UseAppHost=false \
+    ${VERSION:+"/p:Version=$VERSION"}
 
 # Stage app-owned data and log directories to copy into the final image without a RUN, so the
 # final, target-arch stage executes no foreign code.
