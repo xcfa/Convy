@@ -10,6 +10,15 @@ EXPOSE 8080
 EXPOSE 8081
 
 
+# The web UI is plain static files, so it is built once on the build platform for every target.
+FROM --platform=$BUILDPLATFORM node:24-alpine AS ui
+WORKDIR /frontend
+COPY ["frontend/package.json", "frontend/package-lock.json", "./"]
+RUN npm ci
+COPY frontend/ ./
+RUN npm run build -- --outDir /ui --emptyOutDir
+
+
 # Build on the native build platform and cross-publish for $TARGETARCH. This keeps the
 # heavy work (restore, ANTLR codegen, compile) native, so multi-arch images build
 # without QEMU emulation.
@@ -29,6 +38,8 @@ COPY ["src/Convy.Mcp/Convy.Mcp.csproj", "src/Convy.Mcp/"]
 RUN dotnet restore "src/Convy/Convy.csproj"
 
 COPY . .
+# The built UI is published with the app as wwwroot.
+COPY --from=ui /ui src/Convy/wwwroot
 # Map Docker's TARGETARCH (amd64/arm64) to the .NET RID arch (x64/arm64). The -a flag
 # pulls the right native bits (e.g. SQLite's e_sqlite3) for the target.
 RUN DOTNET_ARCH="$(echo "$TARGETARCH" | sed 's/amd64/x64/')" \

@@ -449,6 +449,103 @@ every download directory of every client, and that those directories are visible
 container. Problems are logged as errors and turn the `storage` check (and the overall
 status) into `Degraded`, which still answers `200`.
 
+## Web UI
+
+Convy serves a small web interface at `/`:
+
+- **Overview** — sync state (schedule, last cycle, "Sync now"), every downloader with the
+  outcome of its last read, search sources, the storage-layout check, job counts, version.
+- **Jobs** — the agent's jobs with live progress, filtered by status; active ones can be
+  cancelled (downloaded data and links are kept).
+- **Logs** — the last 5000 log entries kept in memory, followed live, filtered by level and
+  text. The full log stays in the console and the log files.
+- **Database** — every table read-only, with search, sorting and paging. Values that hold
+  secrets are never sent: a search result's content id (it contains the Prowlarr API key)
+  is left out, and binary columns (`.torrent` files) are shown only as their size.
+
+The UI is **off until sign-in is configured**. Users sign in with OpenID Connect; Convy is
+tested against Authelia's behaviour, but any provider with the authorization-code flow works.
+Only `/`, its assets and `/api/ui` are protected this way: `/mcp` keeps its API key, and
+`/sync`, `/health` and `/api/v1` stay behind the IP allow-list alone, so hooks and the agent
+need no sign-in. The IP allow-list applies to the UI as well.
+
+| Setting | Purpose |
+| --- | --- |
+| `UI__OIDC__AUTHORITY` | The provider, e.g. `https://auth.example.com` (Authelia's root URL). |
+| `UI__OIDC__CLIENTID` | The client id registered at the provider. |
+| `Ui__Oidc__ClientSecret` | The client secret. Pass it as a **Docker secret** with this name. |
+| `UI__PUBLICURL` | The address users open, e.g. `https://convy.example.com`. Needed behind a reverse proxy, so the sign-in callback and cookies use the public scheme and host. Convy must be served at the root of that host. |
+| `UI__OIDC__ALLOWEDGROUPS__0`, `__1`, … | Optional: only members of these groups get in (others see "Access denied"). Without it any user the provider lets through is accepted. |
+| `UI__OIDC__LOGOUTURL` | Optional: where "Sign out" goes after ending Convy's session, e.g. `https://auth.example.com/logout`; Convy adds `rd=<public url>`. Without it only Convy's session ends. |
+| `UI__OIDC__SCOPES__0`, … | Optional: scopes to request; default `openid profile email groups`. |
+| `UI__OIDC__REQUIREHTTPSMETADATA` | `true` by default. Only turn off to test against a provider on plain HTTP. |
+| `UI__AUTH` | `oidc` (default) or `none`: no sign-in at all, the UI is protected by the IP allow-list only. |
+
+These settings are read at startup. The startup log says which mode the UI is in, or why it
+is off. The secret in docker-compose:
+
+```yaml
+services:
+  convy:
+    environment:
+      UI__PUBLICURL: "https://convy.example.com"
+      UI__OIDC__AUTHORITY: "https://auth.example.com"
+      UI__OIDC__CLIENTID: "convy"
+    secrets:
+      - source: convy_oidc_secret
+        target: Ui__Oidc__ClientSecret   # read from /run/secrets/Ui__Oidc__ClientSecret
+
+secrets:
+  convy_oidc_secret:
+    file: ./secrets/convy_oidc_secret
+```
+
+### Authelia client
+
+Register Convy in Authelia's `identity_providers.oidc.clients` (Authelia 4.38 or newer):
+
+```yaml
+- client_id: 'convy'
+  client_name: 'Convy'
+  client_secret: '$pbkdf2-sha512$310000$...'   # digest of the secret given to Convy
+  public: false
+  authorization_policy: 'two_factor'
+  redirect_uris:
+    - 'https://convy.example.com/signin-oidc'
+  scopes: ['openid', 'profile', 'email', 'groups']
+  response_types: ['code']
+  grant_types: ['authorization_code']
+  require_pkce: true
+  pkce_challenge_method: 'S256'
+  token_endpoint_auth_method: 'client_secret_post'   # required: Convy sends the secret in the body
+  consent_mode: 'pre-configured'
+  pre_configured_consent_duration: '1 month'
+```
+
+Generate the secret and its digest with
+`authelia crypto hash generate pbkdf2 --variant sha512 --random --random.length 72 --random.charset rfc3986`:
+the random password goes into Convy's Docker secret, the digest into `client_secret`.
+
+Things that commonly go wrong:
+
+- **`token_endpoint_auth_method`** must be `client_secret_post`. Authelia's default for a
+  confidential client is `client_secret_basic`, and the sign-in then fails with
+  `invalid_client`.
+- **The redirect URI** must match exactly. It is `<UI__PUBLICURL>/signin-oidc`; without
+  `UI__PUBLICURL` behind a proxy Convy would build an internal `http://…` address.
+- **Groups**: Authelia 4.39+ puts groups and the user name only into the userinfo response;
+  Convy reads them from there, nothing to configure.
+- **Sign-out**: Authelia has no OIDC end-session endpoint. Set `UI__OIDC__LOGOUTURL` to
+  `https://auth.example.com/logout` to end the Authelia session too (Authelia only follows
+  `rd` to an https address inside its cookie domain).
+- **Convy must reach Authelia by its public URL** (discovery, keys, token exchange) and
+  trust its certificate. Inside Docker, give the reverse proxy a network alias for the
+  Authelia host name.
+
+Sessions last 12 hours (sliding). The keys that protect the session cookie are stored next
+to the database in `keys/` (e.g. `/var/lib/convy/keys`), so keep that directory on the
+volume or every restart signs everyone out.
+
 ## Running
 
 1. Copy `.env.example` to `.env` and fill in your qBittorrent details. `.env` is
@@ -522,6 +619,17 @@ dotnet build Convy.slnx
 dotnet test Convy.slnx
 ```
 
+The web UI lives in `frontend/` (React, TypeScript, Vite) and needs Node.js 24. `npm run build`
+writes it into `src/Convy/wwwroot`, where Convy serves it from; the Docker image builds it in
+its own stage. For UI work, run Convy (`dotnet run --project src/Convy`) and the Vite dev
+server, which forwards the API to it:
+
+```bash
+cd frontend
+npm ci
+npm run dev
+```
+
 The expression language is generated from an ANTLR grammar at build time; the build task
 downloads a JRE automatically the first time, so no separate Java installation is needed.
 
@@ -530,6 +638,7 @@ downloads a JRE automatically the first time, so no separate Java installation i
 | Project | Responsibility |
 | --- | --- |
 | `Convy` | ASP.NET host: the polling worker, dependency injection, HTTP endpoints |
+| `frontend` | the web UI (React + Vite), built into `src/Convy/wwwroot` |
 | `Convy.Services` | downloaders (qBittorrent behind `IDownloader`), sync cycle, file linking, state tracker, webhook notifier |
 | `Convy.Sources` | search sources (Prowlarr), torrent metadata (.torrent parsing, magnet metadata from DHT), shared contracts |
 | `Convy.Mcp` | MCP tool definitions, a thin layer over the services |
