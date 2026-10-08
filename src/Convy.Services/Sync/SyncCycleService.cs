@@ -38,6 +38,7 @@ public sealed class SyncCycleService
     private readonly IOptionsMonitor<JobOptions> _jobOptions;
     private readonly IFileSystemInspector _fileSystem;
     private readonly StorageLayoutValidator _storageValidator;
+    private readonly SyncStatusTracker _syncStatus;
     private readonly TimeProvider _timeProvider;
     private readonly ILogger<SyncCycleService> _logger;
 
@@ -56,6 +57,7 @@ public sealed class SyncCycleService
         IOptionsMonitor<JobOptions> jobOptions,
         IFileSystemInspector fileSystem,
         StorageLayoutValidator storageValidator,
+        SyncStatusTracker syncStatus,
         TimeProvider timeProvider,
         ILogger<SyncCycleService> logger)
     {
@@ -70,11 +72,32 @@ public sealed class SyncCycleService
         _jobOptions = jobOptions;
         _fileSystem = fileSystem;
         _storageValidator = storageValidator;
+        _syncStatus = syncStatus;
         _timeProvider = timeProvider;
         _logger = logger;
     }
 
     public async Task RunAsync(CancellationToken cancellationToken)
+    {
+        _syncStatus.CycleStarted(_timeProvider.GetUtcNow());
+        string? error = null;
+
+        try
+        {
+            await RunCycleAsync(cancellationToken).ConfigureAwait(false);
+        }
+        catch (Exception ex)
+        {
+            error = ex is OperationCanceledException ? "Cancelled." : ex.Message;
+            throw;
+        }
+        finally
+        {
+            _syncStatus.CycleFinished(_timeProvider.GetUtcNow(), error);
+        }
+    }
+
+    private async Task RunCycleAsync(CancellationToken cancellationToken)
     {
         // Capture an immutable rules snapshot once per cycle; a concurrent reload only
         // affects the next cycle, so there is no race with this run.
@@ -100,7 +123,10 @@ public sealed class SyncCycleService
         {
             try
             {
-                await SyncDownloaderAsync(downloader, rules, webhookBatch, cancellationToken).ConfigureAwait(false);
+                var (items, processed) = await SyncDownloaderAsync(downloader, rules, webhookBatch, cancellationToken)
+                    .ConfigureAwait(false);
+                _syncStatus.DownloaderSynced(new DownloaderSyncResult(
+                    downloader.Provider, _timeProvider.GetUtcNow(), true, items, processed, null));
             }
             catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
             {
@@ -109,6 +135,8 @@ public sealed class SyncCycleService
             catch (Exception ex)
             {
                 _logger.LogError(ex, "{Provider} sync failed.", downloader.Provider);
+                _syncStatus.DownloaderSynced(new DownloaderSyncResult(
+                    downloader.Provider, _timeProvider.GetUtcNow(), false, 0, 0, ex.Message));
             }
         }
 
@@ -138,7 +166,8 @@ public sealed class SyncCycleService
         }
     }
 
-    private async Task SyncDownloaderAsync(
+    /// <returns>How many items the downloader reported and how many changes were handled.</returns>
+    private async Task<(int Items, int Processed)> SyncDownloaderAsync(
         IDownloader downloader, RulesSnapshot rules, WebhookBatch webhookBatch, CancellationToken cancellationToken)
     {
         var provider = downloader.Provider;
@@ -164,7 +193,7 @@ public sealed class SyncCycleService
 
         if (work.Count == 0)
         {
-            return;
+            return (items.Count, 0);
         }
 
         _logger.LogInformation("{Count} {Provider} change(s) to process.", work.Count, provider);
@@ -217,6 +246,8 @@ public sealed class SyncCycleService
         // Advance the tracker baseline only after the links are durably recorded.
         await _tracker.ConfirmProcessedAsync(provider, processed, cancellationToken).ConfigureAwait(false);
         await _tracker.MarkSkippedAsync(provider, skipped, cancellationToken).ConfigureAwait(false);
+
+        return (items.Count, processed.Count + skipped.Count);
     }
 
     /// <summary>

@@ -27,6 +27,7 @@ public sealed class SyncCycleServiceTests : IDisposable
     private readonly RecordingWebhooks _webhooks = new();
     private readonly RecordingJobEvents _events = new();
     private readonly StorageLayoutStatus _storage = new();
+    private readonly SyncStatusTracker _syncStatus = new();
     private readonly EfJobStore _jobs;
     private readonly JobOptions _jobOptions = new() { MaxPlacementAttempts = 3 };
     private readonly SyncCycleService _cycle;
@@ -47,6 +48,7 @@ public sealed class SyncCycleServiceTests : IDisposable
             new StaticOptions<JobOptions>(_jobOptions),
             _fs,
             new StorageLayoutValidator(resolver, _fs, _storage, _time, NullLogger<StorageLayoutValidator>.Instance),
+            _syncStatus,
             _time,
             NullLogger<SyncCycleService>.Instance);
     }
@@ -98,6 +100,32 @@ public sealed class SyncCycleServiceTests : IDisposable
         var batch = Assert.Single(_webhooks.Batches);
         Assert.Equal("movies", Assert.Single(batch.Linked).RuleName);
         Assert.Empty(_events.Changes);
+    }
+
+    [Fact]
+    public async Task RecordsTheCycleAndEachDownloadersOutcome()
+    {
+        AddCompletedItem("h1", "Movies", "Movie.2019/movie.mkv");
+        _downloader.Items["h2"] = FakeDownloader.Item("h2", DownloadState.Downloading);
+
+        await Run();
+
+        var cycle = _syncStatus.LastCycle!;
+        Assert.Equal(_time.Now, cycle.StartedAt);
+        Assert.Equal(_time.Now, cycle.FinishedAt);
+        Assert.Null(cycle.Error);
+        // Both items are reported; only the finished one needed work.
+        var result = Assert.Single(_syncStatus.Downloaders);
+        Assert.Equal((DownloadProviders.QBittorrent, true, 2, 1, (string?)null),
+            (result.Provider, result.Ok, result.Items, result.Processed, result.Error));
+
+        _downloader.Unreachable = true;
+        await Run();
+
+        result = Assert.Single(_syncStatus.Downloaders);
+        Assert.False(result.Ok);
+        Assert.Equal("down", result.Error);
+        Assert.Null(_syncStatus.LastCycle!.Error);
     }
 
     [Fact]
@@ -369,7 +397,7 @@ public sealed class SyncCycleServiceTests : IDisposable
             new FileLinkingService(_fs, NullLogger<FileLinkingService>.Instance), _webhooks, _jobs,
             new JobTransitions(_jobs, _events), new StaticOptions<JobOptions>(_jobOptions), _fs,
             new StorageLayoutValidator(resolver, _fs, _storage, _time, NullLogger<StorageLayoutValidator>.Instance),
-            _time, NullLogger<SyncCycleService>.Instance);
+            new SyncStatusTracker(), _time, NullLogger<SyncCycleService>.Instance);
 
         // A rule on Tags comes first: Soulseek items have no tags, so it must be skipped.
         _rules.Yaml =

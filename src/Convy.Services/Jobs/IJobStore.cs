@@ -14,6 +14,9 @@ public interface IJobStore
     /// <summary>Newest jobs first, optionally filtered by status.</summary>
     Task<IReadOnlyList<JobRecord>> ListAsync(JobStatus? status, int limit, CancellationToken cancellationToken);
 
+    /// <summary>How many jobs there are in each status; statuses without jobs are left out.</summary>
+    Task<IReadOnlyDictionary<JobStatus, int>> CountByStatusAsync(CancellationToken cancellationToken);
+
     /// <summary>
     /// Jobs that drive placement for the provider's items: every job that is not cancelled,
     /// newest last. Terminal jobs are included so re-emitted items keep their job context.

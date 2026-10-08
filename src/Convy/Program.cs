@@ -22,6 +22,8 @@ using Convy.Services.Security;
 using Convy.Services.Settings;
 using Convy.Services.Tracking;
 using Convy.Services.Webhooks;
+using Convy.Services.Diagnostics;
+using Convy.Ui;
 using Microsoft.AspNetCore.Builder;
 using Microsoft.AspNetCore.Diagnostics.HealthChecks;
 using Microsoft.Extensions.Configuration;
@@ -60,6 +62,10 @@ public class Program
 
 		var builder = WebApplication.CreateBuilder(args);
 
+		// Recent log entries for the web UI; filled by a Serilog sink below.
+		var logBuffer = new LogBuffer();
+		builder.Services.AddSingleton(logBuffer);
+
 		builder.Configuration.AddJsonFile("config/appsettings.json", optional: true, reloadOnChange: true);
 		builder.Configuration.AddJsonFile($"config/appsettings.{builder.Environment.EnvironmentName}.json", optional: true, reloadOnChange: true);
 		// User configuration; a broken edit keeps the previous version in effect.
@@ -83,6 +89,7 @@ public class Program
 			.MinimumLevel.Override("Microsoft.AspNetCore", LogEventLevel.Warning)
 			.Enrich.FromLogContext()
 			.WriteTo.Console(outputTemplate: ConsoleOutputTemplate)
+			.WriteTo.Sink(new LogBufferSink(logBuffer))
 			.ReadFrom.Configuration(context.Configuration));
 
 		builder.Services
@@ -232,6 +239,7 @@ public class Program
 		}
 
 		// Business logic for a single sync cycle over all downloaders.
+		builder.Services.AddSingleton<SyncStatusTracker>();
 		builder.Services.AddSingleton<SyncCycleService>();
 
 		// User settings persistence: writes to DB and triggers config provider reload.
@@ -283,6 +291,9 @@ public class Program
 		builder.Services.AddScoped<IFileEntryQueryService, FileEntryQueryService>();
 		builder.Services.AddSingleton<ISyncControlService, SyncControlService>();
 
+		// Web UI (logs, status, database) with OIDC sign-in; see Ui/UiSetup.cs.
+		builder.AddConvyUi(connectionString);
+
 		// Background sync loop — registered as singleton for DI + hosted service.
 		builder.Services.AddSingleton<SyncWorker>();
 		builder.Services.AddSingleton<ISyncTrigger>(sp => sp.GetRequiredService<SyncWorker>());
@@ -328,6 +339,10 @@ public class Program
 			});
 		}
 
+		// Web UI sign-in. Must come before the HTTPS redirect: it may set the public scheme
+		// of the request (Ui:PublicUrl).
+		app.UseConvyUi();
+
 		// In dev/containers we expose plain HTTP and test over it (Postman/Swagger); redirecting
 		// to HTTPS here would bounce those calls to a port that isn't mapped outside the container.
 		if (!app.Environment.IsDevelopment())
@@ -336,6 +351,7 @@ public class Program
 		}
 
 		app.MapControllers();
+		app.MapConvyUi();
 
 		// MCP endpoint for the agent; behind the IP allow-list and MCP__APIKEY.
 		app.MapConvyMcp();
