@@ -354,18 +354,23 @@ an error. For qBittorrent the selection becomes file priorities set before the t
 
 A Soulseek result is one user's folder: search hits are grouped by user and remote folder
 and filtered by the category's `soulseek.extensions`; availability shows the peer's free
-upload slot, queue length and speed instead of seeders. `list_files` browses the folder (falling back to
-the search hits when the peer cannot be browsed), so covers and booklets can be included or
-excluded like any other file; subfolders (`CD2`, `Scans`) are separate results, because slskd
-stores every remote folder in its own local folder. `download` queues only the selected files.
+upload slot, queue length and speed instead of seeders. A result includes the folder's subfolders (`CD2`,
+`Scans`), and disc folders found by the search (`CD1`, `Disc 2`) are grouped into one release.
+`list_files` browses the folder (adding the search hits, or relying on them when the peer
+cannot be browsed), so covers and booklets can be included or excluded like any other file.
+`download` queues only the selected files.
 
-slskd stores a download under `<downloads>/<last remote folder>/` — its default destination
-(`transfers.download.destination.subdirectory: ${SOURCE_DIRECTORY}`), which Convy relies on.
-That folder is the root replaced by `subpath`. Convy treats all transfers from one user's folder
-as one item (`Provider == slskd`, plus `Username`; there is no `Ratio`, `Tags` or `State`).
-When some files fail for good (rejected, errored, timed out, with no retry pending), the job
-fails and lists them; placement does not happen. slskd's downloads directory must be on the
-same filesystem as the rule paths, like qBittorrent's.
+Convy needs **slskd 0.26 or newer**: it queues a download as batches with an explicit
+destination, one per subfolder, under `<downloads>/convy/<key>/<folder>/` (the key identifies
+the user's folder). The folder keeps its structure, and two folders with the same name (two
+`CD2`s, two releases called "Greatest Hits") never clash. `<folder>` is the root replaced by
+`subpath`. Convy treats all transfers of one user's folder as one item (`Provider == slskd`,
+plus `Username`; there is no `Ratio`, `Tags` or `State`). Downloads started in slskd itself
+keep slskd's default layout (`<downloads>/<last remote folder>/`) and are one item per remote
+folder. When some files fail for good (rejected, errored, timed out, with no retry pending),
+the job fails and lists them; placement does not happen. slskd's downloads directory must be on
+the same filesystem as the rule paths, like qBittorrent's. Cleaning up `<downloads>/convy`
+after placement is left to you.
 
 Before adding, Convy checks the per-job size limit (`jobs.max_size_gb`) and the free space in
 the client's download directory (`jobs.min_free_space_gb` is kept free). Asking the user before

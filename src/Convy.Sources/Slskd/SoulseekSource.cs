@@ -84,7 +84,7 @@ public sealed class SoulseekSource : IContentSource
         var folders = responses
             .SelectMany(r => (r.Files ?? []).Select(f => (Response: r, File: f)))
             .Where(x => extensions.Count == 0 || extensions.Contains(ExtensionOf(x.File.Filename)))
-            .GroupBy(x => (x.Response.Username, Directory: SoulseekPaths.DirectoryOf(x.File.Filename)));
+            .GroupBy(x => (x.Response.Username, Directory: ReleaseDirectoryOf(x.File.Filename)));
 
         foreach (var folder in folders)
         {
@@ -131,26 +131,26 @@ public sealed class SoulseekSource : IContentSource
     }
 
     /// <summary>
-    /// Every file of the user's folder as the peer shares it now. Subfolders are not part of
-    /// the result: slskd saves each remote folder into its own local folder, so they are
-    /// separate results. When the peer cannot be browsed (offline, browsing disabled), the
-    /// files found by the search are used.
+    /// Every file of the user's folder and its subfolders as the peer shares them now, plus
+    /// the files found by the search (peers do not always return subfolders when browsed).
+    /// When the peer cannot be browsed (offline, browsing disabled), the search hits are used.
     /// </summary>
     private async Task<IReadOnlyList<SlskdEnqueueFile>> GetFolderFilesAsync(SoulseekContentRef reference, CancellationToken cancellationToken)
     {
+        var files = new Dictionary<string, SlskdEnqueueFile>(StringComparer.Ordinal);
+
         try
         {
             var directories = await _client.BrowseDirectoryAsync(reference.Username, reference.Directory, cancellationToken)
                 .ConfigureAwait(false);
 
-            var files = directories
-                .Where(d => d.Name == reference.Directory)
-                .SelectMany(d => (d.Files ?? []).Select(f => new SlskdEnqueueFile(d.Name + "\\" + f.Filename, f.Size)))
-                .ToList();
-
-            if (files.Count > 0)
+            foreach (var directory in directories.Where(d => SoulseekPaths.IsUnder(d.Name, reference.Directory)))
             {
-                return files;
+                foreach (var file in directory.Files ?? [])
+                {
+                    var filename = directory.Name + "\\" + file.Filename;
+                    files[filename] = new SlskdEnqueueFile(filename, file.Size);
+                }
             }
         }
         catch (SourceException ex) when (ex.Kind == SourceErrorKind.Error)
@@ -159,7 +159,21 @@ public sealed class SoulseekSource : IContentSource
                 reference.Username, ex.Message);
         }
 
-        return reference.Files;
+        foreach (var hit in reference.Files)
+        {
+            files.TryAdd(hit.Filename, hit);
+        }
+
+        return files.Values.OrderBy(f => f.Filename, StringComparer.Ordinal).ToList();
+    }
+
+    /// <summary>The release folder of a hit: its folder, or the one above a disc folder (<c>CD2</c>).</summary>
+    private static string ReleaseDirectoryOf(string filename)
+    {
+        var directory = SoulseekPaths.DirectoryOf(filename);
+        return SoulseekPaths.IsDiscFolder(directory) && directory.Contains('\\')
+            ? SoulseekPaths.DirectoryOf(directory)
+            : directory;
     }
 
     /// <summary>

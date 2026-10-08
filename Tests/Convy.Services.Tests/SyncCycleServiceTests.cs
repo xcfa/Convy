@@ -384,6 +384,7 @@ public sealed class SyncCycleServiceTests : IDisposable
             """;
 
         _fs.AddFile("/data/slskd/2003 - Fallen/01.flac");
+        _fs.AddFile("/data/slskd/2003 - Fallen/CD2/01.flac");
         _fs.AddFile("/data/slskd/2003 - Fallen/cover.jpg");
         slskd.Items["bob/album"] = new DownloadItem
         {
@@ -392,7 +393,12 @@ public sealed class SyncCycleServiceTests : IDisposable
             Name = "2003 - Fallen",
             SavePath = "/data/slskd",
             State = DownloadState.Completed,
-            Files = [FakeDownloader.Done("2003 - Fallen/01.flac"), FakeDownloader.Done("2003 - Fallen/cover.jpg")],
+            Files =
+            [
+                FakeDownloader.Done("2003 - Fallen/01.flac"),
+                FakeDownloader.Done("2003 - Fallen/CD2/01.flac"),
+                FakeDownloader.Done("2003 - Fallen/cover.jpg"),
+            ],
             Properties = new Dictionary<string, object?> { ["Name"] = "2003 - Fallen", ["Username"] = "bob" },
         };
 
@@ -406,7 +412,11 @@ public sealed class SyncCycleServiceTests : IDisposable
         await cycle.RunAsync(CancellationToken.None);
 
         Assert.Equal(
-            ["/data/media/music/Evanescence/2003 - Fallen/01.flac", "/data/media/music/Evanescence/2003 - Fallen/cover.jpg"],
+            [
+                "/data/media/music/Evanescence/2003 - Fallen/01.flac",
+                "/data/media/music/Evanescence/2003 - Fallen/CD2/01.flac",
+                "/data/media/music/Evanescence/2003 - Fallen/cover.jpg",
+            ],
             LinkedDestinations());
         var done = await Reload(job);
         Assert.Equal(JobStatus.Completed, done.Status);
