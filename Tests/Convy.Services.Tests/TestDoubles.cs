@@ -158,10 +158,15 @@ internal sealed class FakeDownloader : IDownloader
             ? Task.FromException<IReadOnlyList<DownloadItem>>(new HttpRequestException("down"))
             : Task.FromResult<IReadOnlyList<DownloadItem>>(Items.Values.Select(i => i with { Files = [] }).ToList());
 
-    public Task<DownloadItem?> GetItemAsync(string itemRef, CancellationToken cancellationToken) =>
-        Unreachable
+    public int ItemReads { get; private set; }
+
+    public Task<DownloadItem?> GetItemAsync(string itemRef, CancellationToken cancellationToken)
+    {
+        ItemReads++;
+        return Unreachable
             ? Task.FromException<DownloadItem?>(new HttpRequestException("down"))
             : Task.FromResult(Items.GetValueOrDefault(itemRef));
+    }
 
     public Task<IReadOnlyList<string>> GetDownloadDirectoriesAsync(CancellationToken cancellationToken) =>
         Task.FromResult<IReadOnlyList<string>>([DownloadDirectory]);
