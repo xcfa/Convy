@@ -404,3 +404,6 @@ FodyWeavers.xsd
 .env
 
 CLAUDE.md
+
+# Built web UI (frontend/ → npm run build)
+src/Convy/wwwroot/

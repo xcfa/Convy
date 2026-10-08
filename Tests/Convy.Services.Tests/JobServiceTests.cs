@@ -211,4 +211,20 @@ public sealed class JobServiceTests : IDisposable
         Assert.Equal(JobStatus.Queued, view.Status);
         Assert.Contains("unreachable", view.Error);
     }
+
+    [Fact]
+    public async Task ListAsksAnUnreachableDownloaderOnlyOnce()
+    {
+        await _service.StartAsync(Request(), CancellationToken.None);
+        var second = Request() with { Payload = new TorrentPayload("def", "magnet:?xt=urn:btih:def", null) };
+        await _service.StartAsync(second, CancellationToken.None);
+        _downloader.Unreachable = true;
+        var reads = _downloader.ItemReads;
+
+        var views = await _service.ListAsync(null, null, CancellationToken.None);
+
+        Assert.Equal(2, views.Count);
+        Assert.All(views, v => Assert.Contains("unreachable", v.Error));
+        Assert.Equal(reads + 1, _downloader.ItemReads);
+    }
 }

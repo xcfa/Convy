@@ -248,10 +248,13 @@ public sealed class JobService
             ? await _store.ListAsync(filter, take, cancellationToken).ConfigureAwait(false)
             : await _store.ListAsync(null, status is null ? take : 500, cancellationToken).ConfigureAwait(false);
 
+        // A downloader that failed once is not asked again for the other jobs of this list:
+        // with retries each attempt can take seconds.
+        var unreachable = new Dictionary<string, string>(StringComparer.Ordinal);
         var views = new List<JobView>(jobs.Count);
         foreach (var job in jobs)
         {
-            var view = await ViewAsync(job, cancellationToken).ConfigureAwait(false);
+            var view = await ViewAsync(job, unreachable, cancellationToken).ConfigureAwait(false);
             if (status is null || view.Status == status)
             {
                 views.Add(view);
@@ -265,7 +268,8 @@ public sealed class JobService
         return views;
     }
 
-    private async Task<JobView> ViewAsync(JobRecord job, CancellationToken cancellationToken)
+    private async Task<JobView> ViewAsync(
+        JobRecord job, Dictionary<string, string> unreachable, CancellationToken cancellationToken)
     {
         if (job.Status.IsTerminal())
         {
@@ -284,6 +288,11 @@ public sealed class JobService
             return new JobView { Job = job, Status = job.Status, Error = $"Downloader '{job.Provider}' is not configured." };
         }
 
+        if (unreachable.GetValueOrDefault(job.Provider) is { } knownError)
+        {
+            return new JobView { Job = job, Status = job.Status, Error = knownError };
+        }
+
         DownloadItem? item;
         try
         {
@@ -292,7 +301,9 @@ public sealed class JobService
         catch (Exception ex) when (ex is not OperationCanceledException)
         {
             _logger.LogWarning(ex, "Could not read job {JobId} from {Provider}.", job.JobId, job.Provider);
-            return new JobView { Job = job, Status = job.Status, Error = $"{job.Provider} is unreachable: {ex.Message}" };
+            var error = $"{job.Provider} is unreachable: {ex.Message}";
+            unreachable.TryAdd(job.Provider, error);
+            return new JobView { Job = job, Status = job.Status, Error = error };
         }
 
         var observation = JobStatusEvaluator.Observe(

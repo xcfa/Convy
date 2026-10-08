@@ -58,6 +58,9 @@ public sealed record SlskdTransfer
 
     /// <summary>Set while an automatic retry is scheduled (slskd 0.26+).</summary>
     public DateTimeOffset? NextAttemptAt { get; init; }
+
+    /// <summary>The batch the transfer was queued in (slskd 0.26+), if any.</summary>
+    public Guid? BatchId { get; init; }
 }
 
 public sealed record SlskdUserTransfers(string Username, IReadOnlyList<SlskdTransferDirectory>? Directories);
@@ -66,6 +69,9 @@ public sealed record SlskdTransferDirectory(string Directory, IReadOnlyList<Slsk
 
 /// <summary>A file to enqueue: full remote name and the size the peer reported.</summary>
 public sealed record SlskdEnqueueFile(string Filename, long Size);
+
+/// <summary>A file slskd refused to queue.</summary>
+public sealed record SlskdBatchFailure(string? Filename, string? Message);
 
 /// <summary>
 /// HTTP client for the slskd API (<c>/api/v0</c>, <c>X-API-Key</c>). slskd accepts one search
@@ -134,13 +140,43 @@ public sealed class SlskdClient : IDisposable
             HttpMethod.Post, $"users/{Uri.EscapeDataString(username)}/directory", new { directory }, cancellationToken)
             .ConfigureAwait(false) ?? [];
 
-    /// <summary>Queues downloads from one user; returns the transfers slskd accepted.</summary>
-    public async Task<IReadOnlyList<SlskdTransfer>> EnqueueAsync(
-        string username, IReadOnlyList<SlskdEnqueueFile> files, CancellationToken cancellationToken)
+    /// <summary>
+    /// Queues downloads from one user as a batch (slskd 0.26+) stored under
+    /// <paramref name="destination"/>, a directory relative to slskd's downloads directory.
+    /// Returns the transfers slskd accepted and the files it refused.
+    /// </summary>
+    public async Task<(IReadOnlyList<SlskdTransfer> Enqueued, IReadOnlyList<SlskdBatchFailure> Failures)> EnqueueBatchAsync(
+        string username, IReadOnlyList<SlskdEnqueueFile> files, string destination, CancellationToken cancellationToken)
     {
-        var response = await SendAsync<EnqueueResponse>(
-            HttpMethod.Post, $"transfers/downloads/{Uri.EscapeDataString(username)}", files, cancellationToken).ConfigureAwait(false);
-        return response?.Enqueued ?? [];
+        var request = new
+        {
+            id = Guid.NewGuid(),
+            username,
+            files,
+            options = new { destination },
+        };
+
+        BatchResponse? response;
+        try
+        {
+            response = await SendAsync<BatchResponse>(HttpMethod.Post, "transfers/downloads/batches", request, cancellationToken)
+                .ConfigureAwait(false);
+        }
+        catch (SourceException ex) when (ex.Kind == SourceErrorKind.Error && ex.Message.Contains("failed with 400", StringComparison.Ordinal))
+        {
+            // Before 0.26 the route is taken by the per-user endpoint, which rejects the body.
+            throw new SourceException(SourceErrorKind.Error, ex.Message + " Convy needs slskd 0.26 or newer.", ex);
+        }
+
+        return (response?.Batch?.Transfers ?? [], response?.Failures ?? []);
+    }
+
+    /// <summary>The destination directory of a batch, or <c>null</c> when it has none or is gone.</summary>
+    public async Task<string?> GetBatchDestinationAsync(Guid batchId, CancellationToken cancellationToken)
+    {
+        var batch = await SendAsync<SlskdBatch>(
+            HttpMethod.Get, $"transfers/downloads/batches/{batchId}", null, cancellationToken, notFoundIsNull: true).ConfigureAwait(false);
+        return batch?.Options?.Destination;
     }
 
     public async Task<IReadOnlyList<SlskdUserTransfers>> GetDownloadsAsync(CancellationToken cancellationToken) =>
@@ -224,7 +260,11 @@ public sealed class SlskdClient : IDisposable
         }
     }
 
-    private sealed record EnqueueResponse(List<SlskdTransfer>? Enqueued);
+    private sealed record BatchResponse(SlskdBatch? Batch, List<SlskdBatchFailure>? Failures);
+
+    private sealed record SlskdBatch(Guid Id, List<SlskdTransfer>? Transfers, SlskdBatchOptions? Options);
+
+    private sealed record SlskdBatchOptions(string? Destination);
 
     private sealed record ServerState(bool IsLoggedIn, string? State);
 }

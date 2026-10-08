@@ -1,3 +1,4 @@
+using System.Collections.Concurrent;
 using Convy.Services.Downloads;
 using Convy.Sources;
 using Convy.Sources.Slskd;
@@ -5,16 +6,29 @@ using Microsoft.Extensions.Logging;
 
 namespace Convy.Services.Downloaders.Slskd;
 
+/// <summary>A transfer together with the item it belongs to and where its file lands.</summary>
+/// <param name="Transfer">The slskd transfer.</param>
+/// <param name="ItemRef">Reference of the item (see <see cref="SoulseekPaths.ItemRef"/>).</param>
+/// <param name="Directory">The user's remote folder the item stands for.</param>
+/// <param name="SavePath">Local directory the item's paths are relative to.</param>
+/// <param name="ItemPath">Local path of the file relative to <paramref name="SavePath"/>.</param>
+public sealed record PlacedTransfer(SlskdTransfer Transfer, string ItemRef, string Directory, string SavePath, string ItemPath);
+
 /// <summary>
 /// slskd behind <see cref="IDownloader"/>. slskd transfers single files; an item is all
-/// transfers from one user's remote folder (item reference <c>&lt;user&gt;/&lt;directory&gt;</c>),
-/// stored by slskd under <c>&lt;downloads&gt;/&lt;last folder&gt;/</c>.
+/// transfers of one user's folder. Convy queues its downloads as batches (slskd 0.26+) with an
+/// explicit destination per subfolder, <c>&lt;downloads&gt;/convy/&lt;key&gt;/&lt;folder&gt;/…</c>,
+/// so the folder keeps its structure and never clashes with another one of the same name.
+/// Downloads started in slskd itself are items per remote folder in slskd's default layout.
 /// </summary>
 public sealed class SlskdDownloader : IDownloader
 {
     private readonly SlskdClient _client;
     private readonly TimeProvider _timeProvider;
     private readonly ILogger<SlskdDownloader> _logger;
+
+    // Batch destinations never change; "" marks a batch without one.
+    private readonly ConcurrentDictionary<Guid, string> _batchDestinations = new();
 
     private string? _downloadsPath;
 
@@ -39,8 +53,8 @@ public sealed class SlskdDownloader : IDownloader
 
         var selected = selection.Paths is null ? null : new HashSet<string>(selection.Paths, StringComparer.Ordinal);
         var files = folder.Files
-            .Where(f => selected is null || selected.Contains(SoulseekPaths.RelativeTo(folder.Directory, f.Filename)))
-            .Select(f => new SlskdEnqueueFile(f.Filename, f.Size))
+            .Select(f => (File: f, Relative: SoulseekPaths.RelativeTo(folder.Directory, f.Filename)))
+            .Where(f => selected is null || selected.Contains(f.Relative))
             .ToList();
 
         if (files.Count == 0)
@@ -48,15 +62,32 @@ public sealed class SlskdDownloader : IDownloader
             throw new InvalidOperationException("No file of the folder is selected.");
         }
 
-        var enqueued = await _client.EnqueueAsync(folder.Username, files, cancellationToken).ConfigureAwait(false);
-        if (enqueued.Count == 0)
+        // One batch per subfolder: a batch has a single destination directory.
+        var queued = 0;
+        var failures = new List<string>();
+        foreach (var subfolder in files.GroupBy(f => SubfolderOf(f.Relative)))
         {
-            throw new InvalidOperationException($"slskd queued none of the {files.Count} file(s) from {folder.Username}.");
+            var destination = SoulseekPaths.DestinationOf(folder.Username, folder.Directory, subfolder.Key);
+            var batch = subfolder.Select(f => new SlskdEnqueueFile(f.File.Filename, f.File.Size)).ToList();
+
+            var (enqueued, failed) = await _client.EnqueueBatchAsync(folder.Username, batch, destination, cancellationToken)
+                .ConfigureAwait(false);
+
+            queued += enqueued.Count;
+            failures.AddRange(failed.Select(f => $"{SoulseekPaths.FileNameOf(f.Filename ?? "?")}: {f.Message}"));
         }
 
-        if (enqueued.Count < files.Count)
+        if (queued == 0)
         {
-            _logger.LogWarning("slskd queued {Queued} of {Requested} file(s) from {User}.", enqueued.Count, files.Count, folder.Username);
+            throw new InvalidOperationException(
+                $"slskd queued none of the {files.Count} file(s) from {folder.Username}" +
+                (failures.Count > 0 ? $": {string.Join("; ", failures.Take(5))}" : "."));
+        }
+
+        if (failures.Count > 0)
+        {
+            _logger.LogWarning("slskd queued {Queued} of {Requested} file(s) from {User}: {Failures}",
+                queued, files.Count, folder.Username, string.Join("; ", failures.Take(10)));
         }
 
         return SoulseekPaths.ItemRef(folder.Username, folder.Directory);
@@ -69,42 +100,37 @@ public sealed class SlskdDownloader : IDownloader
 
     public async Task CancelAsync(string itemRef, CancellationToken cancellationToken)
     {
-        if (!SoulseekPaths.TryParseItemRef(itemRef, out var username, out var directory))
+        foreach (var placed in await GetItemTransfersAsync(itemRef, cancellationToken).ConfigureAwait(false))
         {
-            return;
-        }
-
-        var user = await _client.GetUserDownloadsAsync(username, cancellationToken).ConfigureAwait(false);
-        foreach (var transfer in Transfers(user).Where(t => SoulseekPaths.DirectoryOf(t.Filename) == directory && !IsFinished(t.State)))
-        {
-            await _client.CancelDownloadAsync(username, transfer.Id, cancellationToken).ConfigureAwait(false);
+            if (!IsFinished(placed.Transfer.State))
+            {
+                await _client.CancelDownloadAsync(placed.Transfer.Username, placed.Transfer.Id, cancellationToken)
+                    .ConfigureAwait(false);
+            }
         }
     }
 
     public async Task<IReadOnlyList<DownloadItem>> GetItemsAsync(CancellationToken cancellationToken)
     {
-        var savePath = await GetDownloadsPathAsync(cancellationToken).ConfigureAwait(false);
+        var downloads = await GetDownloadsPathAsync(cancellationToken).ConfigureAwait(false);
         var users = await _client.GetDownloadsAsync(cancellationToken).ConfigureAwait(false);
 
-        return users
-            .SelectMany(Transfers)
-            .GroupBy(t => (t.Username, Directory: SoulseekPaths.DirectoryOf(t.Filename)))
-            .Select(g => ToItem(g.Key.Username, g.Key.Directory, g.ToList(), savePath))
+        var placed = new List<PlacedTransfer>();
+        foreach (var transfer in users.SelectMany(Transfers))
+        {
+            placed.Add(await PlaceAsync(transfer, downloads, cancellationToken).ConfigureAwait(false));
+        }
+
+        return placed
+            .GroupBy(p => p.ItemRef, StringComparer.Ordinal)
+            .Select(g => ToItem(g.ToList()))
             .ToList();
     }
 
     public async Task<DownloadItem?> GetItemAsync(string itemRef, CancellationToken cancellationToken)
     {
-        if (!SoulseekPaths.TryParseItemRef(itemRef, out var username, out var directory))
-        {
-            return null;
-        }
-
-        var savePath = await GetDownloadsPathAsync(cancellationToken).ConfigureAwait(false);
-        var user = await _client.GetUserDownloadsAsync(username, cancellationToken).ConfigureAwait(false);
-        var transfers = Transfers(user).Where(t => SoulseekPaths.DirectoryOf(t.Filename) == directory).ToList();
-
-        return transfers.Count == 0 ? null : ToItem(username, directory, transfers, savePath);
+        var transfers = await GetItemTransfersAsync(itemRef, cancellationToken).ConfigureAwait(false);
+        return transfers.Count == 0 ? null : ToItem(transfers);
     }
 
     public async Task<IReadOnlyList<string>> GetDownloadDirectoriesAsync(CancellationToken cancellationToken) =>
@@ -114,11 +140,44 @@ public sealed class SlskdDownloader : IDownloader
         await GetDownloadsPathAsync(cancellationToken).ConfigureAwait(false);
 
     /// <summary>
-    /// The state of a folder from its transfers. A failure is final only when slskd does not
-    /// retry it any more; then a folder with failed files fails as a whole, listing them.
+    /// Works out which item a transfer belongs to and where slskd stores its file: from the
+    /// destination of its batch when Convy queued it, else from slskd's default layout.
     /// </summary>
-    public DownloadItem ToItem(string username, string directory, IReadOnlyList<SlskdTransfer> transfers, string savePath)
+    public async Task<PlacedTransfer> PlaceAsync(SlskdTransfer transfer, string downloads, CancellationToken cancellationToken)
     {
+        if (transfer.BatchId is { } batchId)
+        {
+            var destination = await GetBatchDestinationAsync(batchId, cancellationToken).ConfigureAwait(false);
+            if (SoulseekPaths.TryParseDestination(destination, transfer.Username, transfer.Filename, out var root, out var itemPath))
+            {
+                return new PlacedTransfer(
+                    transfer,
+                    SoulseekPaths.ItemRef(transfer.Username, root),
+                    root,
+                    Path.Combine(downloads, SoulseekPaths.ConvyFolder, SoulseekPaths.FolderKey(transfer.Username, root)),
+                    itemPath);
+            }
+        }
+
+        var directory = SoulseekPaths.DirectoryOf(transfer.Filename);
+        return new PlacedTransfer(
+            transfer,
+            SoulseekPaths.ManualItemRef(transfer.Username, directory),
+            directory,
+            downloads,
+            SoulseekPaths.LocalPathOf(transfer.Filename));
+    }
+
+    /// <summary>
+    /// The state of an item from its transfers. A failure is final only when slskd does not
+    /// retry it any more; then the item fails as a whole, listing the missing files.
+    /// </summary>
+    public DownloadItem ToItem(IReadOnlyList<PlacedTransfer> placed)
+    {
+        var first = placed[0];
+        var username = first.Transfer.Username;
+        var transfers = placed.Select(p => p.Transfer).ToList();
+
         var now = _timeProvider.GetUtcNow();
         var failed = transfers.Where(t => IsFailed(t, now)).ToList();
         var succeeded = transfers.Count(t => IsSucceeded(t.State));
@@ -134,24 +193,24 @@ public sealed class SlskdDownloader : IDownloader
               (failed.Count > 10 ? "; …" : string.Empty)
             : null;
 
-        var files = transfers
-            .Select(t => new DownloadFile(
-                SoulseekPaths.LocalPathOf(t.Filename),
-                t.Size,
-                IsSucceeded(t.State) ? 1 : t.Size > 0 ? Math.Clamp((double)t.BytesTransferred / t.Size, 0, 0.999) : 0,
+        var files = placed
+            .Select(p => new DownloadFile(
+                p.ItemPath,
+                p.Transfer.Size,
+                IsSucceeded(p.Transfer.State) ? 1 : p.Transfer.Size > 0 ? Math.Clamp((double)p.Transfer.BytesTransferred / p.Transfer.Size, 0, 0.999) : 0,
                 Selected: true))
             .ToList();
 
         var size = transfers.Sum(t => t.Size);
         var downloaded = transfers.Sum(t => IsSucceeded(t.State) ? t.Size : t.BytesTransferred);
-        var name = SoulseekPaths.LocalFolderOf(directory) is { Length: > 0 } folder ? folder : directory;
+        var name = SoulseekPaths.LocalFolderOf(first.Directory) is { Length: > 0 } folder ? folder : first.Directory;
 
         return new DownloadItem
         {
             Provider = Provider,
-            ItemRef = SoulseekPaths.ItemRef(username, directory),
+            ItemRef = first.ItemRef,
             Name = name,
-            SavePath = savePath,
+            SavePath = first.SavePath,
             State = state,
             Size = size,
             Downloaded = downloaded,
@@ -162,11 +221,45 @@ public sealed class SlskdDownloader : IDownloader
             {
                 ["Name"] = name,
                 ["Size"] = (double)size,
-                ["SavePath"] = savePath,
+                ["SavePath"] = first.SavePath,
                 ["Progress"] = size > 0 ? (double)downloaded / size : 0,
                 ["Username"] = username,
             },
         };
+    }
+
+    private async Task<IReadOnlyList<PlacedTransfer>> GetItemTransfersAsync(string itemRef, CancellationToken cancellationToken)
+    {
+        if (!SoulseekPaths.TryParseItemRef(itemRef, out var username, out _, out _))
+        {
+            return [];
+        }
+
+        var downloads = await GetDownloadsPathAsync(cancellationToken).ConfigureAwait(false);
+        var user = await _client.GetUserDownloadsAsync(username, cancellationToken).ConfigureAwait(false);
+
+        var placed = new List<PlacedTransfer>();
+        foreach (var transfer in Transfers(user))
+        {
+            var candidate = await PlaceAsync(transfer, downloads, cancellationToken).ConfigureAwait(false);
+            if (candidate.ItemRef == itemRef)
+            {
+                placed.Add(candidate);
+            }
+        }
+
+        return placed;
+    }
+
+    private async Task<string?> GetBatchDestinationAsync(Guid batchId, CancellationToken cancellationToken)
+    {
+        if (!_batchDestinations.TryGetValue(batchId, out var destination))
+        {
+            destination = await _client.GetBatchDestinationAsync(batchId, cancellationToken).ConfigureAwait(false) ?? string.Empty;
+            _batchDestinations[batchId] = destination;
+        }
+
+        return destination.Length == 0 ? null : destination;
     }
 
     private async Task<string> GetDownloadsPathAsync(CancellationToken cancellationToken)
@@ -182,6 +275,13 @@ public sealed class SlskdDownloader : IDownloader
 
         _downloadsPath = path;
         return path;
+    }
+
+    /// <summary>The subfolder part of a relative path ('/'-separated), empty for the folder itself.</summary>
+    private static string SubfolderOf(string relativePath)
+    {
+        var slash = relativePath.LastIndexOf('/');
+        return slash < 0 ? string.Empty : relativePath[..slash];
     }
 
     private static IEnumerable<SlskdTransfer> Transfers(SlskdUserTransfers? user) =>

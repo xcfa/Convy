@@ -77,6 +77,28 @@ public sealed class EfJobStore : IJobStore
         return entries.Select(ToRecord).ToList();
     }
 
+    public async Task<IReadOnlyDictionary<JobStatus, int>> CountByStatusAsync(CancellationToken cancellationToken)
+    {
+        await using var db = await _dbFactory.CreateDbContextAsync(cancellationToken).ConfigureAwait(false);
+
+        var counts = await db.Jobs.AsNoTracking()
+            .GroupBy(j => j.Status)
+            .Select(g => new { Status = g.Key, Count = g.Count() })
+            .ToListAsync(cancellationToken)
+            .ConfigureAwait(false);
+
+        var result = new Dictionary<JobStatus, int>();
+        foreach (var count in counts)
+        {
+            if (JobStatusNames.TryParse(count.Status, out var status))
+            {
+                result[status] = count.Count;
+            }
+        }
+
+        return result;
+    }
+
     public async Task<IReadOnlyList<JobRecord>> GetPlacementJobsAsync(string provider, CancellationToken cancellationToken)
     {
         await using var db = await _dbFactory.CreateDbContextAsync(cancellationToken).ConfigureAwait(false);

@@ -83,6 +83,23 @@ serilog:
 #     - 192.168.0.0/16
 #     - 172.16.0.0/12
 
+# ── Web UI ─────────────────────────────────────────────────────────────────
+# Logs, status, jobs and a read-only view of the database at /. Users sign in with
+# OpenID Connect (Authelia or any other provider); the UI stays off until the client
+# below is configured. Only / and /api/ui are protected this way: /mcp keeps its API
+# key, /sync, /health and /api/v1 stay behind the IP allow-list alone. Read at
+# startup; changes need a restart. Pass the client secret as a Docker secret named
+# Ui__Oidc__ClientSecret, not here. See README "Web UI" for the Authelia client.
+# ui:
+#   publicUrl: https://convy.example.com   # address users open; behind a reverse proxy
+#   oidc:
+#     authority: https://auth.example.com
+#     clientId: convy
+#     allowedGroups: [admins]              # optional; empty = any signed-in user
+#     logoutUrl: https://auth.example.com/logout   # optional; also ends the Authelia session
+#     # scopes: [openid, profile, email, groups]   # the default
+#   # auth: none   # instead of OIDC: no sign-in at all, only the IP allow-list protects the UI
+
 # ── Search and download for the agent (MCP) ────────────────────────────────
 # Categories tell the agent where to search and how to label a download; where the
 # files go is decided by rules.yaml (a job's qbittorrent_category is visible to the

@@ -17,6 +17,8 @@
 **/docker-compose*
 **/Dockerfile*
 **/node_modules
+# Built by the image's ui stage; a local build must not leak in.
+src/Convy/wwwroot
 **/npm-debug.log
 **/obj
 **/secrets.dev.yaml
