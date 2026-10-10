@@ -128,6 +128,19 @@ public class UiOptionsTests
     }
 
     [Theory]
+    [InlineData("https://convy.example.com", "https", "convy.example.com")]
+    [InlineData("https://convy.example.com:443/", "https", "convy.example.com")]
+    [InlineData("http://convy.example.com:80", "http", "convy.example.com")]
+    [InlineData("https://convy.example.com:8443", "https", "convy.example.com:8443")]
+    [InlineData("http://10.0.0.5:8080", "http", "10.0.0.5:8080")]
+    [InlineData("http://[::1]:5000", "http", "[::1]:5000")]
+    public void PublicHostLeavesOutTheDefaultPort(string url, string expectedScheme, string expectedHost)
+    {
+        Assert.True(new UiOptions { PublicUrl = url }.TryGetPublicHost(out var scheme, out var host));
+        Assert.Equal((expectedScheme, expectedHost), (scheme, host));
+    }
+
+    [Theory]
     [InlineData("https://example.com/convy")]
     [InlineData("ftp://example.com")]
     [InlineData("convy.example.com")]

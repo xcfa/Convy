@@ -97,6 +97,26 @@ public sealed class UiOptions
         origin = new Uri(uri.GetLeftPart(UriPartial.Authority));
         return true;
     }
+
+    /// <summary>
+    /// The scheme of <see cref="PublicUrl"/> and its host as a Host header carries it: with the
+    /// port only when it is not the scheme's default. The sign-in callback is built from these,
+    /// and the provider compares it exactly (<c>https://convy.example.com/signin-oidc</c>, not
+    /// <c>https://convy.example.com:443/signin-oidc</c>).
+    /// </summary>
+    public bool TryGetPublicHost(out string scheme, out string host)
+    {
+        scheme = host = string.Empty;
+        if (!TryGetPublicOrigin(out var origin))
+        {
+            return false;
+        }
+
+        scheme = origin.Scheme;
+        // Uri.Authority leaves out the default port, unlike HostString.FromUriComponent.
+        host = origin.Authority;
+        return true;
+    }
 }
 
 /// <summary>The <c>Ui:Oidc</c> configuration section.</summary>
