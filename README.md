@@ -302,6 +302,26 @@ downloaded by qBittorrent, Soulseek folders by slskd.
 Categories, search and file-list settings live in `config/configuration.yml` (see the
 commented example there). The `other` category is mandatory.
 
+### Agent skill
+
+The tools tell the agent *what* it can call; [`skills/convy/SKILL.md`](skills/convy/SKILL.md)
+tells it *how* to work with Convy: the order of calls, when to look at the file list, how to
+build `subpath` from `path_hint`, which releases to prefer, what job statuses and errors mean,
+and that a download needs the user's confirmation. It follows the Agent Skills format, so
+opencode, Claude Code and other clients that support skills load it by its description.
+
+Copy the folder to one of the skill locations, e.g. for opencode globally:
+
+```bash
+mkdir -p ~/.config/opencode/skills
+cp -r skills/convy ~/.config/opencode/skills/
+```
+
+opencode also reads `~/.claude/skills/` and `~/.agents/skills/` (and `.opencode/skills/`,
+`.claude/skills/`, `.agents/skills/` in a project). The release preferences in the skill
+(2160p HDR with a Russian audio track, BDRip over BDRemux, lossy music) are the defaults of
+this setup; edit the "Release preferences" section to change them.
+
 ### Tools
 
 | Tool | Parameters | Returns |
@@ -642,6 +662,7 @@ downloads a JRE automatically the first time, so no separate Java installation i
 | `Convy.Services` | downloaders (qBittorrent behind `IDownloader`), sync cycle, file linking, state tracker, webhook notifier |
 | `Convy.Sources` | search sources (Prowlarr), torrent metadata (.torrent parsing, magnet metadata from DHT), shared contracts |
 | `Convy.Mcp` | MCP tool definitions, a thin layer over the services |
+| `skills/convy` | the agent skill: how to search, choose releases and download through the MCP tools |
 | `Convy.PathExpressions` | the rule language: ANTLR grammar, expression tree over item properties, mapping-file loader |
 | `Convy.Data` | EF Core (SQLite) entities and migrations |
 | `Convy.Infrastructure` | low-level helpers (the native hard-link wrapper) |
