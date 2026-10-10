@@ -55,8 +55,11 @@ internal sealed class FakeSource : IContentSource
         return Listing ?? throw new SourceException(SourceErrorKind.Error, "no listing");
     }
 
+    /// <summary>Payload per content id, when <see cref="Payload"/> is not set.</summary>
+    public Func<string, DownloadPayload>? PayloadFor { get; set; }
+
     public Task<DownloadPayload> ResolveAsync(string contentId, CancellationToken cancellationToken) =>
-        Task.FromResult(Payload ?? new TorrentPayload("abc", "magnet:?xt=urn:btih:abc", null));
+        Task.FromResult(Payload ?? PayloadFor?.Invoke(contentId) ?? new TorrentPayload("abc", "magnet:?xt=urn:btih:abc", null));
 
     public static ContentInfo Content(string title, string? hash = null, int? seeders = null, string? contentId = null) => new()
     {

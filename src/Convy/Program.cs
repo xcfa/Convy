@@ -34,6 +34,7 @@ using System;
 using System.Collections.Generic;
 using System.Net.Http;
 using System.Text.Json.Serialization;
+using System.Threading;
 using System.Threading.Tasks;
 using Convy.Data.Context;
 using Microsoft.EntityFrameworkCore;
@@ -165,11 +166,13 @@ public class Program
 			.AddCheck<StorageLayoutHealthCheck>("storage");
 
 		// Routing rules: loaded from a YAML file and reloaded when the file changes.
-		builder.Services.AddSingleton<IRulesProvider>(sp =>
+		builder.Services.AddSingleton(sp =>
 		{
 			var path = builder.Configuration["Convy:RulesPath"] ?? "config/rules.yaml";
 			return new RulesProvider(path, sp.GetRequiredService<ILogger<RulesProvider>>());
 		});
+		builder.Services.AddSingleton<IRulesProvider>(sp => sp.GetRequiredService<RulesProvider>());
+		builder.Services.AddSingleton<IRulesDiagnostics>(sp => sp.GetRequiredService<RulesProvider>());
 
 		// State tracking: persists each download item's completion/size so that after a
 		// restart only items that changed while we were down are reprocessed.
@@ -196,11 +199,14 @@ public class Program
 		// source errors) delivered with retries by a background dispatcher. The configuration
 		// is read on every send, so edits to configuration.yml apply without a restart.
 		builder.Services.Configure<List<WebhookConfig>>(builder.Configuration.GetSection("Webhooks"));
+		// Webhooks created in the web UI live in the database and are used alongside these.
 		builder.Services.AddSingleton<WebhookConfigSource>();
+		builder.Services.AddSingleton<IWebhookStore, EfWebhookStore>();
+		builder.Services.AddSingleton<WebhookCatalog>();
 		builder.Services.AddSingleton<Func<IReadOnlyList<WebhookConfig>>>(sp =>
 		{
-			var source = sp.GetRequiredService<WebhookConfigSource>();
-			return () => source.Current;
+			var catalog = sp.GetRequiredService<WebhookCatalog>();
+			return () => catalog.Active;
 		});
 		builder.Services.AddSingleton(sp => new WebhookSender(
 			new HttpClient(new SocketsHttpHandler { PooledConnectionLifetime = TimeSpan.FromMinutes(5) })
@@ -310,6 +316,8 @@ public class Program
 		{
 			await settingsDb.Database.MigrateAsync();
 		}
+
+		await app.Services.GetRequiredService<WebhookCatalog>().ReloadAsync(CancellationToken.None);
 
 		// Load DB-backed settings now that the table exists — async, so startup never
 		// blocks on the database. Subsequent writes refresh it via UserSettingsService.

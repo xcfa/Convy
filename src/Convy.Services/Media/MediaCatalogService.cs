@@ -89,5 +89,16 @@ public sealed class MediaCatalogService
         view.Job.TargetPath,
         view.Job.Rule,
         view.Error,
-        view.Job.CreatedAt);
+        view.Job.CreatedAt,
+        view.Releases.Count > 1
+            ? view.Releases.Select(r => new JobReleaseDto(
+                r.Release.Title,
+                r.Status.ToName(),
+                r.Release.Provider,
+                r.Progress,
+                r.TotalBytes ?? r.Release.SizeBytes,
+                r.Release.TargetPath,
+                r.Release.Rule,
+                r.Error)).ToList()
+            : null);
 }

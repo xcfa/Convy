@@ -155,13 +155,14 @@ qBittorrent credentials in environment variables or Docker secrets.
 
 ### Webhooks
 
-Webhooks subscribe to events with `events` (default: only `linked`, so existing setups behave
+Webhooks are configured here or in the [web UI](#web-ui), which also tests them; both sets
+are used. Webhooks subscribe to events with `events` (default: only `linked`, so existing setups behave
 as before):
 
 | Event | When | Body |
 | --- | --- | --- |
 | `linked` | once per sync cycle, if something was placed or failed | `{ "linked": [...], "errors": [...] }` (below); items of agent jobs also carry `job_id` and `provider` |
-| `job_status` | on every job status change, one POST each | see below |
+| `job_status` | on every job status change, one POST each (one per job, however many releases it has) | see below |
 | `source_error` | a source turns `auth_failed` or `error` | `{ "event", "source", "status", "message" }` |
 
 `job_status` and `source_error` are delivered in order by a background queue and retried up to
@@ -186,7 +187,12 @@ as before):
 }
 ```
 
-The `names` filter applies to `job_status` through the job's `rule`; `source_error` events go to
+A job with several releases (see [Jobs and placement](#jobs-and-placement)) also carries
+`"releases": [{ "title", "status", "provider", "rule", "path", "size_bytes", "error" }, …]`;
+its `path` is the directory holding all releases, `files` are relative to it, and `rule` is set
+only when every release has the same one.
+
+The `names` filter applies to `job_status` through the job's rules (any of its releases'); `source_error` events go to
 every subscribed webhook. With `params`, an event body contains only the selected fields (query
 params are added to the URL). Post-processing such as tagging or a library rescan belongs in the
 receiver (e.g. n8n) reacting to `job_status`. Webhook changes in `configuration.yml` apply
@@ -302,6 +308,26 @@ downloaded by qBittorrent, Soulseek folders by slskd.
 Categories, search and file-list settings live in `config/configuration.yml` (see the
 commented example there). The `other` category is mandatory.
 
+### Agent skill
+
+The tools tell the agent *what* it can call; [`skills/convy/SKILL.md`](skills/convy/SKILL.md)
+tells it *how* to work with Convy: the order of calls, when to look at the file list, how to
+build `subpath` from `path_hint`, which releases to prefer, what job statuses and errors mean,
+and that a download needs the user's confirmation. It follows the Agent Skills format, so
+opencode, Claude Code and other clients that support skills load it by its description.
+
+Copy the folder to one of the skill locations, e.g. for opencode globally:
+
+```bash
+mkdir -p ~/.config/opencode/skills
+cp -r skills/convy ~/.config/opencode/skills/
+```
+
+opencode also reads `~/.claude/skills/` and `~/.agents/skills/` (and `.opencode/skills/`,
+`.claude/skills/`, `.agents/skills/` in a project). The release preferences in the skill
+(2160p HDR with a Russian audio track, BDRip over BDRemux, lossy music) are the defaults of
+this setup; edit the "Release preferences" section to change them.
+
 ### Tools
 
 | Tool | Parameters | Returns |
@@ -311,7 +337,7 @@ commented example there). The `other` category is mandatory.
 | `search` | `category`, `queries[]`, `sources[]?` | `search_id`, results of the first batch, a status per source, `has_more` |
 | `search_next` | `search_id` | results of the next batch of sources, `has_more` |
 | `list_files` | `result_id`, `path?`, `glob?`, `offset?` | top-level tree with per-directory summary, one expanded directory, or glob matches; or `status: timeout` |
-| `download` | `result_id`, `category`, `subpath?`, `include[]?`, `exclude[]?` | `job_id`, expected path and rule, file count and size |
+| `download` | `category`, and `result_id` + `subpath?`, `include[]?`, `exclude[]?` for one result, or `releases[]` (each `{result_id, subpath?, include?, exclude?}`) for several as one job | `job_id`, expected path and rule, file count and size; per release with `releases` |
 | `get_jobs` | `status?`, `limit?` | jobs with status, progress, speed and path (active jobs are read from the client directly) |
 | `cancel_job` | `job_id` | stops the download; data and links are kept |
 
@@ -393,6 +419,23 @@ just "the client is done". Seeding continues from the original location.
 | `failed` | Client error, peer refusal, or `jobs.max_placement_attempts` exhausted |
 | `cancelled` | Cancelled with `cancel_job`; downloaded data and created links are kept |
 
+A job can hold **several releases**: `download` with `releases` (e.g. three albums the user
+asked for at once) starts one job, one `job_id`, instead of one per result. Each release is a
+separate download with its own sub-path and selection and is placed on its own as soon as it
+finishes; the job combines them:
+
+- **status**: while any release is active the job is active (`downloading` if one downloads,
+  else `stalled`, `queued`, `placing`); once all are done it is `failed` if one failed, else
+  `cancelled` if one was cancelled, else `completed`;
+- **progress and size** add up; the path is the directory holding every release;
+- one `job_status` webhook per change of the job's status, not per release; `get_jobs` and the
+  web UI list the releases with their own status;
+- `cancel_job` stops every unfinished release.
+
+Before anything is added, every release is checked (result, sub-path, duplicates, the size
+limit against the total, free space); one problem rejects the whole request. A release the
+download client then refuses is reported under `failed` and the job goes on with the rest.
+
 A job may carry a `subpath` chosen by the agent. Where the files go depends on whether a
 rule matches (the job's category is visible to the rules as `Category`) and on the sub-path:
 
@@ -407,8 +450,8 @@ Replacing the root folder: `Movie.2019.2160p.WEB-DL/movie.mkv` with `subpath = "
 lands in `<rule path>/Movie (2019)/movie.mkv`; a single-file download goes straight into the
 sub-path. Only selected files are linked (qBittorrent files with priority 0 are skipped).
 
-There is one job per download: requesting a download that already has an unfinished job is
-rejected with that job's id. A download that was placed before (by a rule, or by an earlier
+A download belongs to one job at a time: requesting a download that already has an unfinished
+job is rejected with that job's id. A download that was placed before (by a rule, or by an earlier
 job) is linked again to the new job's target. Paths a client reports that would leave the save
 or target directory (`..` in a peer's folder name) are never linked.
 
@@ -455,13 +498,24 @@ Convy serves a small web interface at `/`:
 
 - **Overview** — sync state (schedule, last cycle, "Sync now"), every downloader with the
   outcome of its last read, search sources, the storage-layout check, job counts, version.
-- **Jobs** — the agent's jobs with live progress, filtered by status; active ones can be
-  cancelled (downloaded data and links are kept).
+- **Jobs** — the agent's jobs with live progress, filtered by status; a job with several
+  releases unfolds into them; active ones can be cancelled (downloaded data and links are kept).
 - **Logs** — the last 5000 log entries kept in memory, followed live, filtered by level and
   text. The full log stays in the console and the log files.
 - **Database** — every table read-only, with search, sorting and paging. Values that hold
   secrets are never sent: a search result's content id (it contains the Prowlarr API key)
   is left out, and binary columns (`.torrent` files) are shown only as their size.
+- **Webhooks** — every webhook with its events, rule filter and parameters. Webhooks can be
+  added, edited, switched off and deleted here; they are stored in the database and used
+  together with those from `configuration.yml`, which are shown read-only. Any webhook, saved
+  or still in the editor, can be **tested**: Convy sends sample data for the chosen event
+  (`linked`, `job_status`, `source_error`) with the webhook's parameters applied and an
+  `X-Convy-Test: true` header, and shows the URL, the body sent, the status, the time and
+  the answer.
+- **Rules** — `rules.yaml` as it is now, with syntax highlighting (YAML and the condition
+  language), next to the rules in effect and the properties each one reads. If the file
+  cannot be loaded, the error is shown and the previous rules stay in effect. Read-only: edit
+  the file to change the rules.
 
 The UI is **off until sign-in is configured**. Users sign in with OpenID Connect; Convy is
 tested against Authelia's behaviour, but any provider with the authorization-code flow works.
@@ -642,6 +696,7 @@ downloads a JRE automatically the first time, so no separate Java installation i
 | `Convy.Services` | downloaders (qBittorrent behind `IDownloader`), sync cycle, file linking, state tracker, webhook notifier |
 | `Convy.Sources` | search sources (Prowlarr), torrent metadata (.torrent parsing, magnet metadata from DHT), shared contracts |
 | `Convy.Mcp` | MCP tool definitions, a thin layer over the services |
+| `skills/convy` | the agent skill: how to search, choose releases and download through the MCP tools |
 | `Convy.PathExpressions` | the rule language: ANTLR grammar, expression tree over item properties, mapping-file loader |
 | `Convy.Data` | EF Core (SQLite) entities and migrations |
 | `Convy.Infrastructure` | low-level helpers (the native hard-link wrapper) |

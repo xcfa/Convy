@@ -1,4 +1,5 @@
 using System.ComponentModel;
+using System.Text.Json.Serialization;
 using Convy.Services.Media;
 using ModelContextProtocol.Protocol;
 using ModelContextProtocol.Server;
@@ -76,18 +77,23 @@ public sealed class ConvyMcpTools
         _run.Run("list_files", () => _files.ListAsync(result_id, path, glob, offset, cancellationToken));
 
     [McpServerTool(Name = "download", OpenWorld = true)]
-    [Description("Starts downloading a result right away and returns job_id, the expected placement path and the rule that " +
-                 "is expected to place it. Get the user's confirmation first. include/exclude need the file list; " +
-                 "without them everything is downloaded.")]
+    [Description("Starts downloading right away and returns job_id, the expected placement path and the rule that is " +
+                 "expected to place it. Get the user's confirmation first. One result: result_id (+ subpath, include, " +
+                 "exclude). Several results the user asked for together (e.g. several albums): releases, which makes ONE " +
+                 "job with one status and one notification. include/exclude need the file list; without them everything " +
+                 "is downloaded.")]
     public Task<CallToolResult> Download(
-        [Description("Result id from search.")] string result_id,
         [Description("Category id from get_categories.")] string category,
+        [Description("Result id from search, for a single result. Use releases instead for several.")] string? result_id = null,
         [Description("Relative folder that replaces the release's root folder, following the category's path_hint, " +
                      "e.g. 'Show (2019)'. No '..', no leading '/', no <>:\"|?*.")] string? subpath = null,
         [Description("Glob patterns or exact paths (relative to the result root) to download, e.g. 'Season 02/**'.")] string[]? include = null,
         [Description("Glob patterns or exact paths to skip, applied after include, e.g. '**/*sample*'.")] string[]? exclude = null,
+        [Description("Several results downloaded as one job, each with its own subpath/include/exclude. " +
+                     "Not together with result_id.")] DownloadReleaseInput[]? releases = null,
         CancellationToken cancellationToken = default) =>
-        _run.Run("download", () => _downloads.DownloadAsync(result_id, category, subpath, include, exclude, cancellationToken));
+        _run.Run("download", () => _downloads.DownloadAsync(
+            category, result_id, subpath, include, exclude, releases?.Select(r => r.ToRelease()).ToList(), cancellationToken));
 
     [McpServerTool(Name = "get_jobs", ReadOnly = true)]
     [Description("Lists jobs, newest first, with status (queued, downloading, stalled, placing, completed, failed, cancelled), " +
@@ -105,4 +111,26 @@ public sealed class ConvyMcpTools
         [Description("Job id, e.g. j_42.")] string job_id,
         CancellationToken cancellationToken = default) =>
         _run.Run("cancel_job", () => _catalog.CancelJobAsync(job_id, cancellationToken));
+}
+
+/// <summary>One result of a <c>download</c> with several releases.</summary>
+public sealed class DownloadReleaseInput
+{
+    [JsonPropertyName("result_id")]
+    [Description("Result id from search.")]
+    public required string ResultId { get; init; }
+
+    [JsonPropertyName("subpath")]
+    [Description("Folder replacing this release's root folder, following the category's path_hint.")]
+    public string? Subpath { get; init; }
+
+    [JsonPropertyName("include")]
+    [Description("Glob patterns or exact paths to download from this release.")]
+    public string[]? Include { get; init; }
+
+    [JsonPropertyName("exclude")]
+    [Description("Glob patterns or exact paths to skip, applied after include.")]
+    public string[]? Exclude { get; init; }
+
+    public DownloadRelease ToRelease() => new(ResultId, Subpath, Include, Exclude);
 }
