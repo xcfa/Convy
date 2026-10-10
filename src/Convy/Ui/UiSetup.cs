@@ -96,6 +96,20 @@ public static class UiSetup
         {
             case UiMode.Oidc:
                 app.Logger.LogInformation("Web UI at / with OIDC sign-in ({Authority}).", options.Oidc.Authority);
+                if (options.Oidc.ClientSecretLooksLikeDigest)
+                {
+                    app.Logger.LogWarning(
+                        "Ui:Oidc:ClientSecret looks like a password digest ($pbkdf2…, $argon2…). Convy needs the plain " +
+                        "secret; the digest belongs into the provider's client registration.");
+                }
+
+                if (options.Oidc.ClientSecretHasSurroundingWhitespace)
+                {
+                    app.Logger.LogInformation(
+                        "Ui:Oidc:ClientSecret has spaces or line breaks around it (e.g. a secret file with Windows " +
+                        "line ends); they are ignored.");
+                }
+
                 break;
             case UiMode.Open:
                 app.Logger.LogWarning("Web UI at / is open without sign-in (Ui:Auth = none); only the IP allow-list protects it.");
@@ -189,7 +203,7 @@ public static class UiSetup
             {
                 options.Authority = oidc.Authority;
                 options.ClientId = oidc.ClientId;
-                options.ClientSecret = oidc.ClientSecret;
+                options.ClientSecret = oidc.EffectiveClientSecret;
                 options.RequireHttpsMetadata = oidc.RequireHttpsMetadata;
 
                 // Authorization code with PKCE. The response comes back as a top-level GET, so
@@ -232,9 +246,18 @@ public static class UiSetup
                 };
                 options.Events.OnRemoteFailure = context =>
                 {
-                    context.HttpContext.RequestServices.GetRequiredService<ILoggerFactory>()
-                        .CreateLogger(typeof(UiSetup))
-                        .LogWarning(context.Failure, "UI sign-in failed.");
+                    var logger = context.HttpContext.RequestServices.GetRequiredService<ILoggerFactory>()
+                        .CreateLogger(typeof(UiSetup));
+                    if (UiOidcOptions.ExplainSignInFailure(context.Failure?.Message) is { } hint)
+                    {
+                        // The handler has already logged the provider's error with its stack trace.
+                        logger.LogError("UI sign-in failed: {Hint}", hint);
+                    }
+                    else
+                    {
+                        logger.LogWarning(context.Failure, "UI sign-in failed.");
+                    }
+
                     context.Response.Redirect("/auth/failed");
                     context.HandleResponse();
                     return Task.CompletedTask;
