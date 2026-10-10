@@ -81,12 +81,12 @@ public static class UiSetup
 
         // Behind a reverse proxy the request arrives as plain HTTP on an internal host; the
         // sign-in callback and the cookies must use the address the browser sees.
-        if (options.TryGetPublicOrigin(out var origin))
+        if (options.TryGetPublicHost(out var scheme, out var publicHost))
         {
-            var host = HostString.FromUriComponent(origin);
+            var host = new HostString(publicHost);
             app.Use((context, next) =>
             {
-                context.Request.Scheme = origin.Scheme;
+                context.Request.Scheme = scheme;
                 context.Request.Host = host;
                 return next(context);
             });
