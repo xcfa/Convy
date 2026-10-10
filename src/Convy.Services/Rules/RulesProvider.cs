@@ -12,7 +12,7 @@ namespace Convy.Services.Rules
     /// A failed parse keeps the previously loaded rules and does not bump the version, so
     /// a bad edit never takes the service down or triggers a spurious rescan.
     /// </summary>
-    public sealed class RulesProvider : IRulesProvider
+    public sealed class RulesProvider : IRulesProvider, IRulesDiagnostics
     {
         private readonly string _path;
         private readonly ILogger<RulesProvider> _logger;
@@ -20,11 +20,31 @@ namespace Convy.Services.Rules
 
         private RulesSnapshot _current = new(ConvyMappings.Empty, 0);
         private DateTime? _loadedWriteTimeUtc;
+        private string? _lastError;
+        private DateTimeOffset? _lastErrorAt;
 
         public RulesProvider(string path, ILogger<RulesProvider> logger)
         {
             _path = path;
             _logger = logger;
+        }
+
+        public string Path => _path;
+
+        public string? LastError
+        {
+            get
+            {
+                lock (_gate) return _lastError;
+            }
+        }
+
+        public DateTimeOffset? LastErrorAt
+        {
+            get
+            {
+                lock (_gate) return _lastErrorAt;
+            }
         }
 
         public RulesSnapshot GetCurrent()
@@ -50,12 +70,16 @@ namespace Convy.Services.Rules
                 {
                     var mappings = ConvyMappings.LoadFromFile(_path);
                     _current = new RulesSnapshot(mappings, _current.Version + 1);
+                    _lastError = null;
+                    _lastErrorAt = null;
                     _logger.LogInformation(
                         "Loaded {Count} routing rule(s) from '{Path}' (version {Version}).",
                         mappings.Rules.Count, _path, _current.Version);
                 }
                 catch (FilterParseException ex)
                 {
+                    _lastError = ex.Message;
+                    _lastErrorAt = DateTimeOffset.UtcNow;
                     _logger.LogError(ex,
                         "Failed to parse rules file '{Path}'; keeping previous rules (version {Version}).",
                         _path, _current.Version);
@@ -64,5 +88,18 @@ namespace Convy.Services.Rules
                 return _current;
             }
         }
+    }
+
+    /// <summary>Where the rules come from and whether the file could be read, for the web UI.</summary>
+    public interface IRulesDiagnostics
+    {
+        /// <summary>Path of the rules file.</summary>
+        string Path { get; }
+
+        /// <summary>Why the current file could not be loaded (the previous rules stay in effect), or <c>null</c>.</summary>
+        string? LastError { get; }
+
+        /// <summary>When <see cref="LastError"/> was found.</summary>
+        DateTimeOffset? LastErrorAt { get; }
     }
 }

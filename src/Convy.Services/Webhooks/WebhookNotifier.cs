@@ -41,7 +41,7 @@ public sealed class WebhookNotifier : IWebhookNotifier
                 continue;
             }
 
-            var (body, query) = Build(webhook, linked, batch.Errors);
+            var (body, query) = BuildLinked(webhook, linked, batch.Errors);
             await _sender.SendAsync(webhook, body, query, cancellationToken).ConfigureAwait(false);
         }
     }
@@ -64,7 +64,8 @@ public sealed class WebhookNotifier : IWebhookNotifier
             .ToList();
     }
 
-    private static (object Body, IReadOnlyDictionary<string, string> Query) Build(
+    /// <summary>The <c>linked</c> request of a webhook: the body and the query parameters.</summary>
+    public static (object Body, IReadOnlyDictionary<string, string> Query) BuildLinked(
         WebhookConfig webhook,
         IReadOnlyList<WebhookLinkedItem> linked,
         IReadOnlyList<WebhookError> errors)

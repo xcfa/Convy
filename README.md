@@ -155,7 +155,8 @@ qBittorrent credentials in environment variables or Docker secrets.
 
 ### Webhooks
 
-Webhooks subscribe to events with `events` (default: only `linked`, so existing setups behave
+Webhooks are configured here or in the [web UI](#web-ui), which also tests them; both sets
+are used. Webhooks subscribe to events with `events` (default: only `linked`, so existing setups behave
 as before):
 
 | Event | When | Body |
@@ -497,13 +498,24 @@ Convy serves a small web interface at `/`:
 
 - **Overview** — sync state (schedule, last cycle, "Sync now"), every downloader with the
   outcome of its last read, search sources, the storage-layout check, job counts, version.
-- **Jobs** — the agent's jobs with live progress, filtered by status; active ones can be
-  cancelled (downloaded data and links are kept).
+- **Jobs** — the agent's jobs with live progress, filtered by status; a job with several
+  releases unfolds into them; active ones can be cancelled (downloaded data and links are kept).
 - **Logs** — the last 5000 log entries kept in memory, followed live, filtered by level and
   text. The full log stays in the console and the log files.
 - **Database** — every table read-only, with search, sorting and paging. Values that hold
   secrets are never sent: a search result's content id (it contains the Prowlarr API key)
   is left out, and binary columns (`.torrent` files) are shown only as their size.
+- **Webhooks** — every webhook with its events, rule filter and parameters. Webhooks can be
+  added, edited, switched off and deleted here; they are stored in the database and used
+  together with those from `configuration.yml`, which are shown read-only. Any webhook, saved
+  or still in the editor, can be **tested**: Convy sends sample data for the chosen event
+  (`linked`, `job_status`, `source_error`) with the webhook's parameters applied and an
+  `X-Convy-Test: true` header, and shows the URL, the body sent, the status, the time and
+  the answer.
+- **Rules** — `rules.yaml` as it is now, with syntax highlighting (YAML and the condition
+  language), next to the rules in effect and the properties each one reads. If the file
+  cannot be loaded, the error is shown and the previous rules stay in effect. Read-only: edit
+  the file to change the rules.
 
 The UI is **off until sign-in is configured**. Users sign in with OpenID Connect; Convy is
 tested against Authelia's behaviour, but any provider with the authorization-code flow works.

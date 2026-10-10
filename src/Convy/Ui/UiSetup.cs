@@ -3,6 +3,7 @@ using System.IO;
 using System.Linq;
 using System.Threading.Tasks;
 using Convy.Services.Ui;
+using Convy.Services.Webhooks;
 using Microsoft.AspNetCore.Authentication;
 using Microsoft.AspNetCore.Authentication.Cookies;
 using Microsoft.AspNetCore.Authentication.OpenIdConnect;
@@ -44,6 +45,8 @@ public static class UiSetup
         builder.Services.AddSingleton(new UiState(mode, problem));
         builder.Services.AddSingleton<UiStatusService>();
         builder.Services.AddSingleton<DataBrowserService>();
+        builder.Services.AddSingleton<WebhookAdminService>();
+        builder.Services.AddSingleton<RulesViewService>();
         builder.Services.AddSingleton<UiAuthService>();
         builder.Services.AddSingleton<UiAssets>();
         builder.Services.AddSingleton<UiRequestErrorFilter>();

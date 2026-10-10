@@ -17,6 +17,8 @@ namespace Convy.Data.Context
 
 		public DbSet<FileListingEntry> FileListings => Set<FileListingEntry>();
 
+		public DbSet<WebhookEntry> Webhooks => Set<WebhookEntry>();
+
 		public ConvyDbContext(DbContextOptions<ConvyDbContext> context)
 			: base(context)
 		{
