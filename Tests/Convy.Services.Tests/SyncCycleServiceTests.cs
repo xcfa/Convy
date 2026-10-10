@@ -129,6 +129,47 @@ public sealed class SyncCycleServiceTests : IDisposable
     }
 
     [Fact]
+    public async Task AJobWithSeveralReleasesCompletesOnceWhenAllArePlaced()
+    {
+        JobRecord Release(string itemRef, string subpath) => new()
+        {
+            Id = 0,
+            Provider = DownloadProviders.QBittorrent,
+            ItemRef = itemRef,
+            Category = "movies",
+            ClientCategory = "Movies",
+            Subpath = subpath,
+            Title = itemRef,
+            Status = JobStatus.Queued,
+            LastProgressAt = _time.Now,
+            CreatedAt = _time.Now,
+            UpdatedAt = _time.Now,
+        };
+
+        var releases = await _jobs.CreateGroupAsync([Release("h1", "One (2019)"), Release("h2", "Two (2020)")], CancellationToken.None);
+        AddCompletedItem("h1", "Movies", "One.2019/movie.mkv");
+        _downloader.Items["h2"] = FakeDownloader.Item("h2", DownloadState.Downloading, category: "Movies", size: 100, downloaded: 10);
+
+        await Run();
+
+        // The first release is in place, but the job is still downloading the second.
+        Assert.Equal(JobStatus.Completed, (await Reload(releases[0])).Status);
+        Assert.Equal([JobStatus.Downloading], _events.Changes.Select(c => c.Job.Status));
+
+        AddCompletedItem("h2", "Movies", "Two.2020/movie.mkv");
+        await Run();
+
+        Assert.Equal([JobStatus.Downloading, JobStatus.Placing, JobStatus.Completed], _events.Changes.Select(c => c.Job.Status));
+        var completed = _events.Changes[^1].Job;
+        Assert.Equal(releases[0].JobId, completed.JobId);
+        Assert.Equal("/data/media/movies", FakeFileSystem.Norm(completed.TargetPath!));
+        Assert.Equal(["One (2019)/movie.mkv", "Two (2020)/movie.mkv"], completed.PlacedFiles.Order(StringComparer.Ordinal));
+        Assert.Equal(
+            ["/data/media/movies/One (2019)/movie.mkv", "/data/media/movies/Two (2020)/movie.mkv"],
+            LinkedDestinations());
+    }
+
+    [Fact]
     public async Task ManualItemWithoutRuleIsSkipped()
     {
         AddCompletedItem("h1", "Other", "x.mkv");
@@ -164,7 +205,7 @@ public sealed class SyncCycleServiceTests : IDisposable
 
         // downloading -> placing -> completed, the last one carrying the placed files.
         Assert.Equal([JobStatus.Placing, JobStatus.Completed], _events.Changes.Select(c => c.Job.Status));
-        Assert.Equal(["Subs/en.srt", "movie.mkv"], _events.Changes[^1].PlacedFiles!.Order(StringComparer.Ordinal));
+        Assert.Equal(["Subs/en.srt", "movie.mkv"], _events.Changes[^1].Job.PlacedFiles.Order(StringComparer.Ordinal));
 
         await using var db = _db.CreateDbContext();
         var entries = await db.FileEntries.OrderBy(e => e.FilePath).ToListAsync();

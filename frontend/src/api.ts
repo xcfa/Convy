@@ -60,6 +60,19 @@ export interface Job {
   rule: string | null;
   error: string | null;
   created_at: string;
+  /** Present only for a job with several releases. */
+  releases?: JobRelease[];
+}
+
+export interface JobRelease {
+  title: string;
+  status: string;
+  provider: string;
+  progress: number | null;
+  size_bytes: number | null;
+  path: string | null;
+  rule: string | null;
+  error: string | null;
 }
 
 export interface LogEntry {

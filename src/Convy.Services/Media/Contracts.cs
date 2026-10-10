@@ -92,7 +92,24 @@ public sealed record DownloadResponse(
     [property: JsonPropertyName("rule")] string? Rule,
     [property: JsonPropertyName("file_count")] int? FileCount,
     [property: JsonPropertyName("size_bytes")] long? SizeBytes,
-    [property: JsonPropertyName("note")] string Note);
+    [property: JsonPropertyName("note")] string Note,
+    [property: JsonPropertyName("releases")] IReadOnlyList<DownloadReleaseDto>? Releases = null,
+    [property: JsonPropertyName("failed")] IReadOnlyList<FailedReleaseDto>? Failed = null);
+
+/// <summary>A release of a <c>download</c> request with several releases.</summary>
+public sealed record DownloadReleaseDto(
+    [property: JsonPropertyName("result_id")] string? ResultId,
+    [property: JsonPropertyName("title")] string Title,
+    [property: JsonPropertyName("expected_path")] string? ExpectedPath,
+    [property: JsonPropertyName("rule")] string? Rule,
+    [property: JsonPropertyName("file_count")] int? FileCount,
+    [property: JsonPropertyName("size_bytes")] long? SizeBytes);
+
+/// <summary>A release its downloader did not accept; the job was started without it.</summary>
+public sealed record FailedReleaseDto(
+    [property: JsonPropertyName("result_id")] string? ResultId,
+    [property: JsonPropertyName("title")] string Title,
+    [property: JsonPropertyName("error")] string Error);
 
 /// <summary><c>get_jobs</c> response.</summary>
 public sealed record JobsResponse(
@@ -111,7 +128,19 @@ public sealed record JobDto(
     [property: JsonPropertyName("path")] string? Path,
     [property: JsonPropertyName("rule")] string? Rule,
     [property: JsonPropertyName("error")] string? Error,
-    [property: JsonPropertyName("created_at")] DateTimeOffset CreatedAt);
+    [property: JsonPropertyName("created_at")] DateTimeOffset CreatedAt,
+    [property: JsonPropertyName("releases")] IReadOnlyList<JobReleaseDto>? Releases = null);
+
+/// <summary>One release of a job with several releases.</summary>
+public sealed record JobReleaseDto(
+    [property: JsonPropertyName("title")] string Title,
+    [property: JsonPropertyName("status")] string Status,
+    [property: JsonPropertyName("provider")] string Provider,
+    [property: JsonPropertyName("progress")] double? Progress,
+    [property: JsonPropertyName("size_bytes")] long? SizeBytes,
+    [property: JsonPropertyName("path")] string? Path,
+    [property: JsonPropertyName("rule")] string? Rule,
+    [property: JsonPropertyName("error")] string? Error);
 
 /// <summary><c>cancel_job</c> response.</summary>
 public sealed record CancelJobResponse(

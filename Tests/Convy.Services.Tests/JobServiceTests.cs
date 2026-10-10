@@ -227,4 +227,103 @@ public sealed class JobServiceTests : IDisposable
         Assert.All(views, v => Assert.Contains("unreachable", v.Error));
         Assert.Equal(reads + 1, _downloader.ItemReads);
     }
+
+    private static StartJobRequest Release(string hash, string title, string? subpath = null, long? size = 1000) =>
+        Request(subpath, size) with { Payload = new TorrentPayload(hash, $"magnet:?xt=urn:btih:{hash}", null), Title = title };
+
+    [Fact]
+    public async Task SeveralReleasesMakeOneJobAnnouncedOnce()
+    {
+        var result = await _service.StartAsync(
+            [Release("abc", "Movie One", "Movie One (2019)"), Release("def", "Movie Two", "Movie Two (2020)")],
+            CancellationToken.None);
+
+        Assert.Equal("j_1", result.Job.JobId);
+        Assert.Equal(2, result.Job.Releases.Count);
+        Assert.All(result.Job.Releases, r => Assert.Equal(result.Job.Id, r.GroupId));
+        Assert.All(result.Job.Releases, r => Assert.Equal("j_1", r.JobId));
+        Assert.Equal("Movie One (+1 more)", result.Job.Title);
+        Assert.Equal("/data/media/movies", FakeFileSystem.Norm(result.ExpectedPath!));
+        Assert.Equal("movies", result.Rule);
+        Assert.Empty(result.Failed);
+        Assert.Equal(["abc", "def"], _downloader.Added.Select(a => ((TorrentPayload)a.Payload).InfoHash));
+
+        var created = Assert.Single(_events.Changes);
+        Assert.Null(created.PreviousStatus);
+        Assert.Equal(2, created.Job.Releases.Count);
+    }
+
+    [Fact]
+    public async Task AProblemWithAnyReleaseRejectsTheWholeRequestBeforeAdding()
+    {
+        var invalid = await Assert.ThrowsAsync<ConvyRequestException>(() => _service.StartAsync(
+            [Release("abc", "Movie One"), Release("def", "Movie Two", "../evil")], CancellationToken.None));
+        Assert.StartsWith("'Movie Two': ", invalid.Message);
+
+        var twin = await Assert.ThrowsAsync<ConvyRequestException>(() => _service.StartAsync(
+            [Release("abc", "Movie One"), Release("abc", "Movie One again")], CancellationToken.None));
+        Assert.Contains("same download as 'Movie One'", twin.Message);
+
+        _options.MaxSizeGb = 1.5;
+        var tooBig = await Assert.ThrowsAsync<ConvyRequestException>(() => _service.StartAsync(
+            [Release("abc", "One", size: 1L << 30), Release("def", "Two", size: 1L << 30)], CancellationToken.None));
+        Assert.Contains("above the 1.5 GiB limit per job", tooBig.Message);
+
+        Assert.Empty(_downloader.Added);
+        Assert.Empty(_events.Changes);
+    }
+
+    [Fact]
+    public async Task AReleaseTheDownloaderRefusesIsReportedAndTheJobKeepsTheOthers()
+    {
+        _downloader.OnAdd = p => ((TorrentPayload)p).InfoHash == "def"
+            ? throw new InvalidOperationException("refused")
+            : FakeDownloader.Item(((TorrentPayload)p).InfoHash, DownloadState.Queued, category: "Movies");
+
+        var result = await _service.StartAsync([Release("abc", "One"), Release("def", "Two")], CancellationToken.None);
+
+        Assert.Equal("abc", Assert.Single(result.Job.Releases).ItemRef);
+        var failed = Assert.Single(result.Failed);
+        Assert.Equal(("Two", "refused"), (failed.Request.Title, failed.Error));
+
+        _downloader.OnAdd = _ => throw new InvalidOperationException("refused");
+        var none = await Assert.ThrowsAsync<ConvyRequestException>(
+            () => _service.StartAsync([Release("ghi", "Three"), Release("jkl", "Four")], CancellationToken.None));
+        Assert.Contains("No release could be added", none.Message);
+    }
+
+    [Fact]
+    public async Task CancelStopsEveryUnfinishedReleaseWithOneEvent()
+    {
+        var started = await _service.StartAsync([Release("abc", "One"), Release("def", "Two")], CancellationToken.None);
+        _events.Changes.Clear();
+
+        var cancelled = await _service.CancelAsync(started.Job.JobId, CancellationToken.None);
+
+        Assert.Equal(JobStatus.Cancelled, cancelled.Status);
+        Assert.All(cancelled.Releases, r => Assert.Equal(JobStatus.Cancelled, r.Status));
+        Assert.Equal(["abc", "def"], _downloader.Cancelled);
+        var change = Assert.Single(_events.Changes);
+        Assert.Equal((JobStatus.Cancelled, JobStatus.Queued), (change.Job.Status, change.PreviousStatus));
+    }
+
+    [Fact]
+    public async Task ListCombinesTheLiveStateOfTheReleases()
+    {
+        await _service.StartAsync([Release("abc", "One"), Release("def", "Two")], CancellationToken.None);
+        _downloader.Items["abc"] = FakeDownloader.Item("abc", DownloadState.Downloading, size: 1000, downloaded: 1000)
+            with { DownloadSpeed = 0 };
+        _downloader.Items["def"] = FakeDownloader.Item("def", DownloadState.Downloading, size: 3000, downloaded: 1000)
+            with { DownloadSpeed = 512 };
+
+        var view = Assert.Single(await _service.ListAsync(null, null, CancellationToken.None));
+
+        Assert.Equal(JobStatus.Downloading, view.Status);
+        Assert.Equal(0.5, view.Progress);
+        Assert.Equal(2000, view.DownloadedBytes);
+        Assert.Equal(512, view.SpeedBytesPerSecond);
+        Assert.Equal(["One", "Two"], view.Releases.Select(r => r.Release.Title));
+        Assert.Single(await _service.ListAsync(JobStatus.Downloading, null, CancellationToken.None));
+        Assert.Equal(1, (await _store.CountByStatusAsync(CancellationToken.None))[JobStatus.Queued]);
+    }
 }

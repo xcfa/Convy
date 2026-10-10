@@ -5,14 +5,19 @@ using Microsoft.EntityFrameworkCore;
 namespace Convy.Data.Entities
 {
     /// <summary>
-    /// A download started through Convy (by the agent). Links the downloader item to the
-    /// category and placement wishes (sub-path, file selection) and keeps a unified status.
+    /// One release of a job started through Convy (by the agent): links the downloader item to
+    /// the category and placement wishes (sub-path, file selection) and keeps a unified status.
+    /// A job is every entry with the same <see cref="GroupId"/>; most jobs have one entry.
     /// </summary>
     [Index(nameof(Provider), nameof(ItemRef))]
     [Index(nameof(Status))]
+    [Index(nameof(GroupId))]
     public class JobEntry
     {
         public int Id { get; set; }
+
+        /// <summary>The job this release belongs to (its public id, <c>j_&lt;GroupId&gt;</c>): the id of its first entry.</summary>
+        public int GroupId { get; set; }
 
         /// <summary>Downloader that owns the item (<c>qbittorrent</c>, <c>slskd</c>).</summary>
         [MaxLength(32)]
@@ -65,6 +70,9 @@ namespace Convy.Data.Entities
 
         [MaxLength(4096)]
         public string? Error { get; set; }
+
+        /// <summary>JSON array of placed file paths relative to <see cref="TargetPath"/>, once completed.</summary>
+        public string? PlacedFilesJson { get; set; }
 
         public int PlacementAttempts { get; set; }
 

@@ -477,11 +477,13 @@ public sealed class SyncCycleService
             Rule = ruleName,
             TargetPath = targetPath,
             Error = null,
+            // Keep the stored list when nothing changed, so placing again is not an update.
+            PlacedFiles = job.PlacedFiles is not null && job.PlacedFiles.SequenceEqual(placedFiles) ? job.PlacedFiles : placedFiles,
             UpdatedAt = job.Status == JobStatus.Completed && job.TargetPath == targetPath ? job.UpdatedAt : now,
             CompletedAt = job.CompletedAt ?? now,
         };
 
-        return _transitions.ApplyAsync(job, completed, cancellationToken, placedFiles);
+        return _transitions.ApplyAsync(job, completed, cancellationToken);
     }
 
     private Task FailJobAsync(JobRecord job, string error, DateTimeOffset now, CancellationToken cancellationToken)

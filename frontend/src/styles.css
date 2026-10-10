@@ -409,6 +409,24 @@ td.wrap {
   margin-top: 2px;
 }
 
+.link-button {
+  font: inherit;
+  color: var(--accent);
+  background: none;
+  border: none;
+  padding: 0;
+  cursor: pointer;
+}
+
+.link-button:hover {
+  text-decoration: underline;
+}
+
+tr.release-row td {
+  background: color-mix(in srgb, var(--surface-2) 45%, transparent);
+  border-bottom-style: dashed;
+}
+
 .progress-col {
   min-width: 140px;
 }

@@ -37,8 +37,13 @@ Talk to the user in their language. Show releases as short readable lines, never
 6. **Confirm.** Present your pick in one or two lines (title, quality, audio, size, why) plus
    at most two alternatives, and ask to confirm. Never call `download` without the user's
    confirmation. One confirmation may cover several downloads the user asked for together.
-7. **Download** with `download(result_id, category, subpath, include?, exclude?)`, see
-   [Sub-path](#sub-path) and [File selection](#file-selection). Report `job_id`,
+7. **Download** with `download(category, result_id, subpath, include?, exclude?)`, see
+   [Sub-path](#sub-path) and [File selection](#file-selection). When the user asked for
+   several things of one category at once (three albums, two seasons from different
+   releases), pass them together as `releases: [{result_id, subpath, include?, exclude?}, …]`:
+   that makes **one** job with one status and one notification instead of one per result.
+   Use separate calls for different categories. Releases a client refused come back under
+   `failed`; tell the user. Report `job_id`,
    `expected_path` (a forecast; rules are evaluated again at placement) and `rule`. Without a
    rule (`rule: null`) the files stay in the client's download folder; say so.
 8. **Follow up** with `get_jobs` when the user asks, or once right after downloading to see
@@ -124,7 +129,9 @@ A pattern that matches no file is an error: check the names with `list_files`.
 | `failed` | Client error, peer refusal, placement failed | Quote `error`; offer another result |
 | `cancelled` | Cancelled by `cancel_job` | — |
 
-`cancel_job` only when the user asks; it stops the download and keeps data and links.
+A job with several releases shows them under `releases`, each with its own status; the job
+is `completed` once all are placed, `failed` if one failed. `cancel_job` only when the user
+asks; it stops every unfinished release and keeps data and links.
 
 ## Errors
 
