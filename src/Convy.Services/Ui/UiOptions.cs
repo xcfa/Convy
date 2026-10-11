@@ -1,3 +1,5 @@
+using System.Text.RegularExpressions;
+
 namespace Convy.Services.Ui;
 
 /// <summary>How the web UI is protected.</summary>
@@ -122,6 +124,10 @@ public sealed class UiOptions
 /// <summary>The <c>Ui:Oidc</c> configuration section.</summary>
 public sealed class UiOidcOptions
 {
+    // Password digests in the formats Authelia accepts for a client_secret.
+    private static readonly Regex DigestPrefix = new(
+        @"^\$(pbkdf2(-sha(1|256|512))?|argon2(id|i|d)|scrypt|2[aby]|[56]|plaintext)\$", RegexOptions.CultureInvariant);
+
     /// <summary>The provider's address, e.g. <c>https://auth.example.com</c> for Authelia.</summary>
     public string? Authority { get; set; }
 
@@ -145,6 +151,32 @@ public sealed class UiOidcOptions
     /// <c>rd=&lt;public url&gt;</c>. Without it only Convy's session ends.
     /// </summary>
     public string? LogoutUrl { get; set; }
+
+    /// <summary>
+    /// The secret as sent to the provider, without surrounding whitespace. A secret file keeps
+    /// a <c>\r</c> when written with Windows line ends (only <c>\n</c> is dropped on Linux), and
+    /// generated secrets never contain whitespace.
+    /// </summary>
+    public string? EffectiveClientSecret => ClientSecret?.Trim();
+
+    /// <summary>Whether <see cref="ClientSecret"/> has whitespace or line breaks around it.</summary>
+    public bool ClientSecretHasSurroundingWhitespace =>
+        ClientSecret is { Length: > 0 } secret && secret.Length != secret.Trim().Length;
+
+    /// <summary>
+    /// Whether the secret looks like a password digest (<c>$pbkdf2-sha512$…</c>, <c>$argon2id$…</c>),
+    /// i.e. the value that belongs into the provider's client registration, not into Convy.
+    /// </summary>
+    public bool ClientSecretLooksLikeDigest => EffectiveClientSecret is { } secret && DigestPrefix.IsMatch(secret);
+
+    /// <summary>What to check when signing in failed with <paramref name="message"/>, or <c>null</c>.</summary>
+    public static string? ExplainSignInFailure(string? message) =>
+        message?.Contains("invalid_client", StringComparison.Ordinal) == true
+            ? "The provider refused Convy's client credentials when exchanging the code. Check that the client is "
+              + "registered with token_endpoint_auth_method: client_secret_post (Authelia's default is "
+              + "client_secret_basic) and that Ui__Oidc__ClientSecret holds the plain secret, not its digest. "
+              + "The provider's log names the exact reason."
+            : null;
 
     /// <summary>The scopes actually requested: the configured ones, or the default set.</summary>
     public IReadOnlyList<string> EffectiveScopes =>

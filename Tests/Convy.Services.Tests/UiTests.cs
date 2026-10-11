@@ -157,6 +157,41 @@ public class UiOptionsTests
         Assert.Equal(["profile", "openid"], new UiOidcOptions { Scopes = ["profile"] }.EffectiveScopes);
     }
 
+    [Theory]
+    [InlineData("s3cr3t", "s3cr3t", false)]
+    [InlineData("s3cr3t\r", "s3cr3t", true)]
+    [InlineData("  s3cr3t \n", "s3cr3t", true)]
+    public void ClientSecretIsSentWithoutSurroundingWhitespace(string configured, string sent, bool hadWhitespace)
+    {
+        var oidc = new UiOidcOptions { ClientSecret = configured };
+
+        Assert.Equal(sent, oidc.EffectiveClientSecret);
+        Assert.Equal(hadWhitespace, oidc.ClientSecretHasSurroundingWhitespace);
+    }
+
+    [Theory]
+    [InlineData("$pbkdf2-sha512$310000$c8p78n7pUMln0jzvd4aK4Q$JNRBzwAo0ek5qKn50cFzzvE9RXV88h1wJn5KGiHrD0YKtZaR/nCb2CJPOsKaPK0hjf.9yHxzQGZziziccp6Yng", true)]
+    [InlineData("$argon2id$v=19$m=65536,t=3,p=4$BpLnfgDsc2WD8F2q$o/vzA4myCqZZ36bUGsDY//8mKUYNZZaR0t4MFFSs+iM", true)]
+    [InlineData("$2b$12$abcdefghijklmnopqrstuuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ012", true)]
+    [InlineData("$plaintext$s3cr3t", true)]
+    [InlineData("Wk2$j7~p-QeV$!x_9Lr", false)]
+    [InlineData("$abc$def", false)]
+    public void RecognisesADigestGivenInsteadOfTheSecret(string secret, bool digest)
+    {
+        Assert.Equal(digest, new UiOidcOptions { ClientSecret = secret }.ClientSecretLooksLikeDigest);
+    }
+
+    [Fact]
+    public void ExplainsInvalidClientFailures()
+    {
+        var hint = UiOidcOptions.ExplainSignInFailure(
+            "Message contains error: 'invalid_client', error_description: 'Client authentication failed', error_uri: 'error_uri is null'.");
+
+        Assert.Contains("client_secret_post", hint);
+        Assert.Null(UiOidcOptions.ExplainSignInFailure("Correlation failed."));
+        Assert.Null(UiOidcOptions.ExplainSignInFailure(null));
+    }
+
     [Fact]
     public void AllowedGroupsRestrictAccessWhenSet()
     {
