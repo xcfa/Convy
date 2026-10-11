@@ -19,8 +19,11 @@ public sealed class MappingRule
     /// </summary>
     public string? Name { get; init; }
 
-    /// <summary>The original condition text, kept for logging / diagnostics.</summary>
+    /// <summary>The original condition text, kept for logging / diagnostics; empty for a catch-all rule.</summary>
     public required string RawCondition { get; init; }
+
+    /// <summary>Whether the rule has an empty condition and so matches every item.</summary>
+    public bool MatchesEverything => Condition is TrueExpression;
 
     /// <summary>Canonical names of every property the condition references.</summary>
     public IReadOnlySet<string> ReferencedProperties => _referencedProperties ??= CollectReferencedProperties();
