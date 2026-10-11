@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { Fragment, useState } from "react";
 import { api, type Job } from "../api";
 import { Empty, ErrorBanner, JobStatusBadge, Progress } from "../components";
 import { bytes, dateTimeText, percent, speed } from "../format";
@@ -12,9 +12,20 @@ export function Jobs({ status }: { status: string }) {
   const { data, error, loading, reload } = usePolling(() => api.jobs(status), 5000, [status]);
   const [actionError, setActionError] = useState<string>();
   const [busy, setBusy] = useState<string>();
+  const [open, setOpen] = useState<Set<string>>(new Set());
+
+  function toggle(jobId: string) {
+    setOpen((current) => {
+      const next = new Set(current);
+      if (next.has(jobId)) next.delete(jobId);
+      else next.add(jobId);
+      return next;
+    });
+  }
 
   async function cancel(job: Job) {
-    if (!window.confirm(`Stop downloading “${job.title}”? Downloaded data and created links are kept.`)) return;
+    const what = job.releases ? `all ${job.releases.length} releases of “${job.title}”` : `“${job.title}”`;
+    if (!window.confirm(`Stop downloading ${what}? Downloaded data and created links are kept.`)) return;
     setBusy(job.job_id);
     setActionError(undefined);
     try {
@@ -71,10 +82,18 @@ export function Jobs({ status }: { status: string }) {
             </thead>
             <tbody>
               {jobs.map((job) => (
-                <tr key={job.job_id}>
+                <Fragment key={job.job_id}>
+                <tr>
                   <td className="mono">{job.job_id}</td>
                   <td className="wrap title-cell">
                     {job.title}
+                    {job.releases && (
+                      <div>
+                        <button className="link-button small" onClick={() => toggle(job.job_id)} aria-expanded={open.has(job.job_id)}>
+                          {open.has(job.job_id) ? "▾" : "▸"} {job.releases.length} releases
+                        </button>
+                      </div>
+                    )}
                     {job.error && <div className="error-text">{job.error}</div>}
                   </td>
                   <td>
@@ -107,6 +126,35 @@ export function Jobs({ status }: { status: string }) {
                     )}
                   </td>
                 </tr>
+                {job.releases && open.has(job.job_id) &&
+                  job.releases.map((release, i) => (
+                    <tr key={`${job.job_id}-${i}`} className="release-row">
+                      <td />
+                      <td className="wrap title-cell">
+                        {release.title}
+                        {release.error && <div className="error-text">{release.error}</div>}
+                      </td>
+                      <td>
+                        <JobStatusBadge status={release.status} />
+                      </td>
+                      <td>
+                        <div className="progress-cell">
+                          <Progress value={release.progress} />
+                          <span className="small">{percent(release.progress)}</span>
+                        </div>
+                      </td>
+                      <td className="num">{bytes(release.size_bytes)}</td>
+                      <td />
+                      <td className="muted small">{release.provider}</td>
+                      <td className="wrap mono small">
+                        {release.path ?? "—"}
+                        {release.rule && <div className="muted">rule: {release.rule}</div>}
+                      </td>
+                      <td />
+                      <td />
+                    </tr>
+                  ))}
+                </Fragment>
               ))}
             </tbody>
           </table>

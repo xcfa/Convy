@@ -1,8 +1,10 @@
 namespace Convy.Services.Jobs;
 
 /// <summary>
-/// Saves job updates without overwriting concurrent writers and announces status changes.
-/// Every component that changes a job (sync worker, MCP tools) goes through here.
+/// Saves release updates without overwriting concurrent writers and announces job status
+/// changes. Every component that changes a job (sync worker, MCP tools) goes through here.
+/// A release's status change is announced only when it changes the status of its job, so a
+/// job with several releases produces one event per job status, not one per release.
 /// </summary>
 public sealed class JobTransitions
 {
@@ -17,14 +19,10 @@ public sealed class JobTransitions
 
     /// <summary>
     /// Persists <paramref name="updated"/> if <paramref name="current"/> is still the stored
-    /// state, and publishes a <see cref="JobStatusChange"/> when the status changed.
-    /// Returns the saved job, or <c>null</c> when another writer changed the job first.
+    /// state, and publishes a <see cref="JobStatusChange"/> when the job's status changed.
+    /// Returns the saved release, or <c>null</c> when another writer changed it first.
     /// </summary>
-    public async Task<JobRecord?> ApplyAsync(
-        JobRecord current,
-        JobRecord updated,
-        CancellationToken cancellationToken,
-        IReadOnlyList<string>? placedFiles = null)
+    public async Task<JobRecord?> ApplyAsync(JobRecord current, JobRecord updated, CancellationToken cancellationToken)
     {
         if (await SaveCoreAsync(current, updated, cancellationToken).ConfigureAwait(false) is null)
         {
@@ -33,8 +31,7 @@ public sealed class JobTransitions
 
         if (updated.Status != current.Status)
         {
-            await _events.PublishAsync(new JobStatusChange(updated, current.Status, placedFiles), cancellationToken)
-                .ConfigureAwait(false);
+            await PublishReleaseChangeAsync(updated, current.Status, cancellationToken).ConfigureAwait(false);
         }
 
         return updated;
@@ -47,9 +44,21 @@ public sealed class JobTransitions
     public Task<JobRecord?> SaveAsync(JobRecord current, JobRecord updated, CancellationToken cancellationToken) =>
         SaveCoreAsync(current, updated, cancellationToken);
 
-    /// <summary>Announces a status change saved with <see cref="SaveAsync"/>.</summary>
+    /// <summary>Announces a job status change saved with <see cref="SaveAsync"/>.</summary>
     public Task PublishAsync(JobStatusChange change, CancellationToken cancellationToken) =>
         _events.PublishAsync(change, cancellationToken);
+
+    /// <summary>Stores a new job with one release and publishes its initial status.</summary>
+    public async Task<JobRecord> CreateAsync(JobRecord job, CancellationToken cancellationToken) =>
+        (await CreateGroupAsync([job], cancellationToken).ConfigureAwait(false)).Releases[0];
+
+    /// <summary>Stores a new job made of <paramref name="releases"/> and publishes its initial status once.</summary>
+    public async Task<JobState> CreateGroupAsync(IReadOnlyList<JobRecord> releases, CancellationToken cancellationToken)
+    {
+        var created = JobState.From(await _store.CreateGroupAsync(releases, cancellationToken).ConfigureAwait(false));
+        await _events.PublishAsync(new JobStatusChange(created, PreviousStatus: null), cancellationToken).ConfigureAwait(false);
+        return created;
+    }
 
     private async Task<JobRecord?> SaveCoreAsync(JobRecord current, JobRecord updated, CancellationToken cancellationToken)
     {
@@ -63,11 +72,22 @@ public sealed class JobTransitions
             : null;
     }
 
-    /// <summary>Stores a new job and publishes its initial status.</summary>
-    public async Task<JobRecord> CreateAsync(JobRecord job, CancellationToken cancellationToken)
+    private async Task PublishReleaseChangeAsync(JobRecord release, JobStatus previous, CancellationToken cancellationToken)
     {
-        var created = await _store.CreateAsync(job, cancellationToken).ConfigureAwait(false);
-        await _events.PublishAsync(new JobStatusChange(created, PreviousStatus: null), cancellationToken).ConfigureAwait(false);
-        return created;
+        var releases = await _store.GetGroupAsync(release.GroupId, cancellationToken).ConfigureAwait(false);
+        if (releases.Count == 0)
+        {
+            releases = [release];
+        }
+
+        // The stored group already holds this release's new state; the job's previous status
+        // is the same group with this release as it was.
+        var after = JobState.From(releases.Select(r => r.Id == release.Id ? release : r).ToList());
+        var before = JobState.Combine(after.Releases.Select(r => r.Id == release.Id ? previous : r.Status));
+
+        if (after.Status != before)
+        {
+            await _events.PublishAsync(new JobStatusChange(after, before), cancellationToken).ConfigureAwait(false);
+        }
     }
 }

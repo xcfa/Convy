@@ -42,7 +42,7 @@ public class WebhookEventDispatcherTests
             TimeProvider.System,
             NullLogger<WebhookEventDispatcher>.Instance);
 
-    private static WebhookEvent JobEvent(string? rule) => new(WebhookEvents.JobStatus, rule,
+    private static WebhookEvent JobEvent(string? rule) => new(WebhookEvents.JobStatus, rule is null ? [] : [rule],
         new Dictionary<string, object?> { ["event"] = "job_status", ["job_id"] = "j_1", ["status"] = "completed", ["files"] = new[] { "a", "b" } });
 
     [Fact]
@@ -223,14 +223,14 @@ public class JobStatusEventTests
             TargetPath = "/data/media/music/Evanescence/2003 - Fallen",
             SizeBytes = 432000000,
             FileCount = 250,
+            PlacedFiles = Enumerable.Range(1, 250).Select(i => $"{i:000}.flac").ToList(),
         };
-        var placed = Enumerable.Range(1, 250).Select(i => $"{i:000}.flac").ToList();
 
-        var webhookEvent = WebhookJobEvents.ToEvent(new JobStatusChange(job, JobStatus.Placing, placed));
+        var webhookEvent = WebhookJobEvents.ToEvent(new JobStatusChange(JobState.From([job]), JobStatus.Placing));
         var json = JsonSerializer.SerializeToElement(webhookEvent.Payload);
 
         Assert.Equal("job_status", webhookEvent.Name);
-        Assert.Equal("music", webhookEvent.RuleName);
+        Assert.Equal(["music"], webhookEvent.RuleNames);
         Assert.Equal("job_status", json.GetProperty("event").GetString());
         Assert.Equal("j_42", json.GetProperty("job_id").GetString());
         Assert.Equal("completed", json.GetProperty("status").GetString());
@@ -242,6 +242,7 @@ public class JobStatusEventTests
         Assert.Equal(250, json.GetProperty("files_total").GetInt32());
         Assert.Equal(432000000, json.GetProperty("size_bytes").GetInt64());
         Assert.Equal(JsonValueKind.Null, json.GetProperty("error").ValueKind);
+        Assert.False(json.TryGetProperty("releases", out _));
     }
 
     [Fact]
@@ -252,7 +253,7 @@ public class JobStatusEventTests
             Id = 1, Provider = "qbittorrent", ItemRef = "h", Category = "movies", Title = "M", Status = JobStatus.Queued, FileCount = 3,
         };
 
-        var json = JsonSerializer.SerializeToElement(WebhookJobEvents.ToEvent(new JobStatusChange(job, null)).Payload);
+        var json = JsonSerializer.SerializeToElement(WebhookJobEvents.ToEvent(new JobStatusChange(JobState.From([job]), null)).Payload);
 
         Assert.Equal(JsonValueKind.Null, json.GetProperty("previous_status").ValueKind);
         Assert.Equal(0, json.GetProperty("files").GetArrayLength());

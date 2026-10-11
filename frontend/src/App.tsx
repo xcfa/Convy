@@ -4,6 +4,8 @@ import { Overview } from "./pages/Overview";
 import { Jobs } from "./pages/Jobs";
 import { Logs } from "./pages/Logs";
 import { Data } from "./pages/Data";
+import { Webhooks } from "./pages/Webhooks";
+import { Rules } from "./pages/Rules";
 import { readRoute, tabs } from "./route";
 
 export function App() {
@@ -61,6 +63,8 @@ export function App() {
         {route.tab === "jobs" && <Jobs status={route.params.get("status") ?? ""} />}
         {route.tab === "logs" && <Logs />}
         {route.tab === "data" && <Data table={route.params.get("table")} />}
+        {route.tab === "webhooks" && <Webhooks />}
+        {route.tab === "rules" && <Rules />}
       </main>
     </div>
   );

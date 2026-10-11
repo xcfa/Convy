@@ -19,6 +19,13 @@
   --neutral-bg: #eceff3;
   --shadow: 0 1px 2px rgb(16 24 40 / 6%);
   --mono: ui-monospace, "Cascadia Mono", "SF Mono", Menlo, Consolas, monospace;
+  --syn-key: #8a3ffc;
+  --syn-string: #1a7f37;
+  --syn-comment: #8b949e;
+  --syn-number: #b35900;
+  --syn-op: #cf222e;
+  --syn-prop: #0550ae;
+  --syn-func: #8250df;
   color-scheme: light;
 }
 
@@ -43,6 +50,13 @@
     --neutral: #aab3c0;
     --neutral-bg: #262c35;
     --shadow: none;
+    --syn-key: #c297ff;
+    --syn-string: #7ee2a8;
+    --syn-comment: #7d8590;
+    --syn-number: #ffb86b;
+    --syn-op: #ff7b72;
+    --syn-prop: #79c0ff;
+    --syn-func: #d2a8ff;
     color-scheme: dark;
   }
 }
@@ -409,6 +423,24 @@ td.wrap {
   margin-top: 2px;
 }
 
+.link-button {
+  font: inherit;
+  color: var(--accent);
+  background: none;
+  border: none;
+  padding: 0;
+  cursor: pointer;
+}
+
+.link-button:hover {
+  text-decoration: underline;
+}
+
+tr.release-row td {
+  background: color-mix(in srgb, var(--surface-2) 45%, transparent);
+  border-bottom-style: dashed;
+}
+
 .progress-col {
   min-width: 140px;
 }
@@ -685,7 +717,228 @@ td.wrap {
   border-radius: 8px;
 }
 
+/* Webhooks */
+
+.url-cell {
+  word-break: break-all;
+}
+
+td.actions {
+  display: flex;
+  gap: 6px;
+  justify-content: flex-end;
+}
+
+.chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+}
+
+.chip {
+  display: inline-block;
+  padding: 1px 8px;
+  border-radius: 999px;
+  font-size: 12px;
+  background: var(--neutral-bg);
+  color: var(--neutral);
+  border: 1px solid transparent;
+}
+
+button.chip.toggle {
+  font: inherit;
+  font-size: 12px;
+  cursor: pointer;
+  border-color: var(--border);
+  background: transparent;
+  color: var(--text);
+}
+
+button.chip.toggle.on {
+  background: var(--info-bg);
+  color: var(--info);
+  border-color: color-mix(in srgb, var(--info) 40%, transparent);
+}
+
+.dialog.editor {
+  width: min(820px, 100%);
+  max-height: 90vh;
+}
+
+.editor-body {
+  overflow: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+
+.form {
+  border: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  min-width: 0;
+}
+
+.form > label,
+.form-row {
+  display: grid;
+  grid-template-columns: 110px minmax(0, 1fr);
+  gap: 10px;
+  align-items: start;
+}
+
+.form > label > span:first-child,
+.form-row > span:first-child {
+  color: var(--muted);
+  padding-top: 5px;
+}
+
+.form input[type="text"],
+.form input[type="url"] {
+  font: inherit;
+  color: var(--text);
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 7px;
+  padding: 5px 10px;
+  width: 100%;
+  min-width: 0;
+}
+
+.form > label.check {
+  display: flex;
+  margin-left: 120px;
+}
+
+.stack {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  min-width: 0;
+}
+
+.stack .check {
+  display: flex;
+  align-items: baseline;
+  gap: 6px;
+}
+
+.param-row {
+  display: grid;
+  grid-template-columns: 90px minmax(0, 1fr) auto minmax(0, 1fr) auto;
+  gap: 6px;
+  align-items: center;
+}
+
+.button.add {
+  align-self: flex-start;
+}
+
+.test-result h3 {
+  font-size: 13px;
+  margin: 10px 0 4px;
+  color: var(--muted);
+}
+
+/* Code and syntax highlighting */
+
+pre.code {
+  margin: 0;
+  font-family: var(--mono);
+  font-size: 12.5px;
+  line-height: 1.55;
+  background: var(--surface-2);
+  border-radius: 8px;
+  padding: 10px 0;
+  overflow: auto;
+  max-height: 70vh;
+}
+
+pre.code.small {
+  padding: 8px 12px;
+  max-height: 260px;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
+.code-line {
+  display: grid;
+  grid-template-columns: 4ch 1fr;
+  gap: 14px;
+  padding: 0 14px 0 6px;
+  white-space: pre;
+}
+
+.code-line .ln {
+  color: var(--muted);
+  text-align: right;
+  user-select: none;
+  opacity: 0.7;
+}
+
+.code-inline {
+  font-family: var(--mono);
+  font-size: 12.5px;
+}
+
+.tok-key {
+  color: var(--syn-key);
+}
+
+.tok-string {
+  color: var(--syn-string);
+}
+
+.tok-comment {
+  color: var(--syn-comment);
+  font-style: italic;
+}
+
+.tok-number,
+.tok-bool {
+  color: var(--syn-number);
+}
+
+.tok-op,
+.tok-dash {
+  color: var(--syn-op);
+}
+
+.tok-paren,
+.tok-punct {
+  color: var(--muted);
+}
+
+.tok-prop {
+  color: var(--syn-prop);
+  font-weight: 600;
+}
+
+.tok-value {
+  color: var(--syn-string);
+}
+
+.tok-func {
+  color: var(--syn-func);
+}
+
 @media (max-width: 760px) {
+  .form > label,
+  .form-row {
+    grid-template-columns: 1fr;
+  }
+
+  .form > label.check {
+    margin-left: 0;
+  }
+
+  .param-row {
+    grid-template-columns: 1fr 1fr;
+  }
+
   .topbar {
     padding: 0 16px;
     gap: 12px;

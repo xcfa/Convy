@@ -15,6 +15,7 @@ public sealed class MediaDownloadServiceTests : IDisposable
     private readonly FakeDownloader _downloader = new();
     private readonly EfSearchCache _cache;
     private readonly MediaDownloadService _service;
+    private readonly JobService _jobs;
 
     public MediaDownloadServiceTests()
     {
@@ -32,7 +33,7 @@ public sealed class MediaDownloadServiceTests : IDisposable
                     path: /data/media/music
                 """,
         };
-        var jobs = new JobService(
+        _jobs = new JobService(
             new DownloaderResolver([_downloader]), rules, store, new JobTransitions(store, new RecordingJobEvents()),
             new FakeFileSystem(), new StaticOptions<JobOptions>(new JobOptions()), _time, NullLogger<JobService>.Instance);
 
@@ -44,7 +45,7 @@ public sealed class MediaDownloadServiceTests : IDisposable
             _cache,
             new FileListingService(_cache, registry,
                 new StaticOptions<FilesOptions>(new FilesOptions { MetadataTimeoutSeconds = 1 }), NullLogger<FileListingService>.Instance),
-            jobs,
+            _jobs,
             new StaticOptions<SearchOptions>(new SearchOptions()));
     }
 
@@ -68,6 +69,68 @@ public sealed class MediaDownloadServiceTests : IDisposable
             ContentId = "c",
             ExpiresAt = _time.Now + TimeSpan.FromHours(6),
         }], CancellationToken.None);
+    }
+
+    private async Task CacheAlbums(params (string Id, string Title)[] albums)
+    {
+        await _cache.SaveResultsAsync(albums.Select(a => new CachedResult
+        {
+            Id = a.Id,
+            SearchId = "s_1",
+            Protocol = Protocol.Torrent,
+            Title = a.Title,
+            SizeBytes = 100,
+            FileCount = 10,
+            Availability = new Availability { Seeders = 4 },
+            Sources = ["prowlarr:1"],
+            MatchedQueries = ["evanescence"],
+            DedupKey = "btih:" + a.Id,
+            SourceId = "prowlarr:1",
+            ContentId = a.Id,
+            ExpiresAt = _time.Now + TimeSpan.FromHours(6),
+        }).ToList(), CancellationToken.None);
+        _source.PayloadFor = id => new TorrentPayload(id, $"magnet:?xt=urn:btih:{id}", null);
+    }
+
+    [Fact]
+    public async Task SeveralReleasesBecomeOneJob()
+    {
+        await CacheAlbums(("r_1", "Evanescence - Fallen"), ("r_2", "Evanescence - The Open Door"));
+
+        var response = await _service.DownloadAsync("music", null, null, null, null,
+            [new DownloadRelease("r_1", "Evanescence/2003 - Fallen"), new DownloadRelease("r_2", "Evanescence/2006 - The Open Door")],
+            CancellationToken.None);
+
+        Assert.Equal("j_1", response.JobId);
+        Assert.Equal(2, _downloader.Added.Count);
+        Assert.Equal("/data/media/music/Evanescence", FakeFileSystem.Norm(response.ExpectedPath!));
+        Assert.Equal(200, response.SizeBytes);
+        Assert.Equal(20, response.FileCount);
+        Assert.Equal(["r_1", "r_2"], response.Releases!.Select(r => r.ResultId));
+        Assert.Equal("/data/media/music/Evanescence/2006 - The Open Door", FakeFileSystem.Norm(response.Releases![1].ExpectedPath!));
+        Assert.Null(response.Failed);
+
+        var job = Assert.Single(await _jobs.ListAsync(null, null, CancellationToken.None));
+        Assert.Equal(2, job.Releases.Count);
+    }
+
+    [Fact]
+    public async Task ResultIdAndReleasesAreExclusive()
+    {
+        await CacheAlbums(("r_1", "Evanescence - Fallen"));
+
+        var both = await Assert.ThrowsAsync<ConvyRequestException>(() => _service.DownloadAsync(
+            "music", "r_1", null, null, null, [new DownloadRelease("r_1")], CancellationToken.None));
+        Assert.Contains("not both", both.Message);
+
+        var none = await Assert.ThrowsAsync<ConvyRequestException>(() => _service.DownloadAsync(
+            "music", null, null, null, null, null, CancellationToken.None));
+        Assert.Contains("Pass result_id", none.Message);
+
+        var unknown = await Assert.ThrowsAsync<ConvyRequestException>(() => _service.DownloadAsync(
+            "music", null, null, null, null, [new DownloadRelease("r_1"), new DownloadRelease("r_9")], CancellationToken.None));
+        Assert.StartsWith("r_9: ", unknown.Message);
+        Assert.Empty(_downloader.Added);
     }
 
     private static readonly FileListing Album = new(

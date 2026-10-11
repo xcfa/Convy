@@ -125,6 +125,9 @@ namespace Convy.Data.Migrations
                     b.Property<int?>("FileCount")
                         .HasColumnType("INTEGER");
 
+                    b.Property<int>("GroupId")
+                        .HasColumnType("INTEGER");
+
                     b.Property<string>("ItemRef")
                         .IsRequired()
                         .HasMaxLength(1024)
@@ -134,6 +137,9 @@ namespace Convy.Data.Migrations
                         .HasColumnType("INTEGER");
 
                     b.Property<DateTimeOffset>("LastProgressAt")
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("PlacedFilesJson")
                         .HasColumnType("TEXT");
 
                     b.Property<int>("PlacementAttempts")
@@ -185,6 +191,8 @@ namespace Convy.Data.Migrations
                         .HasColumnType("TEXT");
 
                     b.HasKey("Id");
+
+                    b.HasIndex("GroupId");
 
                     b.HasIndex("Status");
 
@@ -293,6 +301,44 @@ namespace Convy.Data.Migrations
                     b.HasIndex("ExpiresAt");
 
                     b.ToTable("SearchSessions");
+                });
+
+            modelBuilder.Entity("Convy.Data.Entities.WebhookEntry", b =>
+                {
+                    b.Property<int>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("INTEGER");
+
+                    b.Property<DateTimeOffset>("CreatedAt")
+                        .HasColumnType("TEXT");
+
+                    b.Property<bool>("Enabled")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<string>("EventsJson")
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("Name")
+                        .HasMaxLength(256)
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("NamesJson")
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("ParamsJson")
+                        .HasColumnType("TEXT");
+
+                    b.Property<DateTimeOffset>("UpdatedAt")
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("Url")
+                        .IsRequired()
+                        .HasMaxLength(2048)
+                        .HasColumnType("TEXT");
+
+                    b.HasKey("Id");
+
+                    b.ToTable("Webhooks");
                 });
 #pragma warning restore 612, 618
         }

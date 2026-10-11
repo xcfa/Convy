@@ -12,24 +12,34 @@ public sealed class EfJobStore : IJobStore
 
     public EfJobStore(IDbContextFactory<ConvyDbContext> dbFactory) => _dbFactory = dbFactory;
 
-    public async Task<JobRecord> CreateAsync(JobRecord job, CancellationToken cancellationToken)
+    public async Task<JobRecord> CreateAsync(JobRecord job, CancellationToken cancellationToken) =>
+        (await CreateGroupAsync([job], cancellationToken).ConfigureAwait(false))[0];
+
+    public async Task<IReadOnlyList<JobRecord>> CreateGroupAsync(IReadOnlyList<JobRecord> releases, CancellationToken cancellationToken)
     {
-        await using var db = await _dbFactory.CreateDbContextAsync(cancellationToken).ConfigureAwait(false);
-
-        var entry = new JobEntry
+        if (releases.Count == 0)
         {
-            Provider = job.Provider,
-            ItemRef = job.ItemRef,
-            Category = job.Category,
-            Title = job.Title,
-            Status = job.Status.ToName(),
-        };
-        Apply(job, entry);
+            throw new ArgumentException("A job has at least one release.", nameof(releases));
+        }
 
-        db.Jobs.Add(entry);
+        await using var db = await _dbFactory.CreateDbContextAsync(cancellationToken).ConfigureAwait(false);
+        await using var transaction = await db.Database.BeginTransactionAsync(cancellationToken).ConfigureAwait(false);
+
+        // The job's id is its first release's id, known only once that one is stored.
+        var entries = releases.Select(NewEntry).ToList();
+        db.Jobs.Add(entries[0]);
         await db.SaveChangesAsync(cancellationToken).ConfigureAwait(false);
 
-        return ToRecord(entry);
+        foreach (var entry in entries)
+        {
+            entry.GroupId = entries[0].Id;
+        }
+
+        db.Jobs.AddRange(entries.Skip(1));
+        await db.SaveChangesAsync(cancellationToken).ConfigureAwait(false);
+        await transaction.CommitAsync(cancellationToken).ConfigureAwait(false);
+
+        return entries.Select(ToRecord).ToList();
     }
 
     public async Task<JobRecord?> GetAsync(int id, CancellationToken cancellationToken)
@@ -41,6 +51,19 @@ public sealed class EfJobStore : IJobStore
             .ConfigureAwait(false);
 
         return entry is null ? null : ToRecord(entry);
+    }
+
+    public async Task<IReadOnlyList<JobRecord>> GetGroupAsync(int groupId, CancellationToken cancellationToken)
+    {
+        await using var db = await _dbFactory.CreateDbContextAsync(cancellationToken).ConfigureAwait(false);
+
+        var entries = await db.Jobs.AsNoTracking()
+            .Where(j => j.GroupId == groupId)
+            .OrderBy(j => j.Id)
+            .ToListAsync(cancellationToken)
+            .ConfigureAwait(false);
+
+        return entries.Select(ToRecord).ToList();
     }
 
     public async Task<JobRecord?> FindActiveAsync(string provider, string itemRef, CancellationToken cancellationToken)
@@ -57,42 +80,52 @@ public sealed class EfJobStore : IJobStore
         return entry is null ? null : ToRecord(entry);
     }
 
-    public async Task<IReadOnlyList<JobRecord>> ListAsync(JobStatus? status, int limit, CancellationToken cancellationToken)
+    public async Task<IReadOnlyList<IReadOnlyList<JobRecord>>> ListGroupsAsync(int limit, CancellationToken cancellationToken)
     {
         await using var db = await _dbFactory.CreateDbContextAsync(cancellationToken).ConfigureAwait(false);
 
-        var query = db.Jobs.AsNoTracking();
-        if (status is { } filter)
-        {
-            var name = filter.ToName();
-            query = query.Where(j => j.Status == name);
-        }
-
-        var entries = await query
-            .OrderByDescending(j => j.Id)
+        var groupIds = await db.Jobs.AsNoTracking()
+            .Select(j => j.GroupId)
+            .Distinct()
+            .OrderByDescending(id => id)
             .Take(limit)
             .ToListAsync(cancellationToken)
             .ConfigureAwait(false);
 
-        return entries.Select(ToRecord).ToList();
+        var entries = await db.Jobs.AsNoTracking()
+            .Where(j => groupIds.Contains(j.GroupId))
+            .OrderBy(j => j.Id)
+            .ToListAsync(cancellationToken)
+            .ConfigureAwait(false);
+
+        var byGroup = entries.Select(ToRecord).ToLookup(r => r.GroupId);
+        return groupIds.Select(id => (IReadOnlyList<JobRecord>)byGroup[id].ToList()).ToList();
     }
 
     public async Task<IReadOnlyDictionary<JobStatus, int>> CountByStatusAsync(CancellationToken cancellationToken)
     {
         await using var db = await _dbFactory.CreateDbContextAsync(cancellationToken).ConfigureAwait(false);
 
-        var counts = await db.Jobs.AsNoTracking()
-            .GroupBy(j => j.Status)
-            .Select(g => new { Status = g.Key, Count = g.Count() })
+        // A job's status is combined from its releases, so count per job in memory; the
+        // table holds one small row per release.
+        var releases = await db.Jobs.AsNoTracking()
+            .Select(j => new { j.GroupId, j.Status })
             .ToListAsync(cancellationToken)
             .ConfigureAwait(false);
 
         var result = new Dictionary<JobStatus, int>();
-        foreach (var count in counts)
+        foreach (var job in releases.GroupBy(r => r.GroupId))
         {
-            if (JobStatusNames.TryParse(count.Status, out var status))
+            var statuses = job
+                .Select(r => JobStatusNames.TryParse(r.Status, out var status) ? (JobStatus?)status : null)
+                .Where(s => s is not null)
+                .Select(s => s!.Value)
+                .ToList();
+
+            if (statuses.Count > 0)
             {
-                result[status] = count.Count;
+                var combined = JobState.Combine(statuses);
+                result[combined] = result.GetValueOrDefault(combined) + 1;
             }
         }
 
@@ -156,6 +189,7 @@ public sealed class EfJobStore : IJobStore
         entry.Rule = job.Rule;
         entry.TargetPath = job.TargetPath;
         entry.Error = job.Error;
+        entry.PlacedFilesJson = job.PlacedFiles is null ? null : JsonSerializer.Serialize(job.PlacedFiles);
         entry.PlacementAttempts = job.PlacementAttempts;
         entry.LastDownloadedBytes = job.LastDownloadedBytes;
         entry.LastProgressAt = job.LastProgressAt;
@@ -164,9 +198,24 @@ public sealed class EfJobStore : IJobStore
         entry.CompletedAt = job.CompletedAt;
     }
 
+    private static JobEntry NewEntry(JobRecord job)
+    {
+        var entry = new JobEntry
+        {
+            Provider = job.Provider,
+            ItemRef = job.ItemRef,
+            Category = job.Category,
+            Title = job.Title,
+            Status = job.Status.ToName(),
+        };
+        Apply(job, entry);
+        return entry;
+    }
+
     private static JobRecord ToRecord(JobEntry entry) => new()
     {
         Id = entry.Id,
+        GroupId = entry.GroupId,
         Provider = entry.Provider,
         ItemRef = entry.ItemRef,
         Category = entry.Category,
@@ -184,6 +233,9 @@ public sealed class EfJobStore : IJobStore
         Rule = entry.Rule,
         TargetPath = entry.TargetPath,
         Error = entry.Error,
+        PlacedFiles = entry.PlacedFilesJson is null
+            ? null
+            : JsonSerializer.Deserialize<List<string>>(entry.PlacedFilesJson),
         PlacementAttempts = entry.PlacementAttempts,
         LastDownloadedBytes = entry.LastDownloadedBytes,
         LastProgressAt = entry.LastProgressAt,

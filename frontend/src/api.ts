@@ -60,6 +60,19 @@ export interface Job {
   rule: string | null;
   error: string | null;
   created_at: string;
+  /** Present only for a job with several releases. */
+  releases?: JobRelease[];
+}
+
+export interface JobRelease {
+  title: string;
+  status: string;
+  provider: string;
+  progress: number | null;
+  size_bytes: number | null;
+  path: string | null;
+  rule: string | null;
+  error: string | null;
 }
 
 export interface LogEntry {
@@ -98,6 +111,69 @@ export interface DataPage {
   limit: number;
 }
 
+export type WebhookEvent = "linked" | "job_status" | "source_error";
+
+export interface WebhookParam {
+  place: "query" | "body";
+  name: string;
+  value: string;
+}
+
+export interface Webhook {
+  /** Set for webhooks created in the UI; null for those from configuration.yml. */
+  id: number | null;
+  source: "ui" | "file";
+  name: string | null;
+  url: string;
+  events: WebhookEvent[];
+  names: string[];
+  params: WebhookParam[];
+  enabled: boolean;
+}
+
+export interface WebhookList {
+  webhooks: Webhook[];
+  events: WebhookEvent[];
+  fields: Record<WebhookEvent, string[]>;
+  rules: string[];
+}
+
+export interface WebhookInput {
+  name: string | null;
+  url: string;
+  events: WebhookEvent[];
+  names: string[];
+  params: WebhookParam[];
+  enabled: boolean;
+}
+
+export interface WebhookTestResult {
+  ok: boolean;
+  status_code: number | null;
+  duration_ms: number;
+  url: string;
+  request_body: string;
+  response_body: string | null;
+  error: string | null;
+}
+
+export interface Rule {
+  name: string | null;
+  condition: string;
+  path: string;
+  properties: string[];
+}
+
+export interface RulesView {
+  path: string;
+  exists: boolean;
+  text: string | null;
+  version: number;
+  rules: Rule[];
+  error: string | null;
+  error_at: string | null;
+}
+
 export class ApiError extends Error {
   readonly status: number;
 
@@ -132,11 +208,13 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
     throw new ApiError(response.status, message);
   }
 
-  if (response.status === 202 || response.status === 204) {
-    return undefined as T;
-  }
+  // Some answers (202, 204, an action without a result) have no body.
+  const text = await response.text();
+  return (text ? JSON.parse(text) : undefined) as T;
+}
 
-  return (await response.json()) as T;
+function json(method: string, body: unknown): RequestInit {
+  return { method, body: JSON.stringify(body), headers: { "Content-Type": "application/json" } };
 }
 
 function query(params: Record<string, string | number | boolean | null | undefined>): string {
@@ -163,4 +241,11 @@ export const api = {
   table: (name: string, q: string, sort: string | null, desc: boolean, offset: number, limit: number) =>
     request<DataPage>(`/api/ui/data/${encodeURIComponent(name)}${query({ q, sort, desc, offset, limit })}`),
   signOut: () => request<{ redirect: string }>("/auth/logout", { method: "POST" }),
+  webhooks: () => request<WebhookList>("/api/ui/webhooks"),
+  createWebhook: (input: WebhookInput) => request<Webhook>("/api/ui/webhooks", json("POST", input)),
+  updateWebhook: (id: number, input: WebhookInput) => request<Webhook>(`/api/ui/webhooks/${id}`, json("PUT", input)),
+  deleteWebhook: (id: number) => request<void>(`/api/ui/webhooks/${id}`, { method: "DELETE" }),
+  testWebhook: (webhook: WebhookInput, event: WebhookEvent) =>
+    request<WebhookTestResult>("/api/ui/webhooks/test", json("POST", { webhook, event })),
+  rules: () => request<RulesView>("/api/ui/rules"),
 };

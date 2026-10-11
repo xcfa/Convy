@@ -2,13 +2,21 @@ using Microsoft.Extensions.Configuration;
 
 namespace Convy.Services.Jobs;
 
-/// <summary>A job as the services see it (immutable snapshot of a stored job).</summary>
+/// <summary>
+/// One release of a job: a single downloader item with its placement wishes and status
+/// (immutable snapshot of a stored entry). A job (<see cref="JobState"/>) is every release
+/// with the same <see cref="GroupId"/>; the sync worker handles releases one by one.
+/// </summary>
 public sealed record JobRecord
 {
+    /// <summary>Id of this release.</summary>
     public required int Id { get; init; }
 
-    /// <summary>Public identifier, e.g. <c>j_42</c>.</summary>
-    public string JobId => JobIds.Format(Id);
+    /// <summary>Id of the job this release belongs to; assigned by the store (0 before).</summary>
+    public int GroupId { get; init; }
+
+    /// <summary>Public identifier of the job, e.g. <c>j_42</c>.</summary>
+    public string JobId => JobIds.Format(GroupId == 0 ? Id : GroupId);
 
     public required string Provider { get; init; }
     public required string ItemRef { get; init; }
@@ -34,6 +42,10 @@ public sealed record JobRecord
     public string? Rule { get; init; }
     public string? TargetPath { get; init; }
     public string? Error { get; init; }
+
+    /// <summary>Placed file paths relative to <see cref="TargetPath"/>, once completed.</summary>
+    public IReadOnlyList<string>? PlacedFiles { get; init; }
+
     public int PlacementAttempts { get; init; }
     public long LastDownloadedBytes { get; init; }
     public DateTimeOffset LastProgressAt { get; init; }

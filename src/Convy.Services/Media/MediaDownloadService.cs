@@ -35,24 +35,108 @@ public sealed class MediaDownloadService
         _searchOptions = searchOptions;
     }
 
-    public async Task<DownloadResponse> DownloadAsync(
+    /// <summary>
+    /// The <c>download</c> tool: either one result (<paramref name="resultId"/> with its
+    /// sub-path and patterns) or several (<paramref name="releases"/>), never both.
+    /// </summary>
+    public Task<DownloadResponse> DownloadAsync(
+        string categoryId,
+        string? resultId,
+        string? subpath,
+        IReadOnlyList<string>? include,
+        IReadOnlyList<string>? exclude,
+        IReadOnlyList<DownloadRelease>? releases,
+        CancellationToken cancellationToken)
+    {
+        if (releases is { Count: > 0 })
+        {
+            if (resultId is not null || subpath is not null || include is { Count: > 0 } || exclude is { Count: > 0 })
+            {
+                throw new ConvyRequestException(
+                    "Pass either result_id (with subpath, include, exclude) or releases, not both; each release has its own.");
+            }
+
+            return DownloadAsync(categoryId, releases, cancellationToken);
+        }
+
+        return string.IsNullOrWhiteSpace(resultId)
+            ? throw new ConvyRequestException("Pass result_id, or releases to download several results as one job.")
+            : DownloadAsync(resultId, categoryId, subpath, include, exclude, cancellationToken);
+    }
+
+    /// <summary>Downloads one result as a job with one release.</summary>
+    public Task<DownloadResponse> DownloadAsync(
         string resultId,
         string categoryId,
         string? subpath,
         IReadOnlyList<string>? include,
         IReadOnlyList<string>? exclude,
-        CancellationToken cancellationToken)
+        CancellationToken cancellationToken) =>
+        DownloadAsync(categoryId, [new DownloadRelease(resultId, subpath, include, exclude)], cancellationToken);
+
+    /// <summary>
+    /// Downloads several results as one job (e.g. several albums). Each release is prepared
+    /// first (result, file selection, payload); a problem with any of them rejects the request.
+    /// </summary>
+    public async Task<DownloadResponse> DownloadAsync(
+        string categoryId, IReadOnlyList<DownloadRelease> releases, CancellationToken cancellationToken)
     {
+        if (releases.Count == 0)
+        {
+            throw new ConvyRequestException("Nothing to download: pass result_id or releases.");
+        }
+
         var category = _catalog.Get(categoryId);
-        if (!SubpathValidator.TryValidate(subpath, out _, out var subpathError))
+        var requests = new List<StartJobRequest>(releases.Count);
+        foreach (var release in releases)
+        {
+            // With several releases every message says which one it is about.
+            var prefix = releases.Count > 1 ? $"{release.ResultId}: " : string.Empty;
+            try
+            {
+                requests.Add(await PrepareAsync(category, release, cancellationToken).ConfigureAwait(false));
+            }
+            catch (ConvyRequestException ex) when (prefix.Length > 0)
+            {
+                throw new ConvyRequestException(prefix + ex.Message, ex);
+            }
+        }
+
+        var started = await _jobs.StartAsync(requests, cancellationToken).ConfigureAwait(false);
+        var job = started.Job;
+        var many = releases.Count > 1;
+
+        return new DownloadResponse(
+            job.JobId,
+            job.Status.ToName(),
+            started.ExpectedPath,
+            started.Rule,
+            job.FileCount,
+            job.SizeBytes,
+            "expected_path is a forecast: rules that depend on changing properties are evaluated again when the files are placed.",
+            many
+                ? started.Started.Select(s => new DownloadReleaseDto(
+                    s.Request.ResultId, s.Request.Title, s.ExpectedPath, s.Rule, s.Release.FileCount, s.Release.SizeBytes)).ToList()
+                : null,
+            started.Failed.Count > 0
+                ? started.Failed.Select(f => new FailedReleaseDto(f.Request.ResultId, f.Request.Title, f.Error)).ToList()
+                : null);
+    }
+
+    /// <summary>Turns one release of a request into what the job service starts.</summary>
+    private async Task<StartJobRequest> PrepareAsync(Category category, DownloadRelease release, CancellationToken cancellationToken)
+    {
+        if (!SubpathValidator.TryValidate(release.Subpath, out _, out var subpathError))
         {
             throw new ConvyRequestException(subpathError!);
         }
 
-        var result = await _listings.GetResultAsync(resultId, cancellationToken).ConfigureAwait(false);
+        var result = await _listings.GetResultAsync(release.ResultId, cancellationToken).ConfigureAwait(false);
         var source = await _registry.FindAsync(result.SourceId, cancellationToken).ConfigureAwait(false)
                      ?? throw new ConvyRequestException($"Source '{result.SourceId}' of this result is no longer available.");
 
+        var include = release.Include;
+        var exclude = release.Exclude;
         var hasPatterns = include is { Count: > 0 } || exclude is { Count: > 0 };
         var listing = hasPatterns
             ? await _listings.GetListingAsync(result, cancellationToken).ConfigureAwait(false)
@@ -74,28 +158,19 @@ public sealed class MediaDownloadService
             payload = torrent with { TorrentFile = metadata };
         }
 
-        var started = await _jobs.StartAsync(new StartJobRequest
+        return new StartJobRequest
         {
             Payload = payload,
             Selection = selection,
             Category = category.Id,
             ClientCategory = category.ClientCategory,
-            Subpath = subpath,
+            Subpath = release.Subpath,
             Title = result.Title,
             SizeBytes = selected?.Sum(f => f.Size) ?? result.SizeBytes,
             FileCount = selected?.Count ?? result.FileCount,
             ResultId = result.Id,
             SourceId = result.SourceId,
-        }, cancellationToken).ConfigureAwait(false);
-
-        return new DownloadResponse(
-            started.Job.JobId,
-            started.Job.Status.ToName(),
-            started.ExpectedPath,
-            started.Rule,
-            started.Job.FileCount,
-            started.Job.SizeBytes,
-            "expected_path is a forecast: rules that depend on changing properties are evaluated again when the files are placed.");
+        };
     }
 
     private async Task<DownloadPayload> ResolveAsync(IContentSource source, CachedResult result, CancellationToken cancellationToken)
@@ -118,3 +193,14 @@ public sealed class MediaDownloadService
         }
     }
 }
+
+/// <summary>One result of a <c>download</c> request and how to place it.</summary>
+/// <param name="ResultId">Result id from <c>search</c>.</param>
+/// <param name="Subpath">Folder replacing the release's root folder, following the category's path_hint.</param>
+/// <param name="Include">Globs or exact paths to download; all files when empty.</param>
+/// <param name="Exclude">Globs or exact paths to skip, applied after <paramref name="Include"/>.</param>
+public sealed record DownloadRelease(
+    string ResultId,
+    string? Subpath = null,
+    IReadOnlyList<string>? Include = null,
+    IReadOnlyList<string>? Exclude = null);

@@ -5,9 +5,12 @@ namespace Convy.Services.Webhooks;
 
 /// <summary>A single-request webhook event (<c>job_status</c>, <c>source_error</c>).</summary>
 /// <param name="Name">Event name, see <see cref="WebhookEvents"/>.</param>
-/// <param name="RuleName">Rule the event relates to; matched against <see cref="WebhookConfig.Names"/>, if any.</param>
+/// <param name="RuleNames">
+/// Rules the event relates to (a job with several releases may have several); a webhook with
+/// <see cref="WebhookConfig.Names"/> receives it when one of them is listed.
+/// </param>
 /// <param name="Payload">The JSON body (field name → value).</param>
-public sealed record WebhookEvent(string Name, string? RuleName, IReadOnlyDictionary<string, object?> Payload);
+public sealed record WebhookEvent(string Name, IReadOnlyList<string>? RuleNames, IReadOnlyDictionary<string, object?> Payload);
 
 /// <summary>Accepts webhook events for delivery; never blocks and never throws.</summary>
 public interface IWebhookEventQueue
@@ -141,5 +144,5 @@ public sealed class WebhookEventDispatcher : IWebhookEventQueue
     private static bool MatchesNames(WebhookConfig webhook, WebhookEvent webhookEvent) =>
         webhookEvent.Name != WebhookEvents.JobStatus
         || webhook.Names is not { Count: > 0 } names
-        || (webhookEvent.RuleName is not null && names.Contains(webhookEvent.RuleName));
+        || webhookEvent.RuleNames?.Any(names.Contains) == true;
 }

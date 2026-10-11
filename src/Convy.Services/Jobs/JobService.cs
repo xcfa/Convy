@@ -33,25 +33,59 @@ public sealed record StartJobRequest
     public string? SourceId { get; init; }
 }
 
-/// <summary>A started job with the placement expected at the moment of starting.</summary>
-/// <param name="Job">The new job.</param>
+/// <summary>A release that was added to its downloader, with the placement expected at that moment.</summary>
+/// <param name="Request">What was asked for.</param>
+/// <param name="Release">The stored release.</param>
 /// <param name="ExpectedPath">
 /// Where the files are expected to end up. A forecast: rules that depend on changing
 /// properties (<c>Ratio</c>, <c>SeedingTime</c>) are evaluated again on placement.
 /// </param>
 /// <param name="Rule">Name of the rule expected to place the files, or <c>null</c>.</param>
-public sealed record StartJobResult(JobRecord Job, string? ExpectedPath, string? Rule);
+public sealed record StartedRelease(StartJobRequest Request, JobRecord Release, string? ExpectedPath, string? Rule);
 
-/// <summary>A job with its live state.</summary>
+/// <summary>A release its downloader did not accept; the job was started without it.</summary>
+public sealed record FailedRelease(StartJobRequest Request, string Error);
+
+/// <summary>A started job: the releases that were added and those that were not.</summary>
+public sealed record StartJobResult(JobState Job, IReadOnlyList<StartedRelease> Started, IReadOnlyList<FailedRelease> Failed)
+{
+    /// <summary>The expected directory: the release's, or the one containing every release's.</summary>
+    public string? ExpectedPath => Started.Count == 1
+        ? Started[0].ExpectedPath
+        : JobState.CommonDirectory(Started.Select(s => s.ExpectedPath));
+
+    /// <summary>The rule expected for every release, or <c>null</c> when they differ.</summary>
+    public string? Rule => Started.Select(s => s.Rule).Distinct(StringComparer.Ordinal).Count() == 1 ? Started[0].Rule : null;
+}
+
+/// <summary>A job with its live state, combined from its releases.</summary>
 public sealed record JobView
 {
-    public required JobRecord Job { get; init; }
+    public required JobState Job { get; init; }
 
-    /// <summary>Status derived from the downloader right now (stored status for finished jobs).</summary>
+    /// <summary>Status derived from the downloaders right now (stored status for finished releases).</summary>
     public required JobStatus Status { get; init; }
 
     /// <summary>Completion between 0 and 1, when known.</summary>
     public double? Progress { get; init; }
+
+    public long? DownloadedBytes { get; init; }
+    public long? SpeedBytesPerSecond { get; init; }
+    public string? Error { get; init; }
+
+    /// <summary>Each release with its live state, in the job's order.</summary>
+    public required IReadOnlyList<ReleaseView> Releases { get; init; }
+}
+
+/// <summary>One release of a job with its live state.</summary>
+public sealed record ReleaseView
+{
+    public required JobRecord Release { get; init; }
+    public required JobStatus Status { get; init; }
+    public double? Progress { get; init; }
+
+    /// <summary>Size reported by the downloader, when it knows the item.</summary>
+    public long? TotalBytes { get; init; }
 
     public long? DownloadedBytes { get; init; }
     public long? SpeedBytesPerSecond { get; init; }
@@ -94,94 +128,89 @@ public sealed class JobService
     }
 
     /// <summary>
-    /// Validates the request, adds the download to its downloader right away and records the
-    /// job. Throws <see cref="ConvyRequestException"/> when the request cannot be accepted.
+    /// Validates the request, adds the download to its downloader right away and records a job
+    /// with one release. Throws <see cref="ConvyRequestException"/> when it cannot be accepted.
     /// </summary>
-    public async Task<StartJobResult> StartAsync(StartJobRequest request, CancellationToken cancellationToken)
+    public Task<StartJobResult> StartAsync(StartJobRequest request, CancellationToken cancellationToken) =>
+        StartAsync([request], cancellationToken);
+
+    /// <summary>
+    /// Starts one job made of several releases. Every release is checked first (sub-path,
+    /// duplicates, size limit, free space); a problem with any of them rejects the whole
+    /// request before anything is added. Releases are then added to their downloaders one by
+    /// one: those a downloader refuses are reported in <see cref="StartJobResult.Failed"/> and
+    /// the job is made of the rest. Throws when none could be added.
+    /// </summary>
+    public async Task<StartJobResult> StartAsync(IReadOnlyList<StartJobRequest> requests, CancellationToken cancellationToken)
     {
-        if (!SubpathValidator.TryValidate(request.Subpath, out var subpath, out var subpathError))
+        if (requests.Count == 0)
         {
-            throw new ConvyRequestException(subpathError!);
+            throw new ConvyRequestException("Nothing to download.");
         }
 
-        var downloader = ResolveDownloader(request.Payload.Protocol);
-        var options = new AddOptions(request.ClientCategory);
-
-        // One job per download: a repeated request (e.g. after a client timeout) must not
-        // create a second job that would never be placed.
-        var itemRef = downloader.GetItemRef(request.Payload);
-        if (await _store.FindActiveAsync(downloader.Provider, itemRef, cancellationToken).ConfigureAwait(false) is { } active)
-        {
-            throw new ConvyRequestException(
-                $"This download is already job {active.JobId} ({active.Status.ToName()}); check it with get_jobs or cancel it first.");
-        }
         var limits = _options.CurrentValue;
+        var rules = _rulesProvider.GetCurrent();
+        var directories = new Dictionary<(string Provider, string? Category), string?>();
+        var prepared = new List<PreparedRelease>(requests.Count);
 
-        if (limits.MaxSizeGb > 0 && request.SizeBytes > limits.MaxSizeGb * GiB)
+        foreach (var request in requests)
         {
-            throw new ConvyRequestException(
-                $"The download is {FormatGiB(request.SizeBytes.Value)}, above the {limits.MaxSizeGb:0.##} GiB limit per job.");
+            prepared.Add(await PrepareAsync(request, requests.Count, prepared, rules, directories, cancellationToken)
+                .ConfigureAwait(false));
         }
 
-        var rules = _rulesProvider.GetCurrent();
-        var downloadDirectory = await TryGetDownloadDirectoryAsync(downloader, options, cancellationToken).ConfigureAwait(false);
-
-        // Check the sub-path against the expected base before anything is downloaded.
-        var preliminary = BasicProperties(downloader.Provider, request);
-        if (subpath is not null && downloadDirectory is not null)
+        var total = requests.Any(r => r.SizeBytes is not null) ? requests.Sum(r => r.SizeBytes ?? 0) : (long?)null;
+        if (limits.MaxSizeGb > 0 && total > limits.MaxSizeGb * GiB)
         {
-            var target = PlacementPlanner.ResolveTarget(rules.ResolveRule(preliminary), subpath, downloadDirectory);
-            if (!SubpathValidator.IsInside(_fileSystem.GetRealPath(target.BaseDirectory!), _fileSystem.GetRealPath(target.Directory!)))
+            throw new ConvyRequestException(
+                $"The download is {FormatGiB(total.Value)}, above the {limits.MaxSizeGb:0.##} GiB limit per job.");
+        }
+
+        foreach (var directory in prepared.Where(p => p.DownloadDirectory is not null).GroupBy(p => p.DownloadDirectory!))
+        {
+            var size = directory.Any(p => p.Request.SizeBytes is not null) ? directory.Sum(p => p.Request.SizeBytes ?? 0) : (long?)null;
+            EnsureFreeSpace(directory.Key, size, limits);
+        }
+
+        var started = new List<(PreparedRelease Release, JobRecord Record, string? ExpectedPath, string? Rule)>();
+        var failed = new List<FailedRelease>();
+        Exception? firstFailure = null;
+
+        foreach (var release in prepared)
+        {
+            try
             {
-                throw new ConvyRequestException($"subpath resolves outside '{target.BaseDirectory}'.");
+                started.Add(await AddAsync(release, rules, cancellationToken).ConfigureAwait(false));
+            }
+            catch (Exception ex) when (ex is not OperationCanceledException && requests.Count > 1)
+            {
+                _logger.LogWarning(ex, "{Provider} did not accept '{Title}'.", release.Downloader.Provider, release.Request.Title);
+                failed.Add(new FailedRelease(release.Request, ex.Message));
+                firstFailure ??= ex;
             }
         }
 
-        EnsureFreeSpace(downloadDirectory, request.SizeBytes, limits);
-
-        itemRef = await downloader.AddAsync(request.Payload, request.Selection, options, cancellationToken).ConfigureAwait(false);
-
-        // Forecast the placement with the item as the downloader reports it now, so the job
-        // (and its first status event) already carries the expected rule and path.
-        var item = await TryGetItemAsync(downloader, itemRef, cancellationToken).ConfigureAwait(false);
-        var properties = item is null ? preliminary : RuleInputs.For(item, request.ClientCategory);
-        var savePath = item?.SavePath is { Length: > 0 } itemPath ? itemPath : downloadDirectory;
-        var rule = rules.ResolveRule(properties);
-        var expected = PlacementPlanner.ResolveTarget(rule, subpath, savePath ?? string.Empty);
-        var expectedPath = expected.LeaveInPlace ? savePath : expected.Directory;
-        var now = _timeProvider.GetUtcNow();
-
-        var job = await _transitions.CreateAsync(new JobRecord
+        if (started.Count == 0)
         {
-            Id = 0,
-            Provider = downloader.Provider,
-            ItemRef = itemRef,
-            Category = request.Category,
-            ClientCategory = request.ClientCategory,
-            Subpath = subpath,
-            SelectedFiles = request.Selection.Paths?.ToList(),
-            Title = request.Title,
-            SizeBytes = request.SizeBytes,
-            FileCount = request.FileCount,
-            ResultId = request.ResultId,
-            SourceId = request.SourceId,
-            Status = JobStatus.Queued,
-            Rule = rule?.Name,
-            TargetPath = expectedPath,
-            LastProgressAt = now,
-            CreatedAt = now,
-            UpdatedAt = now,
-        }, cancellationToken).ConfigureAwait(false);
+            throw new ConvyRequestException(
+                "No release could be added: " + string.Join("; ", failed.Select(f => $"{f.Request.Title}: {f.Error}")), firstFailure!);
+        }
 
-        _logger.LogInformation("Job {JobId} started: {Title} via {Provider} ({ItemRef}).", job.JobId, job.Title, job.Provider, itemRef);
+        var job = await _transitions.CreateGroupAsync(started.Select(s => s.Record).ToList(), cancellationToken).ConfigureAwait(false);
 
-        return new StartJobResult(job, expectedPath, rule?.Name);
+        _logger.LogInformation("Job {JobId} started: {Title} ({Count} release(s)).", job.JobId, job.Title, job.Releases.Count);
+
+        return new StartJobResult(
+            job,
+            started.Select((s, i) => new StartedRelease(s.Release.Request, job.Releases[i], s.ExpectedPath, s.Rule)).ToList(),
+            failed);
     }
 
     /// <summary>
-    /// Stops the job's download (data and created links are kept) and marks it cancelled.
+    /// Stops the downloads of the job's unfinished releases (data and created links are kept)
+    /// and marks them cancelled.
     /// </summary>
-    public async Task<JobRecord> CancelAsync(string jobId, CancellationToken cancellationToken)
+    public async Task<JobState> CancelAsync(string jobId, CancellationToken cancellationToken)
     {
         var job = await GetRequiredAsync(jobId, cancellationToken).ConfigureAwait(false);
         if (job.Status.IsTerminal())
@@ -189,72 +218,47 @@ public sealed class JobService
             throw new ConvyRequestException($"Job {job.JobId} is already {job.Status.ToName()}.");
         }
 
-        var downloader = _downloaders.FindByProvider(job.Provider)
-                         ?? throw new ConvyRequestException($"Downloader '{job.Provider}' is not configured.");
-
-        // Record the cancellation first: once the job is final, the sync worker cannot turn
-        // the stopped download into "failed" in between. It may update the job concurrently
-        // before that, so retry on its fresh state.
-        JobRecord? cancelled = null;
-        for (var attempt = 0; attempt < 5 && cancelled is null; attempt++)
+        try
         {
-            var now = _timeProvider.GetUtcNow();
-            cancelled = await _transitions.SaveAsync(
-                job, job with { Status = JobStatus.Cancelled, UpdatedAt = now, CompletedAt = now }, cancellationToken)
-                .ConfigureAwait(false);
-
-            if (cancelled is null)
+            foreach (var release in job.Releases.Where(r => !r.Status.IsTerminal()))
             {
-                job = await GetRequiredAsync(jobId, cancellationToken).ConfigureAwait(false);
-                if (job.Status.IsTerminal())
-                {
-                    throw new ConvyRequestException($"Job {job.JobId} is already {job.Status.ToName()}.");
-                }
+                await CancelReleaseAsync(release, cancellationToken).ConfigureAwait(false);
+            }
+        }
+        finally
+        {
+            // Announce what was cancelled, even if a later release could not be stopped.
+            var after = JobState.From(await _store.GetGroupAsync(job.Id, CancellationToken.None).ConfigureAwait(false));
+            if (after.Status != job.Status)
+            {
+                await _transitions.PublishAsync(new JobStatusChange(after, job.Status), CancellationToken.None).ConfigureAwait(false);
             }
         }
 
-        if (cancelled is null)
-        {
-            throw new InvalidOperationException($"Job {job.JobId} kept changing; cancellation was not recorded.");
-        }
-
-        try
-        {
-            await downloader.CancelAsync(job.ItemRef, cancellationToken).ConfigureAwait(false);
-        }
-        catch
-        {
-            // The download keeps running, so the job is not cancelled after all.
-            await _transitions.SaveAsync(cancelled, job, CancellationToken.None).ConfigureAwait(false);
-            throw;
-        }
-
-        await _transitions.PublishAsync(new JobStatusChange(cancelled, job.Status), cancellationToken).ConfigureAwait(false);
+        var cancelled = JobState.From(await _store.GetGroupAsync(job.Id, cancellationToken).ConfigureAwait(false));
         _logger.LogInformation("Job {JobId} cancelled.", cancelled.JobId);
         return cancelled;
     }
 
     /// <summary>
-    /// Newest jobs first with their live state. Active jobs are looked up in their
+    /// Newest jobs first with their live state. Active releases are looked up in their
     /// downloader directly, so the result does not wait for a sync cycle.
     /// </summary>
     public async Task<IReadOnlyList<JobView>> ListAsync(JobStatus? status, int? limit, CancellationToken cancellationToken)
     {
         var take = Math.Clamp(limit ?? 20, 1, MaxListLimit);
 
-        // A finished job's status never changes, so it can be filtered in the store; an
-        // active job's live status may differ from the stored one.
-        var jobs = status is { } filter && filter.IsTerminal()
-            ? await _store.ListAsync(filter, take, cancellationToken).ConfigureAwait(false)
-            : await _store.ListAsync(null, status is null ? take : 500, cancellationToken).ConfigureAwait(false);
+        // A job's live status may differ from the stored one, so filtering happens after the
+        // downloaders were asked.
+        var jobs = await _store.ListGroupsAsync(status is null ? take : 500, cancellationToken).ConfigureAwait(false);
 
         // A downloader that failed once is not asked again for the other jobs of this list:
         // with retries each attempt can take seconds.
         var unreachable = new Dictionary<string, string>(StringComparer.Ordinal);
         var views = new List<JobView>(jobs.Count);
-        foreach (var job in jobs)
+        foreach (var releases in jobs.Where(r => r.Count > 0))
         {
-            var view = await ViewAsync(job, unreachable, cancellationToken).ConfigureAwait(false);
+            var view = await ViewAsync(JobState.From(releases), unreachable, cancellationToken).ConfigureAwait(false);
             if (status is null || view.Status == status)
             {
                 views.Add(view);
@@ -268,67 +272,262 @@ public sealed class JobService
         return views;
     }
 
-    private async Task<JobView> ViewAsync(
-        JobRecord job, Dictionary<string, string> unreachable, CancellationToken cancellationToken)
+    private async Task<JobView> ViewAsync(JobState job, Dictionary<string, string> unreachable, CancellationToken cancellationToken)
     {
-        if (job.Status.IsTerminal())
+        var releases = new List<ReleaseView>(job.Releases.Count);
+        foreach (var release in job.Releases)
         {
+            releases.Add(await ViewReleaseAsync(release, unreachable, cancellationToken).ConfigureAwait(false));
+        }
+
+        if (releases.Count == 1)
+        {
+            var only = releases[0];
             return new JobView
             {
                 Job = job,
-                Status = job.Status,
-                Progress = job.Status == JobStatus.Completed ? 1 : null,
-                Error = job.Error,
+                Status = only.Status,
+                Progress = only.Progress,
+                DownloadedBytes = only.DownloadedBytes,
+                SpeedBytesPerSecond = only.SpeedBytesPerSecond,
+                Error = only.Error,
+                Releases = releases,
             };
         }
 
-        var downloader = _downloaders.FindByProvider(job.Provider);
-        if (downloader is null)
+        // Progress over all releases: a release past downloading counts as fully downloaded.
+        var sizes = releases.Select(r => r.TotalBytes ?? r.Release.SizeBytes).ToList();
+        var done = releases
+            .Select((r, i) => r.DownloadedBytes ?? (r.Status is JobStatus.Completed or JobStatus.Placing ? sizes[i] ?? 0 : 0))
+            .ToList();
+        double? progress = sizes.All(s => s is not null) && sizes.Sum(s => s!.Value) > 0
+            ? Math.Clamp((double)done.Sum() / sizes.Sum(s => s!.Value), 0, 1)
+            : null;
+
+        return new JobView
         {
-            return new JobView { Job = job, Status = job.Status, Error = $"Downloader '{job.Provider}' is not configured." };
+            Job = job,
+            Status = JobState.Combine(releases.Select(r => r.Status)),
+            Progress = progress,
+            DownloadedBytes = releases.Any(r => r.DownloadedBytes is not null) ? releases.Sum(r => r.DownloadedBytes ?? 0) : null,
+            SpeedBytesPerSecond = releases.Any(r => r.SpeedBytesPerSecond is not null)
+                ? releases.Sum(r => r.SpeedBytesPerSecond ?? 0)
+                : null,
+            Error = JobState.CombineErrors(releases.Select(r => (r.Release.Title, r.Error))),
+            Releases = releases,
+        };
+    }
+
+    private async Task<ReleaseView> ViewReleaseAsync(
+        JobRecord release, Dictionary<string, string> unreachable, CancellationToken cancellationToken)
+    {
+        if (release.Status.IsTerminal())
+        {
+            return new ReleaseView
+            {
+                Release = release,
+                Status = release.Status,
+                Progress = release.Status == JobStatus.Completed ? 1 : null,
+                Error = release.Error,
+            };
         }
 
-        if (unreachable.GetValueOrDefault(job.Provider) is { } knownError)
+        var downloader = _downloaders.FindByProvider(release.Provider);
+        if (downloader is null)
         {
-            return new JobView { Job = job, Status = job.Status, Error = knownError };
+            return new ReleaseView { Release = release, Status = release.Status, Error = $"Downloader '{release.Provider}' is not configured." };
+        }
+
+        if (unreachable.GetValueOrDefault(release.Provider) is { } knownError)
+        {
+            return new ReleaseView { Release = release, Status = release.Status, Error = knownError };
         }
 
         DownloadItem? item;
         try
         {
-            item = await downloader.GetItemAsync(job.ItemRef, cancellationToken).ConfigureAwait(false);
+            item = await downloader.GetItemAsync(release.ItemRef, cancellationToken).ConfigureAwait(false);
         }
         catch (Exception ex) when (ex is not OperationCanceledException)
         {
-            _logger.LogWarning(ex, "Could not read job {JobId} from {Provider}.", job.JobId, job.Provider);
-            var error = $"{job.Provider} is unreachable: {ex.Message}";
-            unreachable.TryAdd(job.Provider, error);
-            return new JobView { Job = job, Status = job.Status, Error = error };
+            _logger.LogWarning(ex, "Could not read job {JobId} from {Provider}.", release.JobId, release.Provider);
+            var error = $"{release.Provider} is unreachable: {ex.Message}";
+            unreachable.TryAdd(release.Provider, error);
+            return new ReleaseView { Release = release, Status = release.Status, Error = error };
         }
 
         var observation = JobStatusEvaluator.Observe(
-            job, item, _timeProvider.GetUtcNow(), _options.CurrentValue.StalledAfter);
+            release, item, _timeProvider.GetUtcNow(), _options.CurrentValue.StalledAfter);
 
-        return new JobView
+        return new ReleaseView
         {
-            Job = job,
+            Release = release,
             Status = observation.Status,
             Progress = item?.Size is > 0 ? Math.Clamp((double)item.Downloaded / item.Size.Value, 0, 1) : null,
+            TotalBytes = item?.Size,
             DownloadedBytes = item?.Downloaded,
             SpeedBytesPerSecond = item?.DownloadSpeed,
-            Error = observation.Error ?? job.Error,
+            Error = observation.Error ?? release.Error,
         };
     }
 
-    private async Task<JobRecord> GetRequiredAsync(string jobId, CancellationToken cancellationToken)
+    /// <summary>Checks one release of a request; nothing is added yet.</summary>
+    private async Task<PreparedRelease> PrepareAsync(
+        StartJobRequest request,
+        int releaseCount,
+        IReadOnlyList<PreparedRelease> earlier,
+        RulesSnapshot rules,
+        Dictionary<(string Provider, string? Category), string?> directories,
+        CancellationToken cancellationToken)
+    {
+        // With several releases every message says which one it is about.
+        var prefix = releaseCount > 1 ? $"'{request.Title}': " : string.Empty;
+
+        if (!SubpathValidator.TryValidate(request.Subpath, out var subpath, out var subpathError))
+        {
+            throw new ConvyRequestException(prefix + subpathError);
+        }
+
+        var downloader = ResolveDownloader(request.Payload.Protocol);
+        var options = new AddOptions(request.ClientCategory);
+
+        // One job per download: a repeated request (e.g. after a client timeout) must not
+        // create a second job that would never be placed.
+        var itemRef = downloader.GetItemRef(request.Payload);
+        if (await _store.FindActiveAsync(downloader.Provider, itemRef, cancellationToken).ConfigureAwait(false) is { } active)
+        {
+            throw new ConvyRequestException(
+                $"{prefix}This download is already job {active.JobId} ({active.Status.ToName()}); check it with get_jobs or cancel it first.");
+        }
+
+        if (earlier.FirstOrDefault(e => e.Downloader.Provider == downloader.Provider && e.ItemRef == itemRef) is { } twin)
+        {
+            throw new ConvyRequestException($"{prefix}It is the same download as '{twin.Request.Title}'.");
+        }
+
+        var key = (downloader.Provider, request.ClientCategory);
+        if (!directories.TryGetValue(key, out var downloadDirectory))
+        {
+            downloadDirectory = await TryGetDownloadDirectoryAsync(downloader, options, cancellationToken).ConfigureAwait(false);
+            directories[key] = downloadDirectory;
+        }
+
+        // Check the sub-path against the expected base before anything is downloaded.
+        var preliminary = BasicProperties(downloader.Provider, request);
+        if (subpath is not null && downloadDirectory is not null)
+        {
+            var target = PlacementPlanner.ResolveTarget(rules.ResolveRule(preliminary), subpath, downloadDirectory);
+            if (!SubpathValidator.IsInside(_fileSystem.GetRealPath(target.BaseDirectory!), _fileSystem.GetRealPath(target.Directory!)))
+            {
+                throw new ConvyRequestException($"{prefix}subpath resolves outside '{target.BaseDirectory}'.");
+            }
+        }
+
+        return new PreparedRelease(request, downloader, options, itemRef, subpath, downloadDirectory, preliminary);
+    }
+
+    /// <summary>Adds one checked release to its downloader and forecasts its placement.</summary>
+    private async Task<(PreparedRelease Release, JobRecord Record, string? ExpectedPath, string? Rule)> AddAsync(
+        PreparedRelease release, RulesSnapshot rules, CancellationToken cancellationToken)
+    {
+        var request = release.Request;
+        var downloader = release.Downloader;
+        var itemRef = await downloader.AddAsync(request.Payload, request.Selection, release.Options, cancellationToken)
+            .ConfigureAwait(false);
+
+        // Forecast the placement with the item as the downloader reports it now, so the job
+        // (and its first status event) already carries the expected rule and path.
+        var item = await TryGetItemAsync(downloader, itemRef, cancellationToken).ConfigureAwait(false);
+        var properties = item is null ? release.Preliminary : RuleInputs.For(item, request.ClientCategory);
+        var savePath = item?.SavePath is { Length: > 0 } itemPath ? itemPath : release.DownloadDirectory;
+        var rule = rules.ResolveRule(properties);
+        var expected = PlacementPlanner.ResolveTarget(rule, release.Subpath, savePath ?? string.Empty);
+        var expectedPath = expected.LeaveInPlace ? savePath : expected.Directory;
+        var now = _timeProvider.GetUtcNow();
+
+        var record = new JobRecord
+        {
+            Id = 0,
+            Provider = downloader.Provider,
+            ItemRef = itemRef,
+            Category = request.Category,
+            ClientCategory = request.ClientCategory,
+            Subpath = release.Subpath,
+            SelectedFiles = request.Selection.Paths?.ToList(),
+            Title = request.Title,
+            SizeBytes = request.SizeBytes,
+            FileCount = request.FileCount,
+            ResultId = request.ResultId,
+            SourceId = request.SourceId,
+            Status = JobStatus.Queued,
+            Rule = rule?.Name,
+            TargetPath = expectedPath,
+            LastProgressAt = now,
+            CreatedAt = now,
+            UpdatedAt = now,
+        };
+
+        _logger.LogInformation("Added '{Title}' to {Provider} ({ItemRef}).", request.Title, downloader.Provider, itemRef);
+        return (release, record, expectedPath, rule?.Name);
+    }
+
+    /// <summary>
+    /// Records the cancellation of one release first, then stops its download: once the
+    /// release is final, the sync worker cannot turn the stopped download into "failed" in
+    /// between. If the download cannot be stopped, the release is restored and the error rethrown.
+    /// </summary>
+    private async Task CancelReleaseAsync(JobRecord release, CancellationToken cancellationToken)
+    {
+        var downloader = _downloaders.FindByProvider(release.Provider)
+                         ?? throw new ConvyRequestException($"Downloader '{release.Provider}' is not configured.");
+
+        // The sync worker may update the release concurrently; retry on its fresh state.
+        JobRecord? cancelled = null;
+        for (var attempt = 0; attempt < 5 && cancelled is null; attempt++)
+        {
+            var now = _timeProvider.GetUtcNow();
+            cancelled = await _transitions.SaveAsync(
+                release, release with { Status = JobStatus.Cancelled, UpdatedAt = now, CompletedAt = now }, cancellationToken)
+                .ConfigureAwait(false);
+
+            if (cancelled is null)
+            {
+                release = await _store.GetAsync(release.Id, cancellationToken).ConfigureAwait(false) ?? release;
+                if (release.Status.IsTerminal())
+                {
+                    return;
+                }
+            }
+        }
+
+        if (cancelled is null)
+        {
+            throw new InvalidOperationException($"Job {release.JobId} kept changing; cancellation was not recorded.");
+        }
+
+        try
+        {
+            await downloader.CancelAsync(release.ItemRef, cancellationToken).ConfigureAwait(false);
+        }
+        catch
+        {
+            // The download keeps running, so the release is not cancelled after all.
+            await _transitions.SaveAsync(cancelled, release, CancellationToken.None).ConfigureAwait(false);
+            throw;
+        }
+    }
+
+    private async Task<JobState> GetRequiredAsync(string jobId, CancellationToken cancellationToken)
     {
         if (!JobIds.TryParse(jobId, out var id))
         {
             throw new ConvyRequestException($"'{jobId}' is not a job id (expected e.g. j_42).");
         }
 
-        return await _store.GetAsync(id, cancellationToken).ConfigureAwait(false)
-               ?? throw new ConvyRequestException($"Job {jobId} does not exist.");
+        var releases = await _store.GetGroupAsync(id, cancellationToken).ConfigureAwait(false);
+        return releases.Count > 0
+            ? JobState.From(releases)
+            : throw new ConvyRequestException($"Job {jobId} does not exist.");
     }
 
     private IDownloader ResolveDownloader(Protocol protocol)
@@ -405,4 +604,14 @@ public sealed class JobService
     }
 
     private static string FormatGiB(long bytes) => $"{bytes / (double)GiB:0.##} GiB";
+
+    /// <summary>A release that passed the checks and can be added.</summary>
+    private sealed record PreparedRelease(
+        StartJobRequest Request,
+        IDownloader Downloader,
+        AddOptions Options,
+        string ItemRef,
+        string? Subpath,
+        string? DownloadDirectory,
+        Dictionary<string, object?> Preliminary);
 }

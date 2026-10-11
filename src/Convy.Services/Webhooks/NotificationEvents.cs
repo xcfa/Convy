@@ -38,11 +38,15 @@ public sealed class WebhookJobEvents : IJobEvents
         return Task.CompletedTask;
     }
 
-    /// <summary>The <c>job_status</c> body.</summary>
+    /// <summary>
+    /// The <c>job_status</c> body. A job with several releases also lists them under
+    /// <c>releases</c>; its <c>path</c> is the directory containing all of them and
+    /// <c>files</c> are relative to it.
+    /// </summary>
     public static WebhookEvent ToEvent(JobStatusChange change)
     {
         var job = change.Job;
-        var files = change.PlacedFiles ?? [];
+        var files = job.PlacedFiles;
 
         var payload = new Dictionary<string, object?>
         {
@@ -56,12 +60,29 @@ public sealed class WebhookJobEvents : IJobEvents
             ["title"] = job.Title,
             ["path"] = job.TargetPath,
             ["files"] = files.Take(MaxFiles).ToList(),
-            ["files_total"] = change.PlacedFiles?.Count ?? job.FileCount ?? 0,
+            ["files_total"] = files.Count > 0 ? files.Count : job.FileCount ?? 0,
             ["size_bytes"] = job.SizeBytes,
             ["error"] = job.Error,
         };
 
-        return new WebhookEvent(WebhookEvents.JobStatus, job.Rule, payload);
+        if (job.HasManyReleases)
+        {
+            payload["releases"] = job.Releases
+                .Select(r => new Dictionary<string, object?>
+                {
+                    ["title"] = r.Title,
+                    ["status"] = r.Status.ToName(),
+                    ["provider"] = r.Provider,
+                    ["rule"] = r.Rule,
+                    ["path"] = r.TargetPath,
+                    ["size_bytes"] = r.SizeBytes,
+                    ["error"] = r.Error,
+                })
+                .ToList();
+        }
+
+        var rules = job.Releases.Select(r => r.Rule).OfType<string>().Distinct(StringComparer.Ordinal).ToList();
+        return new WebhookEvent(WebhookEvents.JobStatus, rules, payload);
     }
 }
 

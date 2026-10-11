@@ -270,7 +270,7 @@ public sealed class DataBrowserServiceTests : IDisposable
         var tables = await _service.GetTablesAsync(CancellationToken.None);
 
         Assert.Equal(
-            ["DownloadStates", "FileEntries", "FileListings", "Jobs", "SearchResults", "SearchSessions", "UserSettings"],
+            ["DownloadStates", "FileEntries", "FileListings", "Jobs", "SearchResults", "SearchSessions", "UserSettings", "Webhooks"],
             tables.Select(t => t.Name));
         Assert.Equal(3, tables.Single(t => t.Name == "SearchResults").Rows);
         Assert.Equal(1, tables.Single(t => t.Name == "UserSettings").Rows);
