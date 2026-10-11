@@ -429,6 +429,64 @@ public sealed class SyncCycleServiceTests : IDisposable
     }
 
     [Fact]
+    public async Task AnOpdsBookIsPlacedUnderTheJobsSubpath()
+    {
+        var store = new Downloaders.Opds.EfOpdsDownloadStore(_db);
+        var opds = new Downloaders.Opds.OpdsDownloader(
+            "/data/downloads/opds", store, new Downloaders.Opds.OpdsDownloadQueue(), _time,
+            NullLogger<Downloaders.Opds.OpdsDownloader>.Instance);
+        var resolver = new DownloaderResolver([opds]);
+        var cycle = new SyncCycleService(
+            resolver, _db, _rules, new DownloadStateTracker(new EfDownloadStateStore(_db)),
+            new FileLinkingService(_fs, NullLogger<FileLinkingService>.Instance), _webhooks, _jobs,
+            new JobTransitions(_jobs, _events), new StaticOptions<JobOptions>(_jobOptions), _fs,
+            new StorageLayoutValidator(resolver, _fs, _storage, _time, NullLogger<StorageLayoutValidator>.Instance),
+            new SyncStatusTracker(), _time, NullLogger<SyncCycleService>.Instance);
+        _rules.Yaml =
+            """
+            rules:
+              - name: books
+                condition: "Category == Books"
+                path: /data/media/books
+            """;
+
+        await store.SaveAsync(new Downloaders.Opds.OpdsDownload
+        {
+            ItemRef = "flibusta/b1",
+            CatalogId = "flibusta",
+            Folder = "Автор - Книга",
+            SavePath = "/data/downloads/opds/flibusta/b1",
+            Category = "Books",
+            Files = [new("Автор - Книга.epub", "https://x/b/1/epub", null, false, 0, Wanted: true, Done: true, Bytes: 10)],
+            State = Downloaders.Opds.OpdsDownloadState.Completed,
+            CreatedAt = _time.Now,
+            UpdatedAt = _time.Now,
+        }, CancellationToken.None);
+        _fs.AddFile("/data/downloads/opds/flibusta/b1/Автор - Книга/Автор - Книга.epub");
+        var job = await _jobs.CreateAsync(new JobRecord
+        {
+            Id = 0,
+            Provider = DownloadProviders.Opds,
+            ItemRef = "flibusta/b1",
+            Category = "books",
+            ClientCategory = "Books",
+            Subpath = "Автор/Книга",
+            Title = "Автор — Книга",
+            Status = JobStatus.Downloading,
+            LastProgressAt = _time.Now,
+            CreatedAt = _time.Now,
+            UpdatedAt = _time.Now,
+        }, CancellationToken.None);
+
+        await cycle.RunAsync(CancellationToken.None);
+
+        Assert.Equal(["/data/media/books/Автор/Книга/Автор - Книга.epub"], LinkedDestinations());
+        var done = await Reload(job);
+        Assert.Equal(JobStatus.Completed, done.Status);
+        Assert.Equal("books", done.Rule);
+    }
+
+    [Fact]
     public async Task SoulseekJobUsesTheJobCategoryAndReplacesTheUserFolder()
     {
         var slskd = new FakeDownloader(DownloadProviders.Slskd, Sources.Protocol.Soulseek) { DownloadDirectory = "/data/slskd" };

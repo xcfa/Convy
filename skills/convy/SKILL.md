@@ -86,9 +86,21 @@ names with `list_files` and use `include` (see below).
    `free_slot: true`, a short queue and higher speed; check that `file_count` matches the
    tracklist. When a folder mixes formats, `include: ["**/*.mp3"]`.
 
+### Books (OPDS catalogs such as Flibusta)
+
+- A result from `opds:…` is one book: `Authors — Title (year, language) [formats]`. Search with
+  the title and, as another variant, the author's surname: the author's books come back too.
+  Searches there are slow (up to two minutes); wait for them.
+- Several editions are common (`[litres]`, `[СИ]`, translations, collections). Prefer the plain
+  edition by the right author in Russian, unless the user asked otherwise; say which you took.
+- Formats: Convy downloads EPUB, or FB2 when there is no EPUB (it falls back by itself if EPUB
+  fails). For another format use `include: ["*.mobi"]`. Several books the user asked for at once
+  go into one `download` with `releases`.
+- Sub-path for books follows the category's `path_hint`, e.g. `Стругацкий Аркадий/Пикник на обочине`.
+
 ### Other categories
 
-Books, audiobooks, software and the `other` category have no fixed preferences: pick the most
+Audiobooks, software and the `other` category have no fixed preferences: pick the most
 complete, well-seeded release and say why.
 
 ## Sub-path

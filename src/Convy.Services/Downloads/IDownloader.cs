@@ -75,4 +75,7 @@ public static class DownloadProviders
 {
     public const string QBittorrent = "qbittorrent";
     public const string Slskd = "slskd";
+
+    /// <summary>Convy's own downloader for books from OPDS catalogs.</summary>
+    public const string Opds = "opds";
 }

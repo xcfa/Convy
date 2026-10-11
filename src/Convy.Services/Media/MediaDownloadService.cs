@@ -158,6 +158,16 @@ public sealed class MediaDownloadService
             payload = torrent with { TorrentFile = metadata };
         }
 
+        var sizeBytes = selected?.Sum(f => f.Size) ?? result.SizeBytes;
+        var fileCount = selected?.Count ?? result.FileCount;
+        if (selection.IsAll && payload is OpdsPayload book)
+        {
+            // A book's "files" are its formats, and only the preferred one is downloaded.
+            var best = book.Files.Where(f => f.Preference is not null).MinBy(f => f.Preference) ?? book.Files.FirstOrDefault();
+            sizeBytes = best?.Size;
+            fileCount = best is null ? 0 : 1;
+        }
+
         return new StartJobRequest
         {
             Payload = payload,
@@ -166,8 +176,8 @@ public sealed class MediaDownloadService
             ClientCategory = category.ClientCategory,
             Subpath = release.Subpath,
             Title = result.Title,
-            SizeBytes = selected?.Sum(f => f.Size) ?? result.SizeBytes,
-            FileCount = selected?.Count ?? result.FileCount,
+            SizeBytes = sizeBytes,
+            FileCount = fileCount,
             ResultId = result.Id,
             SourceId = result.SourceId,
         };
@@ -175,7 +185,7 @@ public sealed class MediaDownloadService
 
     private async Task<DownloadPayload> ResolveAsync(IContentSource source, CachedResult result, CancellationToken cancellationToken)
     {
-        var timeout = TimeSpan.FromSeconds(Math.Max(1, _searchOptions.CurrentValue.SourceTimeoutSeconds));
+        var timeout = source.Timeout ?? TimeSpan.FromSeconds(Math.Max(1, _searchOptions.CurrentValue.SourceTimeoutSeconds));
         using var deadline = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
         deadline.CancelAfter(timeout);
 

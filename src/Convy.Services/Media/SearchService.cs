@@ -128,7 +128,8 @@ public sealed class SearchService
 
             for (var q = 0; q < session.Queries.Count; q++)
             {
-                searches.Add(SearchOneAsync(source, new SearchRequest(session.Queries[q], category.SearchSettings), q, timeout, cancellationToken));
+                searches.Add(SearchOneAsync(
+                    source, new SearchRequest(session.Queries[q], category.SearchSettings), q, source.Timeout ?? timeout, cancellationToken));
             }
         }
 

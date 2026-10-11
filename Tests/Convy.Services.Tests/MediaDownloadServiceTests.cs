@@ -13,6 +13,7 @@ public sealed class MediaDownloadServiceTests : IDisposable
     private readonly FakeTime _time = new();
     private readonly FakeSource _source = new("prowlarr:1");
     private readonly FakeDownloader _downloader = new();
+    private readonly FakeDownloader _books = new(DownloadProviders.Opds, Protocol.Opds);
     private readonly EfSearchCache _cache;
     private readonly MediaDownloadService _service;
     private readonly JobService _jobs;
@@ -34,7 +35,7 @@ public sealed class MediaDownloadServiceTests : IDisposable
                 """,
         };
         _jobs = new JobService(
-            new DownloaderResolver([_downloader]), rules, store, new JobTransitions(store, new RecordingJobEvents()),
+            new DownloaderResolver([_downloader, _books]), rules, store, new JobTransitions(store, new RecordingJobEvents()),
             new FakeFileSystem(), new StaticOptions<JobOptions>(new JobOptions()), _time, NullLogger<JobService>.Instance);
 
         _downloader.OnAdd = p => FakeDownloader.Item(((TorrentPayload)p).InfoHash, DownloadState.Queued);
@@ -69,6 +70,24 @@ public sealed class MediaDownloadServiceTests : IDisposable
             ContentId = "c",
             ExpiresAt = _time.Now + TimeSpan.FromHours(6),
         }], CancellationToken.None);
+    }
+
+    [Fact]
+    public async Task ABookCountsOnlyThePreferredFormat()
+    {
+        await CacheAlbums(("r_1", "Пушкин — Капитанская дочка"));
+        _source.PayloadFor = _ => new OpdsPayload("flibusta", "b1", "Пушкин - Капитанская дочка",
+        [
+            new OpdsFile("Пушкин - Капитанская дочка.epub", "https://x/b/1/epub", null, false, 0),
+            new OpdsFile("Пушкин - Капитанская дочка.fb2", "https://x/b/1/fb2", 2048, true, 1),
+        ]);
+        _books.OnAdd = p => FakeDownloader.Item(((OpdsPayload)p).BookKey, DownloadState.Queued);
+
+        var response = await _service.DownloadAsync("r_1", "music", null, null, null, CancellationToken.None);
+
+        Assert.Equal(1, response.FileCount);
+        Assert.Null(response.SizeBytes);
+        Assert.True(Assert.Single(_books.Added).Selection.IsAll);
     }
 
     private async Task CacheAlbums(params (string Id, string Title)[] albums)

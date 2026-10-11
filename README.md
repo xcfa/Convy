@@ -287,8 +287,9 @@ places the files with the same rules as everything else. Choosing a release is t
 job — Convy does not parse release names.
 
 Sources in this version: torrent trackers through **Prowlarr** (one source per indexer, id
-`prowlarr:<indexer id>`) and **Soulseek** through slskd (id `soulseek`). Torrents are
-downloaded by qBittorrent, Soulseek folders by slskd.
+`prowlarr:<indexer id>`), **Soulseek** through slskd (id `soulseek`) and **OPDS catalogs** such
+as Flibusta (id `opds:<catalog id>`). Torrents are downloaded by qBittorrent, Soulseek folders
+by slskd, books from OPDS catalogs by Convy itself.
 
 ### Connecting
 
@@ -410,6 +411,51 @@ after placement is left to you.
 Before adding, Convy checks the per-job size limit (`jobs.max_size_gb`) and the free space in
 the client's download directory (`jobs.min_free_space_gb` is kept free). Asking the user before
 downloading is up to the agent's instructions, not the service.
+
+### OPDS catalogs (Flibusta)
+
+[OPDS](https://specs.opds.io/) is the catalog format of e-book libraries (Flibusta, Calibre,
+Project Gutenberg, …). Each catalog in the `opds` section of `configuration.yml` becomes a
+source `opds:<id>`:
+
+```yaml
+opds:
+  downloads_path: /data/downloads/opds   # same filesystem as the rule paths (hard links)
+  catalogs:
+    - id: flibusta
+      type: flibusta                      # Flibusta's search and author pages are preset
+      # url: https://flibusta.site/opds   # the default for type flibusta; any mirror works
+      # formats: [epub, fb2]              # preferred formats, in order (the default)
+      # unzip_fb2: true                   # store .fb2 rather than Flibusta's .fb2.zip
+      # timeout_sec: 120                  # Flibusta often needs a minute per search
+      # author_pages: 3                   # pages of 20 books read per author found
+      # proxy: socks5://tor:9050          # optional, e.g. Tor for a blocked catalog
+    - id: calibre
+      type: opds                          # any other OPDS 1.x catalog, e.g. Calibre-Web
+      url: https://calibre.example.com/opds
+```
+
+- **Search.** A result is one book: `Authors — Title (year, language) [formats]`. The query is
+  searched as a title and, for `type: flibusta` (or with `author_search_url`), as an author
+  name too: the books of the authors found (those with the most books, up to `author_pages`
+  pages each) come back as results as well. So an agent searches for "Пикник на обочине" and
+  "Стругацкий" as two variants. Generic catalogs use the search their root feed announces
+  (`search_url` overrides it). Searches are slow on Flibusta, so the catalog's `timeout_sec`
+  replaces `search.source_timeout_sec` for it; results that arrived before the timeout are kept.
+- **Formats.** `list_files` shows a book's formats as files (`Author - Title.epub`, `.fb2`,
+  `.mobi`, …). `download` without `include` takes the first available of `formats`; if that one
+  keeps failing (Flibusta converts EPUB on the fly and sometimes answers with a web page), the
+  next one is tried. `include: ["*.mobi"]` picks a format explicitly, without fallback.
+- **Downloading.** Convy downloads books itself, one at a time, into
+  `<downloads_path>/<catalog>/<book>/<Author - Title>/`, and unpacks FB2 archives. A failed file
+  is tried again after 1 and 5 minutes (the job shows `stalled` meanwhile), then the job fails.
+  Unfinished downloads resume after a restart. The job is placed like any other: the rules see
+  the category's client category as `Category` (`Provider == opds`), and `subpath` replaces the
+  `Author - Title` folder. Cleaning up `downloads_path` after placement is left to you.
+- **Access.** Flibusta's mirrors differ in what works: `https://flibusta.site/opds` answers over
+  HTTPS, `flibusta.is` only over plain HTTP. A `proxy` (`http://`, `socks5://`) is used for the
+  catalog's searches and downloads; `username`/`password` are sent as HTTP basic authentication
+  (pass the password as a Docker secret, e.g. `Opds__catalogs__0__password`).
 
 ## Jobs and placement
 

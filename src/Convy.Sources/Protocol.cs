@@ -11,4 +11,7 @@ public enum Protocol
 
     /// <summary>Soulseek peer-to-peer file transfer.</summary>
     Soulseek,
+
+    /// <summary>Plain HTTP download of books from an OPDS catalog (e.g. Flibusta).</summary>
+    Opds,
 }
