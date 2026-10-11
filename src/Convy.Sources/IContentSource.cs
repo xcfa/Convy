@@ -44,6 +44,12 @@ public interface IContentSource
     string? StatusMessage { get; }
 
     /// <summary>
+    /// How long one request to this source may take, when it needs longer than the configured
+    /// default (a slow catalog); <c>null</c> for the default.
+    /// </summary>
+    TimeSpan? Timeout => null;
+
+    /// <summary>
     /// Searches for one query variant. Throws <see cref="SourceException"/> when the source
     /// fails, so a failure is never confused with an empty result.
     /// </summary>

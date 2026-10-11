@@ -19,6 +19,8 @@ namespace Convy.Data.Context
 
 		public DbSet<WebhookEntry> Webhooks => Set<WebhookEntry>();
 
+		public DbSet<OpdsDownloadEntry> OpdsDownloads => Set<OpdsDownloadEntry>();
+
 		public ConvyDbContext(DbContextOptions<ConvyDbContext> context)
 			: base(context)
 		{

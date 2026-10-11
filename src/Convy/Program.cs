@@ -15,6 +15,9 @@ using Convy.Sources;
 using Convy.Sources.Prowlarr;
 using Convy.Sources.Slskd;
 using Convy.Sources.Torrents;
+using Convy.Sources.Opds;
+using Convy.Services.Downloaders.Opds;
+using System.Linq;
 using Convy.Services.Linking;
 using Convy.Services.Sync;
 using Convy.Services.Rules;
@@ -283,6 +286,28 @@ public class Program
 			prowlarrOptions));
 		builder.Services.AddSingleton<ISourceProvider, ProwlarrSourceProvider>();
 
+		// OPDS catalogs (Flibusta, …): one source per catalog, and Convy's own downloader for
+		// their books, which needs downloads_path on the same filesystem as the rule paths.
+		var opdsOptions = builder.Configuration.GetSection(OpdsOptions.SectionName).Get<OpdsOptions>() ?? new OpdsOptions();
+		var opdsCatalogs = opdsOptions.Resolve(out var opdsProblems);
+		builder.Services.AddSingleton(new OpdsCatalogs(
+			opdsCatalogs.Select(c => new OpdsClient(c.Catalog, OpdsHttp.Create(c.Options))).ToList()));
+		builder.Services.AddSingleton<ISourceProvider, OpdsSourceProvider>();
+		var opdsDownloadsPath = string.IsNullOrWhiteSpace(opdsOptions.DownloadsPath) ? null : opdsOptions.DownloadsPath.Trim();
+		if (opdsCatalogs.Count > 0 && opdsDownloadsPath is not null)
+		{
+			builder.Services.AddSingleton<IOpdsDownloadStore, EfOpdsDownloadStore>();
+			builder.Services.AddSingleton<OpdsDownloadQueue>();
+			builder.Services.AddSingleton<OpdsDownloadRunner>();
+			builder.Services.AddSingleton<IDownloader>(sp => new OpdsDownloader(
+				opdsDownloadsPath,
+				sp.GetRequiredService<IOpdsDownloadStore>(),
+				sp.GetRequiredService<OpdsDownloadQueue>(),
+				sp.GetRequiredService<TimeProvider>(),
+				sp.GetRequiredService<ILogger<OpdsDownloader>>()));
+			builder.Services.AddHostedService<OpdsDownloadWorker>();
+		}
+
 		builder.Services.AddSingleton<ISourceRegistry, SourceRegistry>();
 		builder.Services.AddSingleton<CategoryCatalog>();
 		builder.Services.AddSingleton<ISearchCache, EfSearchCache>();
@@ -318,6 +343,16 @@ public class Program
 		}
 
 		await app.Services.GetRequiredService<WebhookCatalog>().ReloadAsync(CancellationToken.None);
+
+		foreach (var problem in opdsProblems)
+		{
+			app.Logger.LogWarning("{Problem} The catalog is not used.", problem);
+		}
+
+		if (opdsCatalogs.Count > 0 && opdsDownloadsPath is null)
+		{
+			app.Logger.LogWarning("opds.downloads_path is not set: books can be found but not downloaded.");
+		}
 
 		// Load DB-backed settings now that the table exists — async, so startup never
 		// blocks on the database. Subsequent writes refresh it via UserSettingsService.

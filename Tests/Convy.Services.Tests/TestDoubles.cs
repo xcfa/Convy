@@ -139,6 +139,7 @@ internal sealed class FakeDownloader : IDownloader
     {
         TorrentPayload torrent => torrent.InfoHash,
         SoulseekPayload folder => $"{folder.Username}/{folder.Directory}",
+        OpdsPayload book => $"{book.CatalogId}/{book.BookKey}",
         _ => throw new ArgumentException("Unknown payload."),
     };
 

@@ -11,6 +11,10 @@ namespace Convy.Services.Media;
 /// </summary>
 public sealed class FileListingService
 {
+    /// <summary>The configured timeout, or the source's own when it needs longer.</summary>
+    private static TimeSpan Longest(TimeSpan configured, TimeSpan? source) =>
+        source is { } own && own > configured ? own : configured;
+
     private readonly ISearchCache _cache;
     private readonly ISourceRegistry _registry;
     private readonly IOptionsMonitor<FilesOptions> _options;
@@ -59,7 +63,7 @@ public sealed class FileListingService
         var source = await _registry.FindAsync(result.SourceId, cancellationToken).ConfigureAwait(false)
                      ?? throw new ConvyRequestException($"Source '{result.SourceId}' of this result is no longer available.");
 
-        var timeout = TimeSpan.FromSeconds(Math.Max(1, _options.CurrentValue.MetadataTimeoutSeconds));
+        var timeout = Longest(TimeSpan.FromSeconds(Math.Max(1, _options.CurrentValue.MetadataTimeoutSeconds)), source.Timeout);
         using var deadline = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
         deadline.CancelAfter(timeout);
 
