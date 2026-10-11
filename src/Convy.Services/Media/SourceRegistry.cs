@@ -12,7 +12,19 @@ public interface ISourceRegistry
 
     /// <summary>The source with the given id, or <c>null</c>.</summary>
     Task<IContentSource?> FindAsync(string id, CancellationToken cancellationToken);
+
+    /// <summary>
+    /// The providers that could not list their sources in the last refresh; their last known
+    /// sources are still served by <see cref="GetSourcesAsync"/>.
+    /// </summary>
+    IReadOnlyList<SourceProviderError> ProviderErrors { get; }
 }
+
+/// <summary>A provider that could not list its sources.</summary>
+/// <param name="Provider">The provider's name (<c>prowlarr</c>, <c>slskd</c>, …).</param>
+/// <param name="Message">Why.</param>
+/// <param name="KnownSources">How many of its sources are still served from the last listing.</param>
+public sealed record SourceProviderError(string Provider, string Message, int KnownSources);
 
 /// <inheritdoc />
 /// <remarks>
@@ -59,6 +71,7 @@ public sealed class SourceRegistry : ISourceRegistry, IDisposable
             }
 
             var sources = new List<IContentSource>();
+            var errors = new List<SourceProviderError>();
             foreach (var provider in _providers)
             {
                 try
@@ -78,6 +91,7 @@ public sealed class SourceRegistry : ISourceRegistry, IDisposable
                     _logger.LogWarning(ex,
                         "Could not list the sources of {Provider}; keeping {Count} known source(s).", provider.Name, previous.Count);
                     sources.AddRange(previous);
+                    errors.Add(new SourceProviderError(provider.Name, ex.Message, previous.Count));
 
                     // Every source of the provider is affected; before any is known, the
                     // provider itself is reported (e.g. a rejected Prowlarr key at startup).
@@ -89,7 +103,7 @@ public sealed class SourceRegistry : ISourceRegistry, IDisposable
                 }
             }
 
-            _snapshot = new Snapshot(sources, _timeProvider.GetUtcNow());
+            _snapshot = new Snapshot(sources, errors, _timeProvider.GetUtcNow());
             return sources;
         }
         finally
@@ -104,10 +118,12 @@ public sealed class SourceRegistry : ISourceRegistry, IDisposable
         return sources.FirstOrDefault(s => string.Equals(s.Id, id, StringComparison.OrdinalIgnoreCase));
     }
 
+    public IReadOnlyList<SourceProviderError> ProviderErrors => _snapshot?.Errors ?? [];
+
     public void Dispose() => _refreshGate.Dispose();
 
     private IReadOnlyList<IContentSource>? Fresh(Snapshot? snapshot) =>
         snapshot is not null && _timeProvider.GetUtcNow() - snapshot.RefreshedAt < CacheDuration ? snapshot.Sources : null;
 
-    private sealed record Snapshot(IReadOnlyList<IContentSource> Sources, DateTimeOffset RefreshedAt);
+    private sealed record Snapshot(IReadOnlyList<IContentSource> Sources, IReadOnlyList<SourceProviderError> Errors, DateTimeOffset RefreshedAt);
 }

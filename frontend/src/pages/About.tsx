@@ -1,5 +1,5 @@
 import { useMemo, useState } from "react";
-import { api, type AboutInfo, type AboutPath } from "../api";
+import { api, type AboutInfo, type AboutPath, type AboutSearchSource } from "../api";
 import { Badge, Card, Empty, ErrorBanner } from "../components";
 import { ago, dateTimeText } from "../format";
 import { usePolling } from "../usePolling";
@@ -87,13 +87,15 @@ export function About() {
         </Card>
       </div>
 
+      <SearchSourcesCard sources={data.search_sources} warnings={data.search_warnings} />
+
       <Card title="Paths">
         <PathTable paths={data.paths} />
       </Card>
 
       <Card title="Configuration sources">
         <p className="muted small">Applied in this order; a later source overrides an earlier one for the same setting.</p>
-        <PathTable paths={data.sources} numbered />
+        <PathTable paths={data.configuration_sources} numbered />
       </Card>
 
       <Card
@@ -140,6 +142,86 @@ export function About() {
       </Card>
     </>
   );
+}
+
+function SearchSourcesCard({ sources, warnings }: { sources: AboutSearchSource[]; warnings: string[] }) {
+  return (
+    <Card title="Search sources">
+      <p className="muted small">
+        Where Convy searches, what downloads the results and which categories search each source, with its place in
+        the category's order.
+      </p>
+      {warnings.length > 0 && (
+        <div className="banner warn" role="status">
+          <ul>
+            {warnings.map((w) => (
+              <li key={w}>{w}</li>
+            ))}
+          </ul>
+        </div>
+      )}
+      {sources.length === 0 ? (
+        <Empty>No source is configured (Prowlarr, slskd, OPDS catalogs).</Empty>
+      ) : (
+        <div className="table-wrap">
+          <table>
+            <thead>
+              <tr>
+                <th>Source</th>
+                <th>Protocol</th>
+                <th>Downloader</th>
+                <th className="num">Timeout</th>
+                <th>Categories</th>
+                <th>Status</th>
+              </tr>
+            </thead>
+            <tbody>
+              {sources.map((s) => (
+                <tr key={s.id}>
+                  <td>
+                    {s.name}
+                    <div className="mono small muted">{s.id}</div>
+                  </td>
+                  <td>{s.protocol}</td>
+                  <td>{s.downloader ?? <Badge tone="warn">none</Badge>}</td>
+                  <td className="num">{seconds(s.timeout_sec)}</td>
+                  <td className="wrap">
+                    {s.categories.length === 0 ? (
+                      <span className="muted">—</span>
+                    ) : (
+                      <span className="chips">
+                        {s.categories.map((c) => (
+                          <span
+                            key={c.id}
+                            className={c.listed ? "chip" : "chip faint"}
+                            title={
+                              c.listed
+                                ? `${c.id} lists this source; searched #${c.position}`
+                                : `${c.id} lists no sources and searches every source by name; searched #${c.position}`
+                            }
+                          >
+                            {c.id} #{c.position}
+                          </span>
+                        ))}
+                      </span>
+                    )}
+                  </td>
+                  <td className="wrap">
+                    <Badge tone={s.status === "ok" ? "ok" : s.status === "disabled" ? "neutral" : "bad"}>{s.status}</Badge>
+                    {s.message && <div className="small muted">{s.message}</div>}
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      )}
+    </Card>
+  );
+}
+
+function seconds(value: number): string {
+  return value >= 120 && value % 60 === 0 ? `${value / 60} min` : `${value} s`;
 }
 
 function SettingRows({ header, setting }: { header: string | null; setting: AboutInfo["settings"][number] }) {
@@ -192,15 +274,26 @@ function PathTable({ paths, numbered = false }: { paths: AboutPath[]; numbered?:
   );
 }
 
-/** Plain text for a bug report: version, system and settings (secrets already hidden by the server). */
+/** Plain text for a bug report: version, system, sources and settings (secrets already hidden by the server). */
 function report(about: AboutInfo): string {
   const lines = [
     `Convy ${about.informational_version}`,
     `${about.runtime}, ${about.os} (${about.architecture}), ${about.environment}`,
     `Web UI: ${about.ui_auth}; MCP: ${about.mcp_enabled ? "on" : "off"}; downloaders: ${about.downloaders.join(", ")}`,
     "",
-    "Sources:",
-    ...about.sources.map((s, i) => `  ${i + 1}. ${s.name}${s.path ? ` (${s.path}${s.exists === false ? ", missing" : ""})` : ""}`),
+    "Search sources:",
+    ...about.search_sources.map(
+      (s) =>
+        `  ${s.id} "${s.name}": ${s.protocol}, ${s.status}${s.message ? ` (${s.message})` : ""}, ` +
+        `downloader ${s.downloader ?? "none"}, timeout ${seconds(s.timeout_sec)}, ` +
+        `categories ${s.categories.map((c) => `${c.id}#${c.position}`).join(" ") || "none"}`,
+    ),
+    ...about.search_warnings.map((w) => `  ! ${w}`),
+    "",
+    "Configuration sources:",
+    ...about.configuration_sources.map(
+      (s, i) => `  ${i + 1}. ${s.name}${s.path ? ` (${s.path}${s.exists === false ? ", missing" : ""})` : ""}`,
+    ),
     "",
     "Settings:",
     ...about.settings.map((s) => `  ${s.key} = ${s.value ?? ""}  [${s.source}]`),

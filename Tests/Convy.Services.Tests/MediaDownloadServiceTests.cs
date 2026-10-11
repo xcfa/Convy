@@ -312,6 +312,7 @@ public class SourceRegistryTests
         await registry.GetSourcesAsync(CancellationToken.None);
         await registry.GetSourcesAsync(CancellationToken.None);
         Assert.Equal(1, provider.Calls);
+        Assert.Empty(registry.ProviderErrors);
 
         time.Now += TimeSpan.FromMinutes(6);
         provider.Failure = new HttpRequestException("down");
@@ -320,5 +321,12 @@ public class SourceRegistryTests
         Assert.Equal(2, provider.Calls);
         Assert.Equal("prowlarr:1", Assert.Single(sources).Id);
         Assert.NotNull(await registry.FindAsync("PROWLARR:1", CancellationToken.None));
+        Assert.Equal(new SourceProviderError("static", "down", 1), Assert.Single(registry.ProviderErrors));
+
+        time.Now += TimeSpan.FromMinutes(6);
+        provider.Failure = null;
+
+        await registry.GetSourcesAsync(CancellationToken.None);
+        Assert.Empty(registry.ProviderErrors);
     }
 }

@@ -269,6 +269,17 @@ h2 {
   border-color: color-mix(in srgb, var(--bad) 30%, transparent);
 }
 
+.banner.warn {
+  color: var(--warn);
+  background: var(--warn-bg);
+  border-color: color-mix(in srgb, var(--warn) 30%, transparent);
+}
+
+.banner ul {
+  margin: 0;
+  padding-left: 18px;
+}
+
 .button {
   font: inherit;
   font-weight: 550;
@@ -765,6 +776,11 @@ td.actions {
   background: var(--neutral-bg);
   color: var(--neutral);
   border: 1px solid transparent;
+}
+
+.chip.faint {
+  background: transparent;
+  border-color: var(--border);
 }
 
 button.chip.toggle {

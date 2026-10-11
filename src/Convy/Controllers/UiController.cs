@@ -121,7 +121,7 @@ public sealed class UiController : ControllerBase
     [HttpGet("rules")]
     public Task<RulesView> Rules(CancellationToken cancellationToken) => _rules.GetAsync(cancellationToken);
 
-    /// <summary>Version, runtime, paths and Convy's settings with their sources (secrets hidden).</summary>
+    /// <summary>Version, runtime, paths, search sources and Convy's settings with their sources (secrets hidden).</summary>
     [HttpGet("about")]
-    public AboutInfo About() => _about.Get();
+    public Task<AboutInfo> About(CancellationToken cancellationToken) => _about.GetAsync(cancellationToken);
 }

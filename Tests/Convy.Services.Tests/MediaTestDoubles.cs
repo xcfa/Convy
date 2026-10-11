@@ -21,7 +21,12 @@ internal sealed class FakeSource : IContentSource
     public string Name { get; }
     public Protocol Protocol { get; }
     public SourceStatus Status { get; }
-    public string? StatusMessage => null;
+    public string? StatusMessage { get; init; }
+
+    /// <summary>The source's own request timeout; <c>null</c> for the configured default.</summary>
+    public TimeSpan? SourceTimeout { get; init; }
+
+    TimeSpan? IContentSource.Timeout => SourceTimeout;
 
     /// <summary>Results per query; missing queries return nothing.</summary>
     public Dictionary<string, List<ContentInfo>> Results { get; } = new(StringComparer.OrdinalIgnoreCase);

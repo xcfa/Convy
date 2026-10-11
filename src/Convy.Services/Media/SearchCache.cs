@@ -285,3 +285,14 @@ public static class ProtocolNames
 
     public static Protocol Parse(string name) => Enum.Parse<Protocol>(name, ignoreCase: true);
 }
+
+/// <summary>The names of source statuses in responses: <c>ok</c>, <c>error</c>, <c>disabled</c>.</summary>
+public static class SourceStatusNames
+{
+    public static string ToName(SourceStatus status) => status switch
+    {
+        SourceStatus.Ok => "ok",
+        SourceStatus.Disabled => "disabled",
+        _ => "error",
+    };
+}

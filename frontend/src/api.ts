@@ -191,6 +191,23 @@ export interface AboutSetting {
   hidden: boolean;
 }
 
+export interface AboutSourceCategory {
+  id: string;
+  position: number;
+  listed: boolean;
+}
+
+export interface AboutSearchSource {
+  id: string;
+  name: string;
+  protocol: string;
+  status: string;
+  message: string | null;
+  timeout_sec: number;
+  downloader: string | null;
+  categories: AboutSourceCategory[];
+}
+
 export interface AboutInfo {
   version: string;
   informational_version: string;
@@ -206,7 +223,9 @@ export interface AboutInfo {
   mcp_enabled: boolean;
   downloaders: string[];
   paths: AboutPath[];
-  sources: AboutPath[];
+  search_sources: AboutSearchSource[];
+  search_warnings: string[];
+  configuration_sources: AboutPath[];
   settings: AboutSetting[];
 }
 

@@ -1,5 +1,4 @@
 using Convy.Services.Jobs;
-using Convy.Sources;
 
 namespace Convy.Services.Media;
 
@@ -24,10 +23,10 @@ public sealed class MediaCatalogService
     public async Task<CategoriesResponse> GetCategoriesAsync(CancellationToken cancellationToken)
     {
         var sources = await _registry.GetSourcesAsync(cancellationToken).ConfigureAwait(false);
-        var active = sources.Where(s => s.Status != SourceStatus.Disabled).ToList();
 
         var categories = _catalog.All
-            .Select(c => new CategoryDto(c.Id, c.Description, c.PathHint, EffectiveSources(c, active)))
+            .Select(c => new CategoryDto(c.Id, c.Description, c.PathHint,
+                CategorySources.Resolve(c, sources, out _).Select(s => s.Id).ToList()))
             .ToList();
 
         return new CategoriesResponse(categories);
@@ -39,7 +38,7 @@ public sealed class MediaCatalogService
 
         return new SourcesResponse(sources
             .OrderBy(s => s.Name, StringComparer.OrdinalIgnoreCase)
-            .Select(s => new SourceDto(s.Id, s.Name, ProtocolNames.ToName(s.Protocol), ToName(s.Status), s.StatusMessage))
+            .Select(s => new SourceDto(s.Id, s.Name, ProtocolNames.ToName(s.Protocol), SourceStatusNames.ToName(s.Status), s.StatusMessage))
             .ToList());
     }
 
@@ -63,18 +62,6 @@ public sealed class MediaCatalogService
         var job = await _jobs.CancelAsync(jobId, cancellationToken).ConfigureAwait(false);
         return new CancelJobResponse(job.JobId, job.Status.ToName(), "The download was stopped; downloaded data and created links are kept.");
     }
-
-    private static IReadOnlyList<string> EffectiveSources(Category category, IReadOnlyList<IContentSource> active) =>
-        category.Sources is { Count: > 0 } configured
-            ? configured.Where(id => active.Any(s => string.Equals(s.Id, id, StringComparison.OrdinalIgnoreCase))).ToList()
-            : active.OrderBy(s => s.Name, StringComparer.OrdinalIgnoreCase).Select(s => s.Id).ToList();
-
-    private static string ToName(SourceStatus status) => status switch
-    {
-        SourceStatus.Ok => "ok",
-        SourceStatus.Disabled => "disabled",
-        _ => "error",
-    };
 
     private static JobDto ToDto(JobView view) => new(
         view.Job.JobId,

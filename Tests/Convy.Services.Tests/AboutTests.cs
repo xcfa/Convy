@@ -1,7 +1,10 @@
 using Convy.Services.Downloads;
+using Convy.Services.Media;
 using Convy.Services.Rules;
 using Convy.Services.Security;
 using Convy.Services.Ui;
+using Convy.Sources;
+using Microsoft.Extensions.Logging.Abstractions;
 
 namespace Convy.Services.Tests;
 
@@ -74,8 +77,85 @@ public sealed class AboutServiceTests
         public DateTimeOffset? LastErrorAt => null;
     }
 
+    private static AboutService Service(
+        IConfigurationInspector inspector,
+        UiOptions? ui = null,
+        ISourceProvider? provider = null,
+        Dictionary<string, CategoryOptions>? categories = null,
+        IReadOnlyList<IDownloader>? downloaders = null) =>
+        new(
+            inspector,
+            new FakeDiagnostics(),
+            new DownloaderResolver(downloaders ?? [new FakeDownloader()]),
+            new SourceRegistry([provider ?? new StaticProvider()], Media.Health(), new FakeTime(), NullLogger<SourceRegistry>.Instance),
+            Media.Catalog(categories ?? Media.Categories()),
+            new StaticOptions<SearchOptions>(new SearchOptions { SourceTimeoutSeconds = 20 }),
+            ui ?? new UiOptions(),
+            new StaticOptions<McpOptions>(new McpOptions { ApiKey = "k" }),
+            new FakeTime());
+
     [Fact]
-    public void ShowsVersionPathsSourcesAndMaskedSettingsInSectionOrder()
+    public async Task ListsSearchSourcesWithTheirCategoriesAndWhatKeepsThemFromWorking()
+    {
+        var categories = Media.Categories("soulseek", "prowlarr:1", "soulsek", "prowlarr:2");
+        categories["books"] = new CategoryOptions { Sources = ["opds:missing"] };
+        var sources = new IContentSource[]
+        {
+            new FakeSource("prowlarr:1", "Rutracker"),
+            new FakeSource("prowlarr:2", "Old tracker", status: SourceStatus.Disabled) { StatusMessage = "Disabled in Prowlarr" },
+            new FakeSource("soulseek", "Soulseek", Protocol.Soulseek) { SourceTimeout = TimeSpan.FromMinutes(1) },
+            new FakeSource("opds:flibusta", "Flibusta", Protocol.Opds, SourceStatus.Error) { StatusMessage = "Connection refused" },
+        };
+        var downloaders = new[] { new FakeDownloader(), new FakeDownloader(DownloadProviders.Slskd, Protocol.Soulseek) };
+
+        var about = await Service(new FakeInspector(), provider: new StaticProvider(sources), categories: categories, downloaders: downloaders)
+            .GetAsync(CancellationToken.None);
+
+        Assert.Equal(["Flibusta", "Old tracker", "Rutracker", "Soulseek"], about.SearchSources.Select(s => s.Name));
+        var source = about.SearchSources.ToDictionary(s => s.Id);
+
+        // "other" lists nothing, so it searches every active source by name.
+        Assert.Equal([("music", 2, true), ("other", 2, false)], Uses(source["prowlarr:1"]));
+        Assert.Equal([("music", 1, true), ("other", 3, false)], Uses(source["soulseek"]));
+        Assert.Equal([("other", 1, false)], Uses(source["opds:flibusta"]));
+        Assert.Empty(source["prowlarr:2"].Categories);
+
+        Assert.Equal(("torrent", "ok", 20d, "qbittorrent"), Facts(source["prowlarr:1"]));
+        Assert.Equal(("soulseek", "ok", 60d, "slskd"), Facts(source["soulseek"]));
+        Assert.Equal(("opds", "error", 20d, null), Facts(source["opds:flibusta"]));
+        Assert.Equal("Connection refused", source["opds:flibusta"].Message);
+        Assert.Equal(("disabled", "Disabled in Prowlarr"), (source["prowlarr:2"].Status, source["prowlarr:2"].Message));
+
+        Assert.Equal(
+        [
+            "Category 'books' lists source 'opds:missing', which is not a known source.",
+            "Category 'books' has no source to search.",
+            "Category 'music' lists source 'soulsek', which is not a known source.",
+            "Category 'music' lists source 'prowlarr:2', which is disabled.",
+            "No downloader handles opds: results of these sources can be found but not downloaded.",
+        ], about.SearchWarnings);
+
+        static IEnumerable<(string, int, bool)> Uses(AboutSearchSource s) => s.Categories.Select(c => (c.Id, c.Position, c.Listed));
+        static (string, string, double, string?) Facts(AboutSearchSource s) => (s.Protocol, s.Status, s.TimeoutSeconds, s.Downloader);
+    }
+
+    [Fact]
+    public async Task ReportsAProviderThatCannotListItsSources()
+    {
+        var provider = new StaticProvider { Failure = new HttpRequestException("Connection refused (127.0.0.1:9696).") };
+        var info = await Service(new FakeInspector(), provider: provider).GetAsync(CancellationToken.None);
+
+        Assert.Empty(info.SearchSources);
+        Assert.Equal(
+        [
+            "Could not list the sources of static: Connection refused (127.0.0.1:9696).",
+            "Category 'music' has no source to search.",
+            "Category 'other' has no source to search.",
+        ], info.SearchWarnings);
+    }
+
+    [Fact]
+    public async Task ShowsVersionPathsSourcesAndMaskedSettingsInSectionOrder()
     {
         var inspector = new FakeInspector();
         inspector.Values.AddRange(
@@ -92,14 +172,12 @@ public sealed class AboutServiceTests
             Oidc = new UiOidcOptions { Authority = "https://auth.example.com", ClientId = "convy", ClientSecret = "s3cr3t" },
         };
 
-        var about = new AboutService(
-            inspector, new FakeDiagnostics(), new DownloaderResolver([new FakeDownloader()]), ui,
-            new StaticOptions<McpOptions>(new McpOptions { ApiKey = "k" }), new FakeTime()).Get();
+        var about = await Service(inspector, ui).GetAsync(CancellationToken.None);
 
         Assert.Equal(AppInfo.Version, about.Version);
         Assert.Equal(("Production", "/app", "oidc", true), (about.Environment, about.ContentRoot, about.UiAuth, about.McpEnabled));
         Assert.Equal(["qbittorrent"], about.Downloaders);
-        Assert.Equal(2, about.Sources.Count);
+        Assert.Equal(2, about.ConfigurationSources.Count);
 
         // Only Convy's sections, in the order of AboutService.Sections; secrets hidden.
         Assert.Equal(

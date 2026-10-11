@@ -1,7 +1,9 @@
 using System.Text.Json.Serialization;
 using Convy.Services.Downloads;
+using Convy.Services.Media;
 using Convy.Services.Rules;
 using Convy.Services.Security;
+using Convy.Sources;
 using Microsoft.Extensions.Options;
 
 namespace Convy.Services.Ui;
@@ -35,7 +37,7 @@ public interface IConfigurationInspector
     string? this[string key] { get; }
 }
 
-/// <summary>Version, runtime, paths and configuration for the About page.</summary>
+/// <summary>Version, runtime, paths, search sources and configuration for the About page.</summary>
 public sealed record AboutInfo(
     [property: JsonPropertyName("version")] string Version,
     [property: JsonPropertyName("informational_version")] string InformationalVersion,
@@ -51,8 +53,31 @@ public sealed record AboutInfo(
     [property: JsonPropertyName("mcp_enabled")] bool McpEnabled,
     [property: JsonPropertyName("downloaders")] IReadOnlyList<string> Downloaders,
     [property: JsonPropertyName("paths")] IReadOnlyList<ConfigurationSourceInfo> Paths,
-    [property: JsonPropertyName("sources")] IReadOnlyList<ConfigurationSourceInfo> Sources,
+    [property: JsonPropertyName("search_sources")] IReadOnlyList<AboutSearchSource> SearchSources,
+    [property: JsonPropertyName("search_warnings")] IReadOnlyList<string> SearchWarnings,
+    [property: JsonPropertyName("configuration_sources")] IReadOnlyList<ConfigurationSourceInfo> ConfigurationSources,
     [property: JsonPropertyName("settings")] IReadOnlyList<SettingDto> Settings);
+
+/// <summary>A search source with what downloads its results and which categories search it.</summary>
+/// <param name="Status"><c>ok</c>, <c>error</c> or <c>disabled</c>.</param>
+/// <param name="TimeoutSeconds">How long one request to it may take.</param>
+/// <param name="Downloader">The downloader of its protocol; <c>null</c> when none is configured.</param>
+public sealed record AboutSearchSource(
+    [property: JsonPropertyName("id")] string Id,
+    [property: JsonPropertyName("name")] string Name,
+    [property: JsonPropertyName("protocol")] string Protocol,
+    [property: JsonPropertyName("status")] string Status,
+    [property: JsonPropertyName("message")] string? Message,
+    [property: JsonPropertyName("timeout_sec")] double TimeoutSeconds,
+    [property: JsonPropertyName("downloader")] string? Downloader,
+    [property: JsonPropertyName("categories")] IReadOnlyList<AboutSourceCategory> Categories);
+
+/// <param name="Position">The source's place in the category's search order, from 1.</param>
+/// <param name="Listed">The category lists the source; otherwise it searches every source.</param>
+public sealed record AboutSourceCategory(
+    [property: JsonPropertyName("id")] string Id,
+    [property: JsonPropertyName("position")] int Position,
+    [property: JsonPropertyName("listed")] bool Listed);
 
 /// <param name="Hidden">The value (or a credential inside it) is hidden.</param>
 public sealed record SettingDto(
@@ -77,6 +102,9 @@ public sealed class AboutService
     private readonly IConfigurationInspector _configuration;
     private readonly IRulesDiagnostics _rules;
     private readonly IDownloaderResolver _downloaders;
+    private readonly ISourceRegistry _sources;
+    private readonly CategoryCatalog _categories;
+    private readonly IOptionsMonitor<SearchOptions> _search;
     private readonly UiOptions _ui;
     private readonly IOptionsMonitor<McpOptions> _mcp;
     private readonly TimeProvider _timeProvider;
@@ -85,6 +113,9 @@ public sealed class AboutService
         IConfigurationInspector configuration,
         IRulesDiagnostics rules,
         IDownloaderResolver downloaders,
+        ISourceRegistry sources,
+        CategoryCatalog categories,
+        IOptionsMonitor<SearchOptions> search,
         UiOptions ui,
         IOptionsMonitor<McpOptions> mcp,
         TimeProvider timeProvider)
@@ -92,13 +123,19 @@ public sealed class AboutService
         _configuration = configuration;
         _rules = rules;
         _downloaders = downloaders;
+        _sources = sources;
+        _categories = categories;
+        _search = search;
         _ui = ui;
         _mcp = mcp;
         _timeProvider = timeProvider;
     }
 
-    public AboutInfo Get()
+    public async Task<AboutInfo> GetAsync(CancellationToken cancellationToken)
     {
+        var sources = await _sources.GetSourcesAsync(cancellationToken).ConfigureAwait(false);
+        var (searchSources, searchWarnings) = SearchSources(sources);
+
         var settings = _configuration.Read(Sections)
             .Select(v =>
             {
@@ -131,8 +168,70 @@ public sealed class AboutService
             !string.IsNullOrWhiteSpace(_mcp.CurrentValue.ApiKey),
             _downloaders.All.Select(d => d.Provider).ToList(),
             Paths(uiAuth),
+            searchSources,
+            searchWarnings,
             _configuration.Sources,
             settings);
+    }
+
+    /// <summary>
+    /// Every source with the categories that search it, and what keeps a category or a source
+    /// from working: a provider that cannot list its sources, a listed source that is unknown or
+    /// disabled, a category left without sources, results that no downloader can fetch.
+    /// </summary>
+    private (List<AboutSearchSource> Sources, List<string> Warnings) SearchSources(IReadOnlyList<IContentSource> sources)
+    {
+        var warnings = _sources.ProviderErrors
+            .Select(e => $"Could not list the sources of {e.Provider}: {e.Message.TrimEnd('.')}." +
+                         (e.KnownSources > 0 ? $" Its {e.KnownSources} last known source(s) are shown." : ""))
+            .ToList();
+        var usedBy = new Dictionary<string, List<AboutSourceCategory>>(StringComparer.OrdinalIgnoreCase);
+
+        foreach (var category in _categories.All)
+        {
+            var searched = CategorySources.Resolve(category, sources, out var skipped);
+            var listed = category.Sources is { Count: > 0 };
+            for (var i = 0; i < searched.Count; i++)
+            {
+                if (!usedBy.TryGetValue(searched[i].Id, out var list))
+                    usedBy[searched[i].Id] = list = [];
+                list.Add(new AboutSourceCategory(category.Id, i + 1, listed));
+            }
+
+            foreach (var id in skipped)
+            {
+                var known = sources.Any(s => string.Equals(s.Id, id, StringComparison.OrdinalIgnoreCase));
+                warnings.Add(known
+                    ? $"Category '{category.Id}' lists source '{id}', which is disabled."
+                    : $"Category '{category.Id}' lists source '{id}', which is not a known source.");
+            }
+
+            if (searched.Count == 0)
+                warnings.Add($"Category '{category.Id}' has no source to search.");
+        }
+
+        var timeout = TimeSpan.FromSeconds(Math.Max(1, _search.CurrentValue.SourceTimeoutSeconds));
+        var result = sources
+            .OrderBy(s => s.Name, StringComparer.OrdinalIgnoreCase)
+            .ThenBy(s => s.Id, StringComparer.OrdinalIgnoreCase)
+            .Select(s => new AboutSearchSource(
+                s.Id,
+                s.Name,
+                ProtocolNames.ToName(s.Protocol),
+                SourceStatusNames.ToName(s.Status),
+                s.StatusMessage,
+                (s.Timeout ?? timeout).TotalSeconds,
+                _downloaders.All.FirstOrDefault(d => d.Protocol == s.Protocol)?.Provider,
+                usedBy.GetValueOrDefault(s.Id) ?? []))
+            .ToList();
+
+        foreach (var protocol in sources.Where(s => s.Status != SourceStatus.Disabled).Select(s => s.Protocol).Distinct())
+        {
+            if (!_downloaders.All.Any(d => d.Protocol == protocol))
+                warnings.Add($"No downloader handles {ProtocolNames.ToName(protocol)}: results of these sources can be found but not downloaded.");
+        }
+
+        return (result, warnings);
     }
 
     private List<ConfigurationSourceInfo> Paths(string uiAuth)
