@@ -178,6 +178,38 @@ export interface RulesView {
   error_at: string | null;
 }
 
+export interface AboutPath {
+  name: string;
+  path: string | null;
+  exists: boolean | null;
+}
+
+export interface AboutSetting {
+  key: string;
+  value: string | null;
+  source: string;
+  hidden: boolean;
+}
+
+export interface AboutInfo {
+  version: string;
+  informational_version: string;
+  commit: string | null;
+  runtime: string;
+  os: string;
+  architecture: string;
+  environment: string;
+  content_root: string;
+  started_at: string;
+  now: string;
+  ui_auth: "oidc" | "none" | "off";
+  mcp_enabled: boolean;
+  downloaders: string[];
+  paths: AboutPath[];
+  sources: AboutPath[];
+  settings: AboutSetting[];
+}
+
 export class ApiError extends Error {
   readonly status: number;
 
@@ -252,4 +284,5 @@ export const api = {
   testWebhook: (webhook: WebhookInput, event: WebhookEvent) =>
     request<WebhookTestResult>("/api/ui/webhooks/test", json("POST", { webhook, event })),
   rules: () => request<RulesView>("/api/ui/rules"),
+  about: () => request<AboutInfo>("/api/ui/about"),
 };
