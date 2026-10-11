@@ -81,7 +81,7 @@ public class Program
 			source.ResolveFileProvider();
 		});
 		builder.Configuration.AddEnvironmentVariables();
-		builder.Configuration.AddKeyPerFile("/run/secrets", optional: true);  // секреты перекрывают env
+		builder.Configuration.AddKeyPerFile(ConfigurationInspector.SecretsDirectory, optional: true);  // секреты перекрывают env
 		var dbConfigSource = builder.Configuration.AddDbConfiguration();
 		builder.Configuration.AddCommandLine(args);
 

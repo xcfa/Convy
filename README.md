@@ -571,6 +571,15 @@ Convy serves a small web interface at `/`:
   language), next to the rules in effect and the properties each one reads. If the file
   cannot be loaded, the error is shown and the previous rules stay in effect. Read-only: edit
   the file to change the rules.
+- **About** — the version and commit, runtime and system, the search sources (status,
+  protocol, the downloader of their results, request timeout, and which categories search
+  each one and in what place), with warnings for what keeps search from working: a provider
+  that cannot list its sources, a category listing an unknown or disabled source, a category
+  left without sources, results no downloader can fetch. Then the paths Convy uses (database,
+  rules, sign-in keys, book downloads) with whether they exist, the configuration sources in
+  the order they apply, and Convy's settings as they are in effect with the source of each
+  (`configuration.yml`, environment, Docker secret, …). Passwords, API keys, secrets and
+  credentials inside URLs are hidden; "Copy for a bug report" copies all of it as text.
 
 The UI is **off until sign-in is configured**. Users sign in with OpenID Connect; Convy is
 tested against Authelia's behaviour, but any provider with the authorization-code flow works.

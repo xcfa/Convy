@@ -51,6 +51,8 @@ public static class UiSetup
         builder.Services.AddSingleton<DataBrowserService>();
         builder.Services.AddSingleton<WebhookAdminService>();
         builder.Services.AddSingleton<RulesViewService>();
+        builder.Services.AddSingleton<IConfigurationInspector, Convy.Configuration.ConfigurationInspector>();
+        builder.Services.AddSingleton<AboutService>();
         builder.Services.AddSingleton<UiAuthService>();
         builder.Services.AddSingleton<UiAssets>();
         builder.Services.AddSingleton<UiRequestErrorFilter>();
@@ -172,9 +174,9 @@ public static class UiSetup
         // Cookies are encrypted with Data Protection keys; kept next to the database so a
         // restart does not sign everyone out.
         var dataProtection = builder.Services.AddDataProtection().SetApplicationName("Convy");
-        if (KeysDirectory(connectionString) is { } keys)
+        if (AppInfo.KeysDirectory(connectionString) is { } keys)
         {
-            dataProtection.PersistKeysToFileSystem(keys);
+            dataProtection.PersistKeysToFileSystem(new DirectoryInfo(keys));
         }
 
         // The sign-in state stays on the server; only a short key travels in the URLs.
@@ -299,23 +301,6 @@ public static class UiSetup
     }
 
     private static bool IsApi(HttpRequest request) => request.Path.StartsWithSegments("/api");
-
-    private static DirectoryInfo? KeysDirectory(string? connectionString)
-    {
-        if (string.IsNullOrWhiteSpace(connectionString))
-        {
-            return null;
-        }
-
-        var dataSource = new SqliteConnectionStringBuilder(connectionString).DataSource;
-        if (string.IsNullOrWhiteSpace(dataSource) || dataSource.StartsWith(':'))
-        {
-            return null;
-        }
-
-        var directory = Path.GetDirectoryName(Path.GetFullPath(dataSource));
-        return directory is null ? null : new DirectoryInfo(Path.Combine(directory, "keys"));
-    }
 }
 
 /// <summary>The UI mode chosen at startup, and why the UI is off when it is.</summary>

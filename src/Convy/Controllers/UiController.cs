@@ -29,6 +29,7 @@ public sealed class UiController : ControllerBase
     private readonly DataBrowserService _data;
     private readonly WebhookAdminService _webhooks;
     private readonly RulesViewService _rules;
+    private readonly AboutService _about;
 
     public UiController(
         UiAuthService auth,
@@ -38,7 +39,8 @@ public sealed class UiController : ControllerBase
         ISyncControlService sync,
         DataBrowserService data,
         WebhookAdminService webhooks,
-        RulesViewService rules)
+        RulesViewService rules,
+        AboutService about)
     {
         _auth = auth;
         _status = status;
@@ -48,6 +50,7 @@ public sealed class UiController : ControllerBase
         _data = data;
         _webhooks = webhooks;
         _rules = rules;
+        _about = about;
     }
 
     /// <summary>The signed-in user.</summary>
@@ -117,4 +120,8 @@ public sealed class UiController : ControllerBase
     /// <summary>The rules file and the rules in effect.</summary>
     [HttpGet("rules")]
     public Task<RulesView> Rules(CancellationToken cancellationToken) => _rules.GetAsync(cancellationToken);
+
+    /// <summary>Version, runtime, paths, search sources and Convy's settings with their sources (secrets hidden).</summary>
+    [HttpGet("about")]
+    public Task<AboutInfo> About(CancellationToken cancellationToken) => _about.GetAsync(cancellationToken);
 }

@@ -1,5 +1,3 @@
-using System.Diagnostics;
-using System.Reflection;
 using System.Text.Json.Serialization;
 using Convy.Services.Downloads;
 using Convy.Services.Jobs;
@@ -49,9 +47,6 @@ public sealed record UiStorageStatus(
 /// <summary>Collects the state of the service for the UI's overview page.</summary>
 public sealed class UiStatusService
 {
-    private static readonly string AppVersion = ReadVersion();
-    private static readonly DateTimeOffset ProcessStartedAt = ReadStartTime();
-
     private readonly ISyncControlService _sync;
     private readonly SyncStatusTracker _syncStatus;
     private readonly IDownloaderResolver _downloaders;
@@ -97,8 +92,8 @@ public sealed class UiStatusService
         var counts = await _jobs.CountByStatusAsync(cancellationToken).ConfigureAwait(false);
 
         return new UiStatus(
-            AppVersion,
-            ProcessStartedAt,
+            AppInfo.Version,
+            AppInfo.StartedAt,
             _timeProvider.GetUtcNow(),
             new UiSyncStatus(sync.AutoSyncEnabled, sync.IntervalSeconds, sync.IsSyncing, cycle?.StartedAt, cycle?.FinishedAt, cycle?.Error),
             downloaders,
@@ -106,23 +101,5 @@ public sealed class UiStatusService
             new UiStorageStatus(_storage.CheckedAt, _storage.Problems, _storage.Unchecked),
             Enum.GetValues<JobStatus>().ToDictionary(s => s.ToName(), s => counts.GetValueOrDefault(s)),
             !string.IsNullOrWhiteSpace(_mcp.CurrentValue.ApiKey));
-    }
-
-    private static string ReadVersion()
-    {
-        var assembly = Assembly.GetEntryAssembly() ?? typeof(UiStatusService).Assembly;
-        var version = assembly.GetCustomAttribute<AssemblyInformationalVersionAttribute>()?.InformationalVersion
-                      ?? assembly.GetName().Version?.ToString()
-                      ?? "unknown";
-
-        // The SDK appends "+<full commit hash>"; a short hash is enough to tell builds apart.
-        var plus = version.IndexOf('+');
-        return plus < 0 || version.Length - plus <= 8 ? version : version[..(plus + 8)];
-    }
-
-    private static DateTimeOffset ReadStartTime()
-    {
-        using var process = Process.GetCurrentProcess();
-        return new DateTimeOffset(process.StartTime.ToUniversalTime(), TimeSpan.Zero);
     }
 }

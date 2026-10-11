@@ -7,6 +7,7 @@ export const tabs = [
   { id: "data", label: "Database" },
   { id: "webhooks", label: "Webhooks" },
   { id: "rules", label: "Rules" },
+  { id: "about", label: "About" },
 ] as const;
 
 export type TabId = (typeof tabs)[number]["id"];

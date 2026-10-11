@@ -340,20 +340,10 @@ public sealed class SearchService
             return (selected, rejected);
         }
 
-        if (category.Sources is { Count: > 0 } configured)
-        {
-            foreach (var id in configured.Distinct(StringComparer.OrdinalIgnoreCase))
-            {
-                if (Find(id) is { } source)
-                    selected.Add(source);
-                else
-                    _logger.LogWarning("Category '{Category}' lists source '{Source}', which is missing or disabled; skipped.", category.Id, id);
-            }
+        selected.AddRange(CategorySources.Resolve(category, all, out var skipped));
+        foreach (var id in skipped)
+            _logger.LogWarning("Category '{Category}' lists source '{Source}', which is missing or disabled; skipped.", category.Id, id);
 
-            return (selected, rejected);
-        }
-
-        selected.AddRange(all.Where(s => s.Status != SourceStatus.Disabled).OrderBy(s => s.Name, StringComparer.OrdinalIgnoreCase));
         return (selected, rejected);
     }
 
