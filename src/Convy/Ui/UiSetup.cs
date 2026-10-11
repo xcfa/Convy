@@ -13,6 +13,7 @@ using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.AspNetCore.Routing;
 using Microsoft.Data.Sqlite;
+using Microsoft.Extensions.Caching.Memory;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging;
@@ -35,6 +36,9 @@ public static class UiSetup
 
     private const string CookieScheme = CookieAuthenticationDefaults.AuthenticationScheme;
     private const string OidcScheme = OpenIdConnectDefaults.AuthenticationScheme;
+
+    /// <summary>How long a sign-in at the provider may take; its correlation and nonce cookies expire then.</summary>
+    private static readonly TimeSpan SignInTimeout = TimeSpan.FromMinutes(10);
 
     public static void AddConvyUi(this WebApplicationBuilder builder, string? connectionString)
     {
@@ -173,6 +177,12 @@ public static class UiSetup
             dataProtection.PersistKeysToFileSystem(keys);
         }
 
+        // The sign-in state stays on the server; only a short key travels in the URLs.
+        builder.Services.AddMemoryCache();
+        builder.Services
+            .AddOptions<OpenIdConnectOptions>(OidcScheme)
+            .Configure<IMemoryCache>((options, cache) => options.StateDataFormat = new ServerSideStateFormat(cache, SignInTimeout));
+
         builder.Services
             .AddAuthentication(authentication =>
             {
@@ -235,6 +245,26 @@ public static class UiSetup
                 options.TokenValidationParameters.RoleClaimType = "groups";
                 options.SaveTokens = false;
                 options.DisableTelemetry = true;
+                options.RemoteAuthenticationTimeout = SignInTimeout;
+
+                options.Events.OnMessageReceived = context =>
+                {
+                    // Sign-in attempts that never came back (cancelled, or refused on the way)
+                    // leave their correlation and nonce cookies behind until they expire, and the
+                    // browser sends all of them with every callback. Drop them here; this
+                    // attempt's own cookies are still read from the request.
+                    var path = context.Request.PathBase.Add(context.Options.CallbackPath).Value;
+                    foreach (var name in context.Request.Cookies.Keys)
+                    {
+                        if (name.StartsWith(context.Options.CorrelationCookie.Name!, StringComparison.Ordinal)
+                            || name.StartsWith(context.Options.NonceCookie.Name!, StringComparison.Ordinal))
+                        {
+                            context.Response.Cookies.Delete(name, new CookieOptions { Path = path, HttpOnly = true });
+                        }
+                    }
+
+                    return Task.CompletedTask;
+                };
 
                 options.Events.OnRedirectToIdentityProvider = context =>
                 {

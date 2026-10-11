@@ -604,6 +604,17 @@ Things that commonly go wrong:
 - **Convy must reach Authelia by its public URL** (discovery, keys, token exchange) and
   trust its certificate. Inside Docker, give the reverse proxy a network alias for the
   Authelia host name.
+- **Forward auth in front of Convy** (nginx `auth_request` / Traefik `forwardAuth` to
+  Authelia) is a second sign-in on top of Convy's own. Pick one: either leave the Convy host
+  out of forward auth (Convy signs users in itself), or keep forward auth and run Convy with
+  `UI__AUTH=none`. With both, the proxy checks `/signin-oidc` too and sends Authelia the
+  callback URL and the cookies; if that request outgrows Authelia's read buffer (`small read
+  buffer. Increase ReadBufferSize` in its log, `auth request unexpected status: 431` in
+  nginx's), the browser gets a 500. Convy keeps that request small — the `state` parameter
+  is a short key (the sign-in state stays on the server) and every callback clears the
+  cookies of earlier, abandoned sign-ins — but `server.buffers.read` in Authelia can also be
+  raised. Either way, keep `/mcp`, `/sync` and `/health` out of forward auth: the agent and
+  hooks cannot sign in.
 
 Sessions last 12 hours (sliding). The keys that protect the session cookie are stored next
 to the database in `keys/` (e.g. `/var/lib/convy/keys`), so keep that directory on the
