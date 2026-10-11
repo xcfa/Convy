@@ -75,6 +75,14 @@ namespace Convy.Services.Rules
                     _logger.LogInformation(
                         "Loaded {Count} routing rule(s) from '{Path}' (version {Version}).",
                         mappings.Rules.Count, _path, _current.Version);
+
+                    var catchAll = mappings.Rules.ToList().FindIndex(r => r.MatchesEverything);
+                    if (catchAll >= 0 && catchAll < mappings.Rules.Count - 1)
+                    {
+                        _logger.LogWarning(
+                            "Rule #{Index} has an empty condition and matches everything; the {Count} rule(s) after it are never used.",
+                            catchAll + 1, mappings.Rules.Count - catchAll - 1);
+                    }
                 }
                 catch (FilterParseException ex)
                 {

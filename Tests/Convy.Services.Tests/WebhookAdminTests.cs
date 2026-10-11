@@ -236,6 +236,28 @@ public sealed class RulesViewServiceTests : IDisposable
     }
 
     [Fact]
+    public async Task MarksTheCatchAllAndTheRulesItHides()
+    {
+        File.WriteAllText(_path,
+            """
+            rules:
+              - condition: "Category == Music"
+                path: /m
+              - condition: ""
+                path: /all
+              - condition: "Size > 0"
+                path: /never
+            """);
+        var provider = new RulesProvider(_path, NullLogger<RulesProvider>.Instance);
+
+        var view = await new RulesViewService(provider, provider).GetAsync(CancellationToken.None);
+
+        Assert.Equal([false, true, false], view.Rules.Select(r => r.MatchesEverything));
+        Assert.Equal([false, false, true], view.Rules.Select(r => r.Unreachable));
+        Assert.Equal("", view.Rules[1].Condition);
+    }
+
+    [Fact]
     public async Task AMissingFileHasNoTextAndNoRules()
     {
         var provider = new RulesProvider(_path, NullLogger<RulesProvider>.Instance);

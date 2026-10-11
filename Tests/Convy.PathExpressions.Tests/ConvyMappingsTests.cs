@@ -117,6 +117,65 @@ public class ConvyMappingsTests
               - path: /data/media/movies
             """));
         Assert.Contains("Rule #1", ex.Message);
+        Assert.Contains("condition: \"\"", ex.Message);
+    }
+
+    [Fact]
+    public void AMisspeltConditionKeyIsNotACatchAll()
+    {
+        var ex = Assert.Throws<FilterParseException>(() => ConvyMappings.ParseYaml(
+            """
+            rules:
+              - conditon: "Category == Movies"
+                path: /data/media/movies
+            """));
+        Assert.Contains("'condition' is required", ex.Message);
+    }
+
+    [Theory]
+    [InlineData("condition: \"\"")]
+    [InlineData("condition: \"   \"")]
+    [InlineData("condition:")]
+    [InlineData("condition: ''")]
+    public void AnEmptyConditionMatchesEverything(string condition)
+    {
+        var mappings = ConvyMappings.ParseYaml(
+            $"""
+            rules:
+              - name: movies
+                condition: "Category == Movies"
+                path: /data/media/movies
+              - name: everything else
+                {condition}
+                path: /data/media/other
+            """);
+
+        var catchAll = mappings.Rules[1];
+        Assert.True(catchAll.MatchesEverything);
+        Assert.Equal("", catchAll.RawCondition);
+        Assert.Empty(catchAll.ReferencedProperties);
+        Assert.False(mappings.Rules[0].MatchesEverything);
+
+        Assert.Equal("/data/media/other", mappings.Resolve(Anime()));
+        Assert.Equal("/data/media/movies", mappings.Resolve(new Dictionary<string, object?> { ["Category"] = "Movies" }));
+        // Even an item with none of the properties other rules use (e.g. a Soulseek download).
+        Assert.Equal("/data/media/other", mappings.Resolve(new Dictionary<string, object?> { ["Provider"] = "slskd" }));
+        Assert.Equal("/data/media/other", mappings.Resolve(new Dictionary<string, object?>()));
+    }
+
+    [Fact]
+    public void RulesAfterACatchAllAreNeverReached()
+    {
+        var mappings = ConvyMappings.ParseYaml(
+            """
+            rules:
+              - condition: ""
+                path: /data/media/all
+              - condition: "Tags.Contains(anime)"
+                path: /data/media/anime
+            """);
+
+        Assert.Equal("/data/media/all", mappings.Resolve(Anime()));
     }
 
     [Fact]

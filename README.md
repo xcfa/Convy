@@ -81,10 +81,19 @@ rules:
   - name: soulseek-other                          # Soulseek downloads not placed above
     condition: "Provider == slskd"
     path: /data/media/soulseek
+  - name: everything-else                         # catch-all: an empty condition matches everything
+    condition: ""
+    path: /data/media/unsorted
 ```
 
 The optional `name` on a rule lets you scope webhooks to specific rules — see
 [Webhooks](#webhooks).
+
+An **empty condition** (`condition: ""`, or `condition:` with no value) matches every
+download, from any client, so a catch-all rule at the end of the list places everything the
+rules above did not. The key itself must be there: a rule without `condition` (or with a
+misspelt key) is an error, never a silent catch-all. Rules after a catch-all are never used;
+Convy logs a warning, and the Rules page of the web UI marks them.
 
 ### Conditions
 

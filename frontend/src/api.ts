@@ -162,6 +162,10 @@ export interface Rule {
   condition: string;
   path: string;
   properties: string[];
+  /** Empty condition: the rule matches every item. */
+  matches_everything: boolean;
+  /** An earlier rule matches everything, so this one is never used. */
+  unreachable: boolean;
 }
 
 export interface RulesView {

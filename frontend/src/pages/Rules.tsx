@@ -51,11 +51,26 @@ export function Rules() {
               </thead>
               <tbody>
                 {data.rules.map((rule, i) => (
-                  <tr key={i}>
+                  <tr key={i} className={rule.unreachable ? "unreachable" : undefined}>
                     <td className="num muted">{i + 1}</td>
-                    <td>{rule.name ?? <span className="muted">—</span>}</td>
+                    <td>
+                      {rule.name ?? <span className="muted">—</span>}
+                      {rule.unreachable && (
+                        <div>
+                          <Badge tone="warn" title="An earlier rule matches everything">
+                            never used
+                          </Badge>
+                        </div>
+                      )}
+                    </td>
                     <td className="wrap code-inline">
-                      <Tokens tokens={highlightCondition(rule.condition)} />
+                      {rule.matches_everything ? (
+                        <Badge tone="info" title="Empty condition">
+                          everything
+                        </Badge>
+                      ) : (
+                        <Tokens tokens={highlightCondition(rule.condition)} />
+                      )}
                     </td>
                     <td className="wrap mono small">{rule.path}</td>
                     <td className="wrap">

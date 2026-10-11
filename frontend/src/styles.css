@@ -879,6 +879,10 @@ pre.code.small {
   opacity: 0.7;
 }
 
+tr.unreachable td {
+  opacity: 0.55;
+}
+
 .code-inline {
   font-family: var(--mono);
   font-size: 12.5px;

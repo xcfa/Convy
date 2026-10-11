@@ -19,11 +19,15 @@ public sealed record RulesView(
     [property: JsonPropertyName("error")] string? Error,
     [property: JsonPropertyName("error_at")] DateTimeOffset? ErrorAt);
 
+/// <param name="MatchesEverything">The rule has an empty condition (a catch-all).</param>
+/// <param name="Unreachable">An earlier rule matches everything, so this one is never used.</param>
 public sealed record RuleDto(
     [property: JsonPropertyName("name")] string? Name,
     [property: JsonPropertyName("condition")] string Condition,
     [property: JsonPropertyName("path")] string Path,
-    [property: JsonPropertyName("properties")] IReadOnlyList<string> Properties);
+    [property: JsonPropertyName("properties")] IReadOnlyList<string> Properties,
+    [property: JsonPropertyName("matches_everything")] bool MatchesEverything,
+    [property: JsonPropertyName("unreachable")] bool Unreachable);
 
 /// <summary>Shows the routing rules in the web UI.</summary>
 public sealed class RulesViewService
@@ -53,8 +57,15 @@ public sealed class RulesViewService
             text = await File.ReadAllTextAsync(path, cancellationToken).ConfigureAwait(false);
         }
 
+        var catchAll = snapshot.Mappings.Rules.ToList().FindIndex(r => r.MatchesEverything);
         var rules = snapshot.Mappings.Rules
-            .Select(r => new RuleDto(r.Name, r.RawCondition, r.OutputPath, r.ReferencedProperties.Order(StringComparer.Ordinal).ToList()))
+            .Select((r, i) => new RuleDto(
+                r.Name,
+                r.RawCondition,
+                r.OutputPath,
+                r.ReferencedProperties.Order(StringComparer.Ordinal).ToList(),
+                r.MatchesEverything,
+                catchAll >= 0 && i > catchAll))
             .ToList();
 
         return new RulesView(path, file.Exists, text, snapshot.Version, rules, _diagnostics.LastError, _diagnostics.LastErrorAt);
