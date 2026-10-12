@@ -303,28 +303,20 @@ by slskd, books from OPDS catalogs by Convy itself.
 | `HTTPS_PROXY`, `HTTP_PROXY`, `ALL_PROXY`, `NO_PROXY` | Optional proxy for Convy's outgoing requests, see below. |
 
 **Outgoing proxy.** Every request Convy makes (OPDS catalogs, Prowlarr, slskd, qBittorrent,
-webhooks, the sign-in provider) uses the standard proxy variables, read the way curl, Go and
-most tools read them (.NET's own reading of `NO_PROXY` is narrower, so Convy reads it itself):
+webhooks, the sign-in provider) uses the standard proxy variables as .NET reads them:
 
-- `HTTPS_PROXY` is for `https://` addresses and `HTTP_PROXY` for `http://` ones; `ALL_PROXY`
-  covers both. With only `HTTP_PROXY` set, Flibusta (`https://`) is reached directly. Lower-case
-  names work too and win over upper-case ones.
-- A proxy is `http://host:port` (the scheme may be left out), `https://`, `socks4://` or
-  `socks5://` (`socks5h://` is the same); `user:password@` in it is sent to the proxy.
-- `NO_PROXY` lists what is reached directly, separated by commas:
-  - `example.org`, `.example.org` and `*.example.org`: the domain and all its subdomains;
-  - `10.0.0.5`, `172.16.0.0/12`, `fd00::/8`: an address or a range of addresses (a host name
-    is not resolved to match a range, so list the names Convy uses, e.g. `prowlarr`);
-  - any of these with `:port`, e.g. `example.org:8080`: only that port;
-  - `*`: nothing goes through the proxy.
-- `localhost` and loopback addresses are never proxied.
-- Prowlarr, slskd and qBittorrent are usually reached by container name, so list them, or the
-  proxy will be asked for them too: `NO_PROXY=prowlarr,slskd,qbittorrent,*.example.org`.
+- `HTTPS_PROXY` is for `https://` addresses and `HTTP_PROXY` only for `http://` ones; `ALL_PROXY`
+  covers both. With only `HTTP_PROXY` set, Flibusta (`https://`) is reached directly.
+- `NO_PROXY` lists what is reached directly, and .NET understands only **exact host names and
+  addresses** and **`.domain` suffixes** (`.example.org` matches `example.org` and every
+  subdomain). `*.example.org`, `*` and ranges such as `172.16.0.0/12` are ignored, and
+  `example.org` without the dot matches only that host.
+- Prowlarr, slskd and qBittorrent are usually reached by container name, so list them, or a set
+  proxy will be asked for them too: `NO_PROXY=localhost,prowlarr,slskd,qbittorrent,.example.org`.
 - A catalog's own `proxy` (see [OPDS catalogs](#opds-catalogs-flibusta)) replaces the environment's
   for that catalog.
 
-The proxy in effect is logged at start and shown on the About page, with anything that could not
-be read (a malformed proxy address, a `NO_PROXY` entry such as `10.0.0.0/40`).
+The About page shows the proxy in effect and flags the `NO_PROXY` entries .NET ignores.
 
 `/mcp` is also subject to the IP allow-list. Example opencode configuration:
 

@@ -213,8 +213,8 @@ export interface AboutProxy {
   http: string | null;
   https: string | null;
   no_proxy: string | null;
-  /** What could not be read: a proxy that is not an address, NO_PROXY entries. */
-  problems: string[];
+  /** NO_PROXY entries .NET ignores (*.domain, *, CIDR ranges). */
+  no_proxy_ignored: string[];
 }
 
 export interface AboutInfo {

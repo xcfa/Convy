@@ -8,7 +8,6 @@ using Convy.Services.Downloaders.QBittorrent;
 using Convy.Services.Downloaders.Slskd;
 using Convy.Services.Downloads;
 using Convy.Services.Files;
-using Convy.Services.Http;
 using Convy.Services.Jobs;
 using Convy.Services.Media;
 using Convy.Services.Storage;
@@ -64,15 +63,6 @@ public class Program
 		Log.Logger = new LoggerConfiguration()
 			.WriteTo.Console(outputTemplate: ConsoleOutputTemplate)
 			.CreateBootstrapLogger();
-
-		// .NET reads NO_PROXY narrowly (exact hosts and .domain only, no *.domain, * or address
-		// ranges); every HTTP client of Convy uses the common reading instead. Set before any
-		// client sends its first request.
-		var environmentProxy = EnvironmentProxy.FromEnvironment(Environment.GetEnvironmentVariable, out var proxyProblems);
-		if (environmentProxy is not null)
-		{
-			HttpClient.DefaultProxy = environmentProxy;
-		}
 
 		var builder = WebApplication.CreateBuilder(args);
 
@@ -356,19 +346,6 @@ public class Program
 		}
 
 		await app.Services.GetRequiredService<WebhookCatalog>().ReloadAsync(CancellationToken.None);
-
-		if (environmentProxy is not null)
-		{
-			app.Logger.LogInformation(
-				"Outgoing requests use the proxy {HttpsProxy} for https and {HttpProxy} for http, except NO_PROXY.",
-				environmentProxy.HttpsProxy?.GetLeftPart(UriPartial.Authority) ?? "none",
-				environmentProxy.HttpProxy?.GetLeftPart(UriPartial.Authority) ?? "none");
-		}
-
-		foreach (var problem in proxyProblems)
-		{
-			app.Logger.LogWarning("Proxy settings: {Problem}", problem);
-		}
 
 		foreach (var problem in opdsProblems)
 		{
