@@ -6,8 +6,6 @@ namespace Convy.Sources.Opds;
 /// <summary>Offers every configured OPDS catalog as a source, id <c>opds:&lt;catalog id&gt;</c>.</summary>
 public sealed class OpdsSourceProvider : ISourceProvider
 {
-    private static readonly TimeSpan ProbeTimeout = TimeSpan.FromSeconds(20);
-
     private readonly OpdsCatalogs _catalogs;
     private readonly ILogger<OpdsSource> _logger;
 
@@ -21,21 +19,23 @@ public sealed class OpdsSourceProvider : ISourceProvider
 
     public async Task<IReadOnlyList<IContentSource>> GetSourcesAsync(CancellationToken cancellationToken)
     {
-        var sources = new List<IContentSource>(_catalogs.All.Count);
-        foreach (var client in _catalogs.All)
+        // Probed together: one slow catalog does not hold up the others.
+        return await Task.WhenAll(_catalogs.All.Select(async client =>
         {
             var (status, message) = await ProbeAsync(client, cancellationToken).ConfigureAwait(false);
-            sources.Add(new OpdsSource(client, status, message, _logger));
-        }
-
-        return sources;
+            return (IContentSource)new OpdsSource(client, status, message, _logger);
+        })).ConfigureAwait(false);
     }
 
-    /// <summary>Reads the root feed: the catalog is up when it answers with a feed.</summary>
+    /// <summary>
+    /// Reads the root feed: the catalog is up when it answers with a feed. Allowed as long as a
+    /// search (<c>timeout_sec</c>): a slow mirror is slow, not down, and the sources are listed in
+    /// the background, so nobody waits for the probe.
+    /// </summary>
     private static async Task<(SourceStatus, string?)> ProbeAsync(OpdsClient client, CancellationToken cancellationToken)
     {
         using var deadline = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
-        deadline.CancelAfter(ProbeTimeout);
+        deadline.CancelAfter(client.Catalog.Timeout);
         try
         {
             await client.GetFeedAsync(client.Catalog.Url, deadline.Token).ConfigureAwait(false);
@@ -47,7 +47,7 @@ public sealed class OpdsSourceProvider : ISourceProvider
         }
         catch (OperationCanceledException) when (!cancellationToken.IsCancellationRequested)
         {
-            return (SourceStatus.Error, $"{client.Catalog.Name} did not answer within {ProbeTimeout.TotalSeconds:0} s.");
+            return (SourceStatus.Error, $"{client.Catalog.Name} did not answer within {client.Catalog.Timeout.TotalSeconds:0} s.");
         }
     }
 }

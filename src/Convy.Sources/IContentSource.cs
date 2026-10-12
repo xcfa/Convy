@@ -140,4 +140,28 @@ public sealed class SourceException : Exception
     }
 
     public SourceErrorKind Kind { get; }
+
+    /// <summary>
+    /// "<paramref name="what"/> is unreachable: …" with the causes of <paramref name="failure"/>
+    /// spelled out: .NET's own message often only says "see inner exception", which hides
+    /// whether the TLS handshake, the proxy or the name lookup failed.
+    /// </summary>
+    public static SourceException Unreachable(string what, HttpRequestException failure)
+    {
+        var causes = new List<string>();
+        for (Exception? e = failure; e is not null; e = e.InnerException)
+        {
+            var message = e.Message
+                .Replace(", see inner exception.", "", StringComparison.Ordinal)
+                .Replace(" See the inner exception for details.", "", StringComparison.Ordinal)
+                .Trim()
+                .TrimEnd('.');
+            if (message.Length > 0 && !causes.Any(c => c.Contains(message, StringComparison.Ordinal)))
+            {
+                causes.Add(message);
+            }
+        }
+
+        return new SourceException(SourceErrorKind.Error, $"{what} is unreachable: {string.Join(": ", causes)}.", failure);
+    }
 }

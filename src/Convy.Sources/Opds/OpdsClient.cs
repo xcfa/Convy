@@ -125,7 +125,7 @@ public sealed class OpdsClient : IDisposable
         }
         catch (HttpRequestException ex)
         {
-            throw new SourceException(SourceErrorKind.Error, $"{Catalog.Name} is unreachable: {ex.Message}", ex);
+            throw SourceException.Unreachable(Catalog.Name, ex);
         }
 
         if (response.IsSuccessStatusCode)

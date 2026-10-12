@@ -227,7 +227,7 @@ public sealed class SlskdClient : IDisposable
         }
         catch (HttpRequestException ex)
         {
-            throw new SourceException(SourceErrorKind.Error, $"slskd is unreachable: {ex.Message}", ex);
+            throw SourceException.Unreachable("slskd", ex);
         }
 
         using (response)

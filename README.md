@@ -300,6 +300,23 @@ by slskd, books from OPDS catalogs by Convy itself.
 | `SLSKD__URL`, `SLSKD__APIKEY` | slskd connection. Without them there is no Soulseek source and no slskd downloader. |
 | `SLSKD__DOWNLOADSPATH` | Optional: slskd's downloads directory as seen inside Convy, when it differs from slskd's own `directories.downloads`. |
 | `TORRENTMETADATA__CACHEDIRECTORY`, `TORRENTMETADATA__DHTPORT` | Optional: DHT cache directory and UDP port (0 = any) used to read magnet metadata. |
+| `HTTPS_PROXY`, `HTTP_PROXY`, `ALL_PROXY`, `NO_PROXY` | Optional proxy for Convy's outgoing requests, see below. |
+
+**Outgoing proxy.** Every request Convy makes (OPDS catalogs, Prowlarr, slskd, qBittorrent,
+webhooks, the sign-in provider) uses the standard proxy variables as .NET reads them:
+
+- `HTTPS_PROXY` is for `https://` addresses and `HTTP_PROXY` only for `http://` ones; `ALL_PROXY`
+  covers both. With only `HTTP_PROXY` set, Flibusta (`https://`) is reached directly.
+- `NO_PROXY` lists what is reached directly, and .NET understands only **exact host names and
+  addresses** and **`.domain` suffixes** (`.example.org` matches `example.org` and every
+  subdomain). `*.example.org`, `*` and ranges such as `172.16.0.0/12` are ignored, and
+  `example.org` without the dot matches only that host.
+- Prowlarr, slskd and qBittorrent are usually reached by container name, so list them, or a set
+  proxy will be asked for them too: `NO_PROXY=localhost,prowlarr,slskd,qbittorrent,.example.org`.
+- A catalog's own `proxy` (see [OPDS catalogs](#opds-catalogs-flibusta)) replaces the environment's
+  for that catalog.
+
+The About page shows the proxy in effect and flags the `NO_PROXY` entries .NET ignores.
 
 `/mcp` is also subject to the IP allow-list. Example opencode configuration:
 
@@ -571,7 +588,8 @@ Convy serves a small web interface at `/`:
   language), next to the rules in effect and the properties each one reads. If the file
   cannot be loaded, the error is shown and the previous rules stay in effect. Read-only: edit
   the file to change the rules.
-- **About** — the version and commit, runtime and system, the search sources (status,
+- **About** — the version and commit, runtime and system, the outgoing proxy (see
+  [Connecting](#connecting)), the search sources (status,
   protocol, the downloader of their results, request timeout, and which categories search
   each one and in what place), with warnings for what keeps search from working: a provider
   that cannot list its sources, a category listing an unknown or disabled source, a category
@@ -580,6 +598,10 @@ Convy serves a small web interface at `/`:
   the order they apply, and Convy's settings as they are in effect with the source of each
   (`configuration.yml`, environment, Docker secret, …). Passwords, API keys, secrets and
   credentials inside URLs are hidden; "Copy for a bug report" copies all of it as text.
+
+The Overview and About pages never wait for Prowlarr, slskd or a catalog: Convy lists the search sources in the
+background, right after a start and then whenever the list is older than five minutes, and the
+pages show the last list (for a few seconds after a start, "Listing the sources…").
 
 The UI is **off until sign-in is configured**. Users sign in with OpenID Connect; Convy is
 tested against Authelia's behaviour, but any provider with the authorization-code flow works.

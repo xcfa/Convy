@@ -308,7 +308,10 @@ public class Program
 			builder.Services.AddHostedService<OpdsDownloadWorker>();
 		}
 
-		builder.Services.AddSingleton<ISourceRegistry, SourceRegistry>();
+		// Sources are listed in the background, so pages and searches never wait for the providers.
+		builder.Services.AddSingleton<SourceRegistry>();
+		builder.Services.AddSingleton<ISourceRegistry>(sp => sp.GetRequiredService<SourceRegistry>());
+		builder.Services.AddHostedService<SourceRefreshWorker>();
 		builder.Services.AddSingleton<CategoryCatalog>();
 		builder.Services.AddSingleton<ISearchCache, EfSearchCache>();
 		builder.Services.AddSingleton<SearchService>();

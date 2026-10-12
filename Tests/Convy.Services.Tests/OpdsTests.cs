@@ -467,3 +467,30 @@ public sealed class OpdsDownloaderTests : IDisposable
             _downloader.AddAsync(Book(), new FileSelection(["other.pdf"]), new AddOptions(null), CancellationToken.None));
     }
 }
+
+public class SourceExceptionTests
+{
+    [Fact]
+    public void UnreachableSpellsOutWhatTheInnerExceptionsSay()
+    {
+        var tls = new HttpRequestException(
+            "The SSL connection could not be established, see inner exception.",
+            new IOException("Received an unexpected EOF or 0 bytes from the transport stream."));
+
+        Assert.Equal(
+            "Flibusta is unreachable: The SSL connection could not be established: Received an unexpected EOF or 0 bytes from the transport stream.",
+            SourceException.Unreachable("Flibusta", tls).Message);
+    }
+
+    [Fact]
+    public void UnreachableDoesNotRepeatACauseTheMessageAlreadyHas()
+    {
+        var refused = new HttpRequestException(
+            "Connection refused (prowlarr:9696)", new System.Net.Sockets.SocketException(111));
+
+        var message = SourceException.Unreachable("Prowlarr", refused).Message;
+
+        Assert.StartsWith("Prowlarr is unreachable: Connection refused (prowlarr:9696)", message);
+        Assert.Equal(SourceErrorKind.Error, SourceException.Unreachable("Prowlarr", refused).Kind);
+    }
+}

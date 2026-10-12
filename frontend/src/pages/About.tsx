@@ -1,5 +1,5 @@
-import { useMemo, useState } from "react";
-import { api, type AboutInfo, type AboutPath, type AboutSearchSource } from "../api";
+import { useEffect, useMemo, useState } from "react";
+import { api, type AboutInfo, type AboutPath, type AboutProxy, type AboutSearchSource } from "../api";
 import { Badge, Card, Empty, ErrorBanner } from "../components";
 import { ago, dateTimeText } from "../format";
 import { usePolling } from "../usePolling";
@@ -11,7 +11,10 @@ const authLabel: Record<AboutInfo["ui_auth"], string> = {
 };
 
 export function About() {
-  const { data, error } = usePolling(api.about, 0);
+  // Right after a start the sources may not be listed yet: ask again until they are.
+  const [listing, setListing] = useState(false);
+  const { data, error } = usePolling(api.about, listing ? 3000 : 0);
+  useEffect(() => setListing(data?.search_sources === null), [data]);
   const [filter, setFilter] = useState("");
   const [copied, setCopied] = useState(false);
 
@@ -81,6 +84,10 @@ export function About() {
             <dd>{data.mcp_enabled ? <Badge tone="ok">enabled</Badge> : <Badge tone="neutral">off</Badge>}</dd>
             <dt>Downloaders</dt>
             <dd>{data.downloaders.join(", ") || "—"}</dd>
+            <dt>Outgoing proxy</dt>
+            <dd>
+              <ProxyFacts proxy={data.proxy} />
+            </dd>
             <dt>Content root</dt>
             <dd className="mono small wrap-anywhere">{data.content_root}</dd>
           </dl>
@@ -144,7 +151,33 @@ export function About() {
   );
 }
 
-function SearchSourcesCard({ sources, warnings }: { sources: AboutSearchSource[]; warnings: string[] }) {
+function ProxyFacts({ proxy }: { proxy: AboutProxy }) {
+  if (!proxy.http && !proxy.https) {
+    return <span>none (direct)</span>;
+  }
+
+  return (
+    <>
+      <div className="mono small wrap-anywhere">https: {proxy.https ?? "direct"}</div>
+      <div className="mono small wrap-anywhere">http: {proxy.http ?? "direct"}</div>
+      {proxy.no_proxy && <div className="mono small wrap-anywhere">no proxy: {proxy.no_proxy}</div>}
+      {proxy.no_proxy_ignored.length > 0 && (
+        <div className="small wrap-anywhere">
+          <Badge tone="warn" title=".NET matches exact hosts and addresses and .domain suffixes only">
+            ignored
+          </Badge>{" "}
+          <span className="mono">{proxy.no_proxy_ignored.join(", ")}</span> — these hosts still go through the proxy;
+          use <span className="mono">.domain</span> and list addresses one by one.
+        </div>
+      )}
+      {!proxy.https && (
+        <div className="small muted">https:// addresses (Flibusta, …) go direct: set HTTPS_PROXY, HTTP_PROXY covers only http://.</div>
+      )}
+    </>
+  );
+}
+
+function SearchSourcesCard({ sources, warnings }: { sources: AboutSearchSource[] | null; warnings: string[] }) {
   return (
     <Card title="Search sources">
       <p className="muted small">
@@ -160,7 +193,9 @@ function SearchSourcesCard({ sources, warnings }: { sources: AboutSearchSource[]
           </ul>
         </div>
       )}
-      {sources.length === 0 ? (
+      {sources === null ? (
+        <Empty>Listing the sources…</Empty>
+      ) : sources.length === 0 ? (
         <Empty>No source is configured (Prowlarr, slskd, OPDS catalogs).</Empty>
       ) : (
         <div className="table-wrap">
@@ -280,14 +315,18 @@ function report(about: AboutInfo): string {
     `Convy ${about.informational_version}`,
     `${about.runtime}, ${about.os} (${about.architecture}), ${about.environment}`,
     `Web UI: ${about.ui_auth}; MCP: ${about.mcp_enabled ? "on" : "off"}; downloaders: ${about.downloaders.join(", ")}`,
+    `Proxy: https ${about.proxy.https ?? "direct"}, http ${about.proxy.http ?? "direct"}, no proxy ${about.proxy.no_proxy ?? "—"}` +
+      (about.proxy.no_proxy_ignored.length > 0 ? ` (ignored by .NET: ${about.proxy.no_proxy_ignored.join(", ")})` : ""),
     "",
     "Search sources:",
-    ...about.search_sources.map(
-      (s) =>
-        `  ${s.id} "${s.name}": ${s.protocol}, ${s.status}${s.message ? ` (${s.message})` : ""}, ` +
-        `downloader ${s.downloader ?? "none"}, timeout ${seconds(s.timeout_sec)}, ` +
-        `categories ${s.categories.map((c) => `${c.id}#${c.position}`).join(" ") || "none"}`,
-    ),
+    ...(about.search_sources === null
+      ? ["  (not listed yet)"]
+      : about.search_sources.map(
+          (s) =>
+            `  ${s.id} "${s.name}": ${s.protocol}, ${s.status}${s.message ? ` (${s.message})` : ""}, ` +
+            `downloader ${s.downloader ?? "none"}, timeout ${seconds(s.timeout_sec)}, ` +
+            `categories ${s.categories.map((c) => `${c.id}#${c.position}`).join(" ") || "none"}`,
+        )),
     ...about.search_warnings.map((w) => `  ! ${w}`),
     "",
     "Configuration sources:",
