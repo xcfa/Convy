@@ -166,7 +166,7 @@ public sealed class ProwlarrClient
             }
             catch (HttpRequestException ex)
             {
-                throw new SourceException(SourceErrorKind.Error, $"Prowlarr is unreachable: {ex.Message}", ex);
+                throw SourceException.Unreachable("Prowlarr", ex);
             }
         }
     }

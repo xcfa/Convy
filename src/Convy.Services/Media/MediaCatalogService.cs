@@ -1,4 +1,5 @@
 using Convy.Services.Jobs;
+using Convy.Sources;
 
 namespace Convy.Services.Media;
 
@@ -35,12 +36,17 @@ public sealed class MediaCatalogService
     public async Task<SourcesResponse> GetSourcesAsync(CancellationToken cancellationToken)
     {
         var sources = await _registry.GetSourcesAsync(cancellationToken).ConfigureAwait(false);
-
-        return new SourcesResponse(sources
-            .OrderBy(s => s.Name, StringComparer.OrdinalIgnoreCase)
-            .Select(s => new SourceDto(s.Id, s.Name, ProtocolNames.ToName(s.Protocol), SourceStatusNames.ToName(s.Status), s.StatusMessage))
-            .ToList());
+        return new SourcesResponse(ToDtos(sources));
     }
+
+    /// <summary>The sources as last listed, without waiting for a listing; <c>null</c> before the first one.</summary>
+    public IReadOnlyList<SourceDto>? TryGetSources() =>
+        _registry.TryGetSources(out var sources) ? ToDtos(sources) : null;
+
+    private static List<SourceDto> ToDtos(IReadOnlyList<IContentSource> sources) => sources
+        .OrderBy(s => s.Name, StringComparer.OrdinalIgnoreCase)
+        .Select(s => new SourceDto(s.Id, s.Name, ProtocolNames.ToName(s.Protocol), SourceStatusNames.ToName(s.Status), s.StatusMessage))
+        .ToList();
 
     public async Task<JobsResponse> GetJobsAsync(string? status, int? limit, CancellationToken cancellationToken)
     {

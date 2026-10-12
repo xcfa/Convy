@@ -40,7 +40,8 @@ export interface UiStatus {
     last_error: string | null;
   };
   downloaders: DownloaderStatus[];
-  sources: Source[];
+  /** null until the sources are first listed after a start. */
+  sources: Source[] | null;
   storage: { checked_at: string | null; problems: string[]; unchecked: string[] };
   jobs: Record<string, number>;
   mcp_enabled: boolean;
@@ -208,6 +209,14 @@ export interface AboutSearchSource {
   categories: AboutSourceCategory[];
 }
 
+export interface AboutProxy {
+  http: string | null;
+  https: string | null;
+  no_proxy: string | null;
+  /** NO_PROXY entries .NET ignores (*.domain, *, CIDR ranges). */
+  no_proxy_ignored: string[];
+}
+
 export interface AboutInfo {
   version: string;
   informational_version: string;
@@ -222,8 +231,10 @@ export interface AboutInfo {
   ui_auth: "oidc" | "none" | "off";
   mcp_enabled: boolean;
   downloaders: string[];
+  proxy: AboutProxy;
   paths: AboutPath[];
-  search_sources: AboutSearchSource[];
+  /** null until the sources are first listed after a start. */
+  search_sources: AboutSearchSource[] | null;
   search_warnings: string[];
   configuration_sources: AboutPath[];
   settings: AboutSetting[];

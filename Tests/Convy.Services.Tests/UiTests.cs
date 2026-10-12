@@ -433,6 +433,7 @@ public sealed class UiStatusServiceTests : IDisposable
 
         var registry = new SourceRegistry(
             [new StaticProvider(new FakeSource("prowlarr:1", "Rutracker"))], Media.Health(), _time, NullLogger<SourceRegistry>.Instance);
+        await registry.RefreshAsync(CancellationToken.None);
         var jobs = new JobService(
             new DownloaderResolver([qbittorrent]), new FakeRules(), store, new JobTransitions(store, new RecordingJobEvents()),
             new FakeFileSystem(), new StaticOptions<JobOptions>(new JobOptions()), _time, NullLogger<JobService>.Instance);
@@ -455,7 +456,7 @@ public sealed class UiStatusServiceTests : IDisposable
         Assert.Equal((false, "refused"), (status.Downloaders[0].Ok, status.Downloaders[0].Error));
         Assert.Null(status.Downloaders[1].LastSyncAt);
         Assert.Equal("soulseek", status.Downloaders[1].Protocol);
-        Assert.Equal("Rutracker", Assert.Single(status.Sources).Name);
+        Assert.Equal("Rutracker", Assert.Single(status.Sources!).Name);
         Assert.Equal(["/data/media is on another filesystem"], status.Storage.Problems);
         Assert.Equal(2, status.Jobs["downloading"]);
         Assert.Equal(1, status.Jobs["failed"]);

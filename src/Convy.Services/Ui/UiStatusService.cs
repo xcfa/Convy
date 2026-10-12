@@ -10,13 +10,14 @@ using Microsoft.Extensions.Options;
 namespace Convy.Services.Ui;
 
 /// <summary>Everything the overview page shows.</summary>
+/// <param name="Sources">The search sources; <c>null</c> until they are first listed after a start.</param>
 public sealed record UiStatus(
     [property: JsonPropertyName("version")] string Version,
     [property: JsonPropertyName("started_at")] DateTimeOffset StartedAt,
     [property: JsonPropertyName("now")] DateTimeOffset Now,
     [property: JsonPropertyName("sync")] UiSyncStatus Sync,
     [property: JsonPropertyName("downloaders")] IReadOnlyList<UiDownloaderStatus> Downloaders,
-    [property: JsonPropertyName("sources")] IReadOnlyList<SourceDto> Sources,
+    [property: JsonPropertyName("sources")] IReadOnlyList<SourceDto>? Sources,
     [property: JsonPropertyName("storage")] UiStorageStatus Storage,
     [property: JsonPropertyName("jobs")] IReadOnlyDictionary<string, int> Jobs,
     [property: JsonPropertyName("mcp_enabled")] bool McpEnabled);
@@ -88,7 +89,8 @@ public sealed class UiStatusService
                 : new UiDownloaderStatus(d.Provider, ProtocolNames.ToName(d.Protocol), null, null, null, null, null))
             .ToList();
 
-        var sources = await _catalog.GetSourcesAsync(cancellationToken).ConfigureAwait(false);
+        // Never waits for Prowlarr, slskd or a catalog: null until the sources are first listed.
+        var sources = _catalog.TryGetSources();
         var counts = await _jobs.CountByStatusAsync(cancellationToken).ConfigureAwait(false);
 
         return new UiStatus(
@@ -97,7 +99,7 @@ public sealed class UiStatusService
             _timeProvider.GetUtcNow(),
             new UiSyncStatus(sync.AutoSyncEnabled, sync.IntervalSeconds, sync.IsSyncing, cycle?.StartedAt, cycle?.FinishedAt, cycle?.Error),
             downloaders,
-            sources.Sources,
+            sources,
             new UiStorageStatus(_storage.CheckedAt, _storage.Problems, _storage.Unchecked),
             Enum.GetValues<JobStatus>().ToDictionary(s => s.ToName(), s => counts.GetValueOrDefault(s)),
             !string.IsNullOrWhiteSpace(_mcp.CurrentValue.ApiKey));

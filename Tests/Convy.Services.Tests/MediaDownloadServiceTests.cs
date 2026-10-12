@@ -302,31 +302,137 @@ public class McpApiKeyValidatorTests
 
 public class SourceRegistryTests
 {
+    private readonly FakeTime _time = new();
+
+    private SourceRegistry Registry(params ISourceProvider[] providers) =>
+        new(providers, Media.Health(), _time, NullLogger<SourceRegistry>.Instance);
+
     [Fact]
-    public async Task CachesForFiveMinutesAndKeepsLastKnownSourcesOnFailure()
+    public async Task ServesAnOldListingAtOnceAndListsAgainOnlyWhenRefreshed()
     {
-        var time = new FakeTime();
         var provider = new StaticProvider(new FakeSource("prowlarr:1"));
-        var registry = new SourceRegistry([provider], Media.Health(), time, NullLogger<SourceRegistry>.Instance);
+        using var registry = Registry(provider);
 
         await registry.GetSourcesAsync(CancellationToken.None);
         await registry.GetSourcesAsync(CancellationToken.None);
         Assert.Equal(1, provider.Calls);
-        Assert.Empty(registry.ProviderErrors);
 
-        time.Now += TimeSpan.FromMinutes(6);
-        provider.Failure = new HttpRequestException("down");
+        // Older than five minutes: still served, without asking the provider.
+        _time.Now += TimeSpan.FromMinutes(6);
+        provider.Sources.Add(new FakeSource("prowlarr:2"));
+        Assert.Equal(["prowlarr:1"], (await registry.GetSourcesAsync(CancellationToken.None)).Select(s => s.Id));
+        Assert.Equal(1, provider.Calls);
 
-        var sources = await registry.GetSourcesAsync(CancellationToken.None);
+        await registry.RefreshAsync(CancellationToken.None);
+        Assert.Equal(["prowlarr:1", "prowlarr:2"], (await registry.GetSourcesAsync(CancellationToken.None)).Select(s => s.Id));
+
+        // A fresh listing is not made again.
+        await registry.RefreshAsync(CancellationToken.None);
         Assert.Equal(2, provider.Calls);
-        Assert.Equal("prowlarr:1", Assert.Single(sources).Id);
-        Assert.NotNull(await registry.FindAsync("PROWLARR:1", CancellationToken.None));
-        Assert.Equal(new SourceProviderError("static", "down", 1), Assert.Single(registry.ProviderErrors));
+    }
 
-        time.Now += TimeSpan.FromMinutes(6);
-        provider.Failure = null;
+    [Fact]
+    public async Task TryGetSourcesNeverWaitsForAListing()
+    {
+        var provider = new StaticProvider(new FakeSource("prowlarr:1"));
+        using var registry = Registry(provider);
+
+        Assert.False(registry.TryGetSources(out _));
+        Assert.Equal(0, provider.Calls);
+
+        await registry.RefreshAsync(CancellationToken.None);
+        Assert.True(registry.TryGetSources(out var sources));
+        Assert.Equal("prowlarr:1", Assert.Single(sources).Id);
+    }
+
+    [Fact]
+    public async Task KeepsLastKnownSourcesWhileAProviderFails()
+    {
+        var provider = new StaticProvider(new FakeSource("prowlarr:1"));
+        using var registry = Registry(provider);
 
         await registry.GetSourcesAsync(CancellationToken.None);
         Assert.Empty(registry.ProviderErrors);
+
+        _time.Now += TimeSpan.FromMinutes(6);
+        provider.Failure = new HttpRequestException("down");
+        await registry.RefreshAsync(CancellationToken.None);
+
+        Assert.Equal("prowlarr:1", Assert.Single(await registry.GetSourcesAsync(CancellationToken.None)).Id);
+        Assert.NotNull(await registry.FindAsync("PROWLARR:1", CancellationToken.None));
+        Assert.Equal(new SourceProviderError("static", "down", 1), Assert.Single(registry.ProviderErrors));
+
+        _time.Now += TimeSpan.FromMinutes(6);
+        provider.Failure = null;
+        await registry.RefreshAsync(CancellationToken.None);
+
+        Assert.Empty(registry.ProviderErrors);
+    }
+
+    [Fact]
+    public async Task AsksAllProvidersAtOnce()
+    {
+        var first = new GatedProvider("first");
+        var second = new GatedProvider("second");
+        using var registry = Registry(first, second);
+
+        var listing = registry.GetSourcesAsync(CancellationToken.None);
+
+        // The second is asked while the first has not answered yet.
+        Assert.True(first.Asked && second.Asked);
+        second.Answer();
+        first.Answer();
+
+        Assert.Equal(["first:1", "second:1"], (await listing).Select(s => s.Id));
+    }
+
+    [Fact]
+    public async Task RunListsAtStartAndWhenSomeoneFindsTheListingOld()
+    {
+        var provider = new StaticProvider(new FakeSource("prowlarr:1"));
+        using var registry = Registry(provider);
+        using var stop = new CancellationTokenSource();
+
+        var run = registry.RunAsync(stop.Token);
+        await WaitUntil(() => provider.Calls == 1);
+
+        await registry.GetSourcesAsync(CancellationToken.None);
+        Assert.Equal(1, provider.Calls);
+
+        _time.Now += TimeSpan.FromMinutes(6);
+        await registry.GetSourcesAsync(CancellationToken.None);
+        await WaitUntil(() => provider.Calls == 2);
+
+        await stop.CancelAsync();
+        await run;
+    }
+
+    private static async Task WaitUntil(Func<bool> condition)
+    {
+        var deadline = DateTime.UtcNow + TimeSpan.FromSeconds(10);
+        while (!condition())
+        {
+            Assert.True(DateTime.UtcNow < deadline, "The condition was not met in time.");
+            await Task.Delay(10);
+        }
+    }
+
+    /// <summary>A provider that answers only when told to.</summary>
+    private sealed class GatedProvider(string name) : ISourceProvider
+    {
+        private readonly TaskCompletionSource _answer = new(TaskCreationOptions.RunContinuationsAsynchronously);
+
+        public bool Asked { get; private set; }
+
+        public string Name => name;
+
+        public void Answer() => _answer.SetResult();
+
+        public async Task<IReadOnlyList<IContentSource>> GetSourcesAsync(CancellationToken cancellationToken)
+        {
+            Asked = true;
+            await _answer.Task.WaitAsync(cancellationToken);
+            return [new FakeSource($"{name}:1")];
+        }
     }
 }

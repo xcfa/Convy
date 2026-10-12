@@ -77,22 +77,88 @@ public sealed class AboutServiceTests
         public DateTimeOffset? LastErrorAt => null;
     }
 
-    private static AboutService Service(
+    /// <summary>The About page's service, with the sources already listed unless <paramref name="listed"/> is false.</summary>
+    private static async Task<AboutService> Service(
         IConfigurationInspector inspector,
         UiOptions? ui = null,
         ISourceProvider? provider = null,
         Dictionary<string, CategoryOptions>? categories = null,
-        IReadOnlyList<IDownloader>? downloaders = null) =>
-        new(
+        IReadOnlyList<IDownloader>? downloaders = null,
+        bool listed = true)
+    {
+        var registry = new SourceRegistry([provider ?? new StaticProvider()], Media.Health(), new FakeTime(), NullLogger<SourceRegistry>.Instance);
+        if (listed)
+        {
+            await registry.RefreshAsync(CancellationToken.None);
+        }
+
+        return new AboutService(
             inspector,
             new FakeDiagnostics(),
             new DownloaderResolver(downloaders ?? [new FakeDownloader()]),
-            new SourceRegistry([provider ?? new StaticProvider()], Media.Health(), new FakeTime(), NullLogger<SourceRegistry>.Instance),
+            registry,
             Media.Catalog(categories ?? Media.Categories()),
             new StaticOptions<SearchOptions>(new SearchOptions { SourceTimeoutSeconds = 20 }),
             ui ?? new UiOptions(),
             new StaticOptions<McpOptions>(new McpOptions { ApiKey = "k" }),
             new FakeTime());
+    }
+
+    [Fact]
+    public async Task DoesNotWaitForTheSourcesToBeListed()
+    {
+        var provider = new StaticProvider(new FakeSource("prowlarr:1"));
+
+        var about = (await Service(new FakeInspector(), provider: provider, listed: false)).Get();
+
+        Assert.Null(about.SearchSources);
+        Assert.Empty(about.SearchWarnings);
+        Assert.Equal(0, provider.Calls);
+    }
+
+    [Theory]
+    [InlineData(null, null, null, null, null, null)]
+    [InlineData("http://proxy:3128", null, null, "http://proxy:3128", null, null)]
+    [InlineData("http://proxy:3128", "http://user:pa55@proxy:3128", "prowlarr,slskd", "http://proxy:3128", "http://user:••••••@proxy:3128", "prowlarr,slskd")]
+    public async Task ShowsTheProxyFromTheEnvironment(
+        string? http, string? https, string? noProxy, string? expectedHttp, string? expectedHttps, string? expectedNoProxy)
+    {
+        var inspector = new FakeInspector();
+        foreach (var (name, value) in new[] { ("HTTP_PROXY", http), ("HTTPS_PROXY", https), ("NO_PROXY", noProxy) })
+        {
+            if (value is not null)
+                inspector.Values.Add(new(name, value, "environment variables"));
+        }
+
+        var proxy = (await Service(inspector)).Get().Proxy;
+
+        Assert.Equal((expectedHttp, expectedHttps, expectedNoProxy), (proxy.Http, proxy.Https, proxy.NoProxy));
+        Assert.Empty(proxy.NoProxyIgnored);
+    }
+
+    [Fact]
+    public async Task PointsOutNoProxyEntriesThatDotNetIgnores()
+    {
+        var inspector = new FakeInspector();
+        inspector.Values.Add(new("HTTPS_PROXY", "http://mihomo:7890", "environment variables"));
+        inspector.Values.Add(new("NO_PROXY", "localhost, prowlarr, .bakuretsu.org, *.bakuretsu.org, 172.16.0.0/12, *", "environment variables"));
+
+        var proxy = (await Service(inspector)).Get().Proxy;
+
+        Assert.Equal(["*.bakuretsu.org", "172.16.0.0/12", "*"], proxy.NoProxyIgnored);
+    }
+
+    [Fact]
+    public async Task AllProxyServesBothSchemesUnlessOneHasItsOwn()
+    {
+        var inspector = new FakeInspector();
+        inspector.Values.Add(new("ALL_PROXY", "socks5://tor:9050", "environment variables"));
+        inspector.Values.Add(new("HTTP_PROXY", "http://proxy:3128", "environment variables"));
+
+        var proxy = (await Service(inspector)).Get().Proxy;
+
+        Assert.Equal(("http://proxy:3128", "socks5://tor:9050"), (proxy.Http, proxy.Https));
+    }
 
     [Fact]
     public async Task ListsSearchSourcesWithTheirCategoriesAndWhatKeepsThemFromWorking()
@@ -108,9 +174,10 @@ public sealed class AboutServiceTests
         };
         var downloaders = new[] { new FakeDownloader(), new FakeDownloader(DownloadProviders.Slskd, Protocol.Soulseek) };
 
-        var about = await Service(new FakeInspector(), provider: new StaticProvider(sources), categories: categories, downloaders: downloaders)
-            .GetAsync(CancellationToken.None);
+        var about = (await Service(new FakeInspector(), provider: new StaticProvider(sources), categories: categories, downloaders: downloaders))
+            .Get();
 
+        Assert.NotNull(about.SearchSources);
         Assert.Equal(["Flibusta", "Old tracker", "Rutracker", "Soulseek"], about.SearchSources.Select(s => s.Name));
         var source = about.SearchSources.ToDictionary(s => s.Id);
 
@@ -143,9 +210,9 @@ public sealed class AboutServiceTests
     public async Task ReportsAProviderThatCannotListItsSources()
     {
         var provider = new StaticProvider { Failure = new HttpRequestException("Connection refused (127.0.0.1:9696).") };
-        var info = await Service(new FakeInspector(), provider: provider).GetAsync(CancellationToken.None);
+        var info = (await Service(new FakeInspector(), provider: provider)).Get();
 
-        Assert.Empty(info.SearchSources);
+        Assert.Empty(info.SearchSources!);
         Assert.Equal(
         [
             "Could not list the sources of static: Connection refused (127.0.0.1:9696).",
@@ -172,7 +239,7 @@ public sealed class AboutServiceTests
             Oidc = new UiOidcOptions { Authority = "https://auth.example.com", ClientId = "convy", ClientSecret = "s3cr3t" },
         };
 
-        var about = await Service(inspector, ui).GetAsync(CancellationToken.None);
+        var about = (await Service(inspector, ui)).Get();
 
         Assert.Equal(AppInfo.Version, about.Version);
         Assert.Equal(("Production", "/app", "oidc", true), (about.Environment, about.ContentRoot, about.UiAuth, about.McpEnabled));

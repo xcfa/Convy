@@ -199,8 +199,10 @@ function DownloadersCard({ status }: { status: UiStatus }) {
 function SourcesCard({ status }: { status: UiStatus }) {
   return (
     <Card title="Search sources">
-      {status.sources.length === 0 ? (
-        <Empty>No source is configured (Prowlarr, slskd).</Empty>
+      {status.sources === null ? (
+        <Empty>Listing the sources…</Empty>
+      ) : status.sources.length === 0 ? (
+        <Empty>No source is configured (Prowlarr, slskd, OPDS catalogs).</Empty>
       ) : (
         <div className="table-wrap">
           <table>
