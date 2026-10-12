@@ -152,8 +152,19 @@ export function About() {
 }
 
 function ProxyFacts({ proxy }: { proxy: AboutProxy }) {
+  const problems = proxy.problems.map((p) => (
+    <div key={p} className="small wrap-anywhere">
+      <Badge tone="warn">problem</Badge> {p}
+    </div>
+  ));
+
   if (!proxy.http && !proxy.https) {
-    return <span>none (direct)</span>;
+    return (
+      <>
+        <span>none (direct)</span>
+        {problems}
+      </>
+    );
   }
 
   return (
@@ -161,15 +172,7 @@ function ProxyFacts({ proxy }: { proxy: AboutProxy }) {
       <div className="mono small wrap-anywhere">https: {proxy.https ?? "direct"}</div>
       <div className="mono small wrap-anywhere">http: {proxy.http ?? "direct"}</div>
       {proxy.no_proxy && <div className="mono small wrap-anywhere">no proxy: {proxy.no_proxy}</div>}
-      {proxy.no_proxy_ignored.length > 0 && (
-        <div className="small wrap-anywhere">
-          <Badge tone="warn" title=".NET matches exact hosts and addresses and .domain suffixes only">
-            ignored
-          </Badge>{" "}
-          <span className="mono">{proxy.no_proxy_ignored.join(", ")}</span> — these hosts still go through the proxy;
-          use <span className="mono">.domain</span> and list addresses one by one.
-        </div>
-      )}
+      {problems}
       {!proxy.https && (
         <div className="small muted">https:// addresses (Flibusta, …) go direct: set HTTPS_PROXY, HTTP_PROXY covers only http://.</div>
       )}
@@ -315,8 +318,8 @@ function report(about: AboutInfo): string {
     `Convy ${about.informational_version}`,
     `${about.runtime}, ${about.os} (${about.architecture}), ${about.environment}`,
     `Web UI: ${about.ui_auth}; MCP: ${about.mcp_enabled ? "on" : "off"}; downloaders: ${about.downloaders.join(", ")}`,
-    `Proxy: https ${about.proxy.https ?? "direct"}, http ${about.proxy.http ?? "direct"}, no proxy ${about.proxy.no_proxy ?? "—"}` +
-      (about.proxy.no_proxy_ignored.length > 0 ? ` (ignored by .NET: ${about.proxy.no_proxy_ignored.join(", ")})` : ""),
+    `Proxy: https ${about.proxy.https ?? "direct"}, http ${about.proxy.http ?? "direct"}, no proxy ${about.proxy.no_proxy ?? "—"}`,
+    ...about.proxy.problems.map((p) => `  ! ${p}`),
     "",
     "Search sources:",
     ...(about.search_sources === null

@@ -1,5 +1,6 @@
 using System.Text.Json.Serialization;
 using Convy.Services.Downloads;
+using Convy.Services.Http;
 using Convy.Services.Media;
 using Convy.Services.Rules;
 using Convy.Services.Security;
@@ -61,22 +62,19 @@ public sealed record AboutInfo(
     [property: JsonPropertyName("settings")] IReadOnlyList<SettingDto> Settings);
 
 /// <summary>
-/// The proxy of Convy's outgoing requests (catalogs, Prowlarr, slskd, qBittorrent, webhooks),
-/// from the standard environment variables; credentials in it hidden.
+/// The proxy of Convy's outgoing requests (catalogs, Prowlarr, slskd, qBittorrent, webhooks,
+/// sign-in), from the standard environment variables (see <see cref="EnvironmentProxy"/>);
+/// without credentials.
 /// </summary>
 /// <param name="Http">For <c>http://</c> addresses: <c>HTTP_PROXY</c>, else <c>ALL_PROXY</c>.</param>
 /// <param name="Https">For <c>https://</c> addresses: <c>HTTPS_PROXY</c>, else <c>ALL_PROXY</c>.</param>
-/// <param name="NoProxy">Hosts reached directly: <c>NO_PROXY</c>.</param>
-/// <param name="NoProxyIgnored">
-/// Entries of <c>NO_PROXY</c> that .NET does not understand, so those hosts still go through the
-/// proxy: it matches exact host names and addresses and <c>.domain</c> suffixes only, not
-/// <c>*.domain</c>, <c>*</c> or address ranges such as <c>172.16.0.0/12</c>.
-/// </param>
+/// <param name="NoProxy">What is reached directly: <c>NO_PROXY</c> as written.</param>
+/// <param name="Problems">What could not be read: a proxy that is not an address, <c>NO_PROXY</c> entries.</param>
 public sealed record AboutProxy(
     [property: JsonPropertyName("http")] string? Http,
     [property: JsonPropertyName("https")] string? Https,
     [property: JsonPropertyName("no_proxy")] string? NoProxy,
-    [property: JsonPropertyName("no_proxy_ignored")] IReadOnlyList<string> NoProxyIgnored);
+    [property: JsonPropertyName("problems")] IReadOnlyList<string> Problems);
 
 /// <summary>A search source with what downloads its results and which categories search it.</summary>
 /// <param name="Status"><c>ok</c>, <c>error</c> or <c>disabled</c>.</param>
@@ -257,22 +255,16 @@ public sealed class AboutService
         return (result, warnings);
     }
 
-    /// <summary>
-    /// The proxy .NET's HTTP clients take from the environment: <c>HTTPS_PROXY</c> is for
-    /// https:// addresses and <c>HTTP_PROXY</c> only for http:// ones, <c>ALL_PROXY</c> for both.
-    /// </summary>
+    /// <summary>The proxy every HTTP client of Convy uses, read from the same variables as at start.</summary>
     private AboutProxy Proxy()
     {
-        string? Read(string name) =>
-            _configuration[name] is { Length: > 0 } value ? ConfigurationMasking.Mask("proxy", value.Trim(), out _) : null;
-
-        var all = Read("ALL_PROXY");
-        var noProxy = Read("NO_PROXY");
-        var ignored = (noProxy ?? string.Empty)
-            .Split(',', StringSplitOptions.TrimEntries | StringSplitOptions.RemoveEmptyEntries)
-            .Where(entry => entry.StartsWith('*') || entry.Contains('/'))
-            .ToList();
-        return new AboutProxy(Read("HTTP_PROXY") ?? all, Read("HTTPS_PROXY") ?? all, noProxy, ignored);
+        var proxy = EnvironmentProxy.FromEnvironment(name => _configuration[name], out var problems);
+        var noProxy = _configuration["NO_PROXY"] is { Length: > 0 } value ? value.Trim() : null;
+        return new AboutProxy(
+            proxy?.HttpProxy?.GetLeftPart(UriPartial.Authority),
+            proxy?.HttpsProxy?.GetLeftPart(UriPartial.Authority),
+            noProxy,
+            problems);
     }
 
     private List<ConfigurationSourceInfo> Paths(string uiAuth)

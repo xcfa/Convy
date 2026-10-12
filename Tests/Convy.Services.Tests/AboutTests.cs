@@ -119,7 +119,8 @@ public sealed class AboutServiceTests
     [Theory]
     [InlineData(null, null, null, null, null, null)]
     [InlineData("http://proxy:3128", null, null, "http://proxy:3128", null, null)]
-    [InlineData("http://proxy:3128", "http://user:pa55@proxy:3128", "prowlarr,slskd", "http://proxy:3128", "http://user:••••••@proxy:3128", "prowlarr,slskd")]
+    [InlineData("http://proxy:3128", "http://user:pa55@proxy:3128", "prowlarr,slskd", "http://proxy:3128", "http://proxy:3128", "prowlarr,slskd")]
+    [InlineData(null, "mihomo:7890", null, null, "http://mihomo:7890", null)]
     public async Task ShowsTheProxyFromTheEnvironment(
         string? http, string? https, string? noProxy, string? expectedHttp, string? expectedHttps, string? expectedNoProxy)
     {
@@ -133,19 +134,24 @@ public sealed class AboutServiceTests
         var proxy = (await Service(inspector)).Get().Proxy;
 
         Assert.Equal((expectedHttp, expectedHttps, expectedNoProxy), (proxy.Http, proxy.Https, proxy.NoProxy));
-        Assert.Empty(proxy.NoProxyIgnored);
+        Assert.Empty(proxy.Problems);
     }
 
     [Fact]
-    public async Task PointsOutNoProxyEntriesThatDotNetIgnores()
+    public async Task ReportsWhatTheProxySettingsGetWrong()
     {
         var inspector = new FakeInspector();
-        inspector.Values.Add(new("HTTPS_PROXY", "http://mihomo:7890", "environment variables"));
-        inspector.Values.Add(new("NO_PROXY", "localhost, prowlarr, .bakuretsu.org, *.bakuretsu.org, 172.16.0.0/12, *", "environment variables"));
+        inspector.Values.Add(new("HTTPS_PROXY", "ftp://mihomo:7890", "environment variables"));
+        inspector.Values.Add(new("NO_PROXY", "localhost, *.bakuretsu.org, 172.16.0.0/12, 10.0.0.0/40", "environment variables"));
 
         var proxy = (await Service(inspector)).Get().Proxy;
 
-        Assert.Equal(["*.bakuretsu.org", "172.16.0.0/12", "*"], proxy.NoProxyIgnored);
+        Assert.Null(proxy.Https);
+        Assert.Equal(
+        [
+            "HTTPS_PROXY is not a proxy address such as http://proxy:3128 or socks5://proxy:1080.",
+            "NO_PROXY entry '10.0.0.0/40' is not a host, domain, address or address range; it is ignored.",
+        ], proxy.Problems);
     }
 
     [Fact]
