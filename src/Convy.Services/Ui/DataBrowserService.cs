@@ -46,10 +46,14 @@ public sealed class DataBrowserService
     public const int MaxLimit = 200;
     private const int MaxTextLength = 2000;
 
-    /// <summary>Columns never shown: a search result's content id holds the Prowlarr API key.</summary>
+    /// <summary>
+    /// Columns never shown: a search result's content id holds the Prowlarr API key, a
+    /// webhook's headers hold the receiver's tokens.
+    /// </summary>
     private static readonly HashSet<(string Table, string Column)> Hidden =
     [
         ("SearchResults", "ContentId"),
+        ("Webhooks", "HeadersJson"),
     ];
 
     private readonly IDbContextFactory<ConvyDbContext> _convyDb;

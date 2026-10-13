@@ -76,6 +76,18 @@ public sealed class WebhookSender
                 request.Headers.Add("X-Convy-Test", "true");
             }
 
+            foreach (var header in webhook.Headers ?? [])
+            {
+                // Checked when saved from the UI; configuration.yml is only checked here.
+                if (WebhookHeader.Problem(header.Name, header.Value) is { } problem)
+                {
+                    _logger.LogWarning("Webhook '{Name}': header not sent. {Problem}", webhook.Name ?? webhook.Url, problem);
+                    continue;
+                }
+
+                request.Headers.TryAddWithoutValidation(header.Name, header.Value);
+            }
+
             using var response = await _httpClient.SendAsync(request, cancellationToken).ConfigureAwait(false);
             var responseBody = await response.Content.ReadAsStringAsync(cancellationToken).ConfigureAwait(false);
             return new WebhookDelivery(

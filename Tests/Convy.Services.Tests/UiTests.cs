@@ -312,6 +312,7 @@ public sealed class DataBrowserServiceTests : IDisposable
 
         var results = tables.Single(t => t.Name == "SearchResults").Columns;
         Assert.DoesNotContain(results, c => c.Name == "ContentId");
+        Assert.DoesNotContain(tables.Single(t => t.Name == "Webhooks").Columns, c => c.Name == "HeadersJson");
         Assert.Equal("unix_time", results.Single(c => c.Name == "ExpiresAt").Kind);
         Assert.Equal("number", results.Single(c => c.Name == "SizeBytes").Kind);
         Assert.Equal("blob", tables.Single(t => t.Name == "FileListings").Columns.Single(c => c.Name == "TorrentFile").Kind);

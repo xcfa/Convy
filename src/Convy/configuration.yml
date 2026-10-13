@@ -191,3 +191,6 @@ serilog:
 #   - name: Jobs to n8n          # agent jobs and failing sources
 #     url: http://n8n:5678/webhook/media
 #     events: [job_status, source_error]
+#     headers:                   # sent with every request; values are kept secret in the UI
+#       - name: Authorization
+#         value: Bearer change-me  # or a Docker secret: Webhooks__2__headers__0__value

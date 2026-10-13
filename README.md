@@ -212,7 +212,17 @@ webhooks:
   - name: Jobs to n8n
     url: http://n8n:5678/webhook/media
     events: [job_status, source_error]
+    headers:                     # sent with every request
+      - name: Authorization
+        value: Bearer change-me   # better as a Docker secret, see below
 ```
+
+**Headers.** `headers` adds request headers, e.g. a token the receiver checks (n8n's *Header
+Auth*). Header values are secrets: the web UI shows only the names (leave a value empty when
+editing to keep it), the About page and the database view hide them. Pass a value as a Docker
+secret named after its key, e.g. `Webhooks__0__headers__0__value`. Headers HTTP or Convy set
+themselves (`Host`, `Content-Type`, `Content-Length`, `X-Convy-Test`, …) cannot be overridden; an
+invalid header in `configuration.yml` is left out with a warning in the log.
 
 The `linked` webhook fires once at the end of each sync cycle if at least one item was linked
 or an error occurred. The request is a single POST with a JSON body containing all
@@ -577,13 +587,14 @@ Convy serves a small web interface at `/`:
 - **Database** — every table read-only, with search, sorting and paging. Values that hold
   secrets are never sent: a search result's content id (it contains the Prowlarr API key)
   is left out, and binary columns (`.torrent` files) are shown only as their size.
-- **Webhooks** — every webhook with its events, rule filter and parameters. Webhooks can be
-  added, edited, switched off and deleted here; they are stored in the database and used
-  together with those from `configuration.yml`, which are shown read-only. Any webhook, saved
-  or still in the editor, can be **tested**: Convy sends sample data for the chosen event
-  (`linked`, `job_status`, `source_error`) with the webhook's parameters applied and an
-  `X-Convy-Test: true` header, and shows the URL, the body sent, the status, the time and
-  the answer.
+- **Webhooks** — every webhook with its events, rule filter, parameters and headers. Webhooks
+  can be added, edited, switched off and deleted here; they are stored in the database and used
+  together with those from `configuration.yml`, which are shown read-only. Header values are
+  write-only: the page shows the names, and a header left empty keeps its value. Any webhook,
+  saved or still in the editor, can be **tested**: Convy sends sample data for the chosen event
+  (`linked`, `job_status`, `source_error`) with the webhook's parameters and headers applied and
+  an `X-Convy-Test: true` header, and shows the URL, the body sent, the status, the time and the
+  answer.
 - **Rules** — `rules.yaml` as it is now, with syntax highlighting (YAML and the condition
   language), next to the rules in effect and the properties each one reads. If the file
   cannot be loaded, the error is shown and the previous rules stay in effect. Read-only: edit
