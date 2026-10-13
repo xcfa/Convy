@@ -81,6 +81,8 @@ public sealed class MediaCatalogService
         view.SpeedBytesPerSecond,
         view.Job.TargetPath,
         view.Job.Rule,
+        view.Job.Instruction,
+        view.Job.Destination,
         view.Error,
         view.Job.CreatedAt,
         view.Releases.Count > 1
@@ -92,6 +94,8 @@ public sealed class MediaCatalogService
                 r.TotalBytes ?? r.Release.SizeBytes,
                 r.Release.TargetPath,
                 r.Release.Rule,
+                r.Release.EffectiveInstruction,
+                r.Release.Destination,
                 r.Error)).ToList()
             : null);
 }

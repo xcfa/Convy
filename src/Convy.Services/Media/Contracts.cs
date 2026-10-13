@@ -90,6 +90,7 @@ public sealed record DownloadResponse(
     [property: JsonPropertyName("status")] string Status,
     [property: JsonPropertyName("expected_path")] string? ExpectedPath,
     [property: JsonPropertyName("rule")] string? Rule,
+    [property: JsonPropertyName("instruction")] string? Instruction,
     [property: JsonPropertyName("file_count")] int? FileCount,
     [property: JsonPropertyName("size_bytes")] long? SizeBytes,
     [property: JsonPropertyName("note")] string Note,
@@ -127,6 +128,8 @@ public sealed record JobDto(
     [property: JsonPropertyName("speed_bytes_per_sec")] long? SpeedBytesPerSecond,
     [property: JsonPropertyName("path")] string? Path,
     [property: JsonPropertyName("rule")] string? Rule,
+    [property: JsonPropertyName("instruction")] string? Instruction,
+    [property: JsonPropertyName("destination")] string? Destination,
     [property: JsonPropertyName("error")] string? Error,
     [property: JsonPropertyName("created_at")] DateTimeOffset CreatedAt,
     [property: JsonPropertyName("releases")] IReadOnlyList<JobReleaseDto>? Releases = null);
@@ -140,6 +143,8 @@ public sealed record JobReleaseDto(
     [property: JsonPropertyName("size_bytes")] long? SizeBytes,
     [property: JsonPropertyName("path")] string? Path,
     [property: JsonPropertyName("rule")] string? Rule,
+    [property: JsonPropertyName("instruction")] string? Instruction,
+    [property: JsonPropertyName("destination")] string? Destination,
     [property: JsonPropertyName("error")] string? Error);
 
 /// <summary><c>cancel_job</c> response.</summary>

@@ -116,9 +116,7 @@ public sealed class MediaDownloadServiceTests : IDisposable
     {
         await CacheAlbums(("r_1", "Evanescence - Fallen"), ("r_2", "Evanescence - The Open Door"));
 
-        var response = await _service.DownloadAsync("music", null, null, null, null,
-            [new DownloadRelease("r_1", "Evanescence/2003 - Fallen"), new DownloadRelease("r_2", "Evanescence/2006 - The Open Door")],
-            CancellationToken.None);
+        var response = await _service.DownloadAsync("music", null, null, null, null, [new DownloadRelease("r_1", "Evanescence/2003 - Fallen"), new DownloadRelease("r_2", "Evanescence/2006 - The Open Door")], null, CancellationToken.None);
 
         Assert.Equal("j_1", response.JobId);
         Assert.Equal(2, _downloader.Added.Count);
@@ -138,16 +136,13 @@ public sealed class MediaDownloadServiceTests : IDisposable
     {
         await CacheAlbums(("r_1", "Evanescence - Fallen"));
 
-        var both = await Assert.ThrowsAsync<ConvyRequestException>(() => _service.DownloadAsync(
-            "music", "r_1", null, null, null, [new DownloadRelease("r_1")], CancellationToken.None));
+        var both = await Assert.ThrowsAsync<ConvyRequestException>(() => _service.DownloadAsync("music", "r_1", null, null, null, [new DownloadRelease("r_1")], null, CancellationToken.None));
         Assert.Contains("not both", both.Message);
 
-        var none = await Assert.ThrowsAsync<ConvyRequestException>(() => _service.DownloadAsync(
-            "music", null, null, null, null, null, CancellationToken.None));
+        var none = await Assert.ThrowsAsync<ConvyRequestException>(() => _service.DownloadAsync("music", null, null, null, null, null, null, CancellationToken.None));
         Assert.Contains("Pass result_id", none.Message);
 
-        var unknown = await Assert.ThrowsAsync<ConvyRequestException>(() => _service.DownloadAsync(
-            "music", null, null, null, null, [new DownloadRelease("r_1"), new DownloadRelease("r_9")], CancellationToken.None));
+        var unknown = await Assert.ThrowsAsync<ConvyRequestException>(() => _service.DownloadAsync("music", null, null, null, null, [new DownloadRelease("r_1"), new DownloadRelease("r_9")], null, CancellationToken.None));
         Assert.StartsWith("r_9: ", unknown.Message);
         Assert.Empty(_downloader.Added);
     }
@@ -173,6 +168,38 @@ public sealed class MediaDownloadServiceTests : IDisposable
         Assert.Equal("/data/media/music/Evanescence/2003 - Fallen", FakeFileSystem.Norm(response.ExpectedPath!));
         Assert.Equal(999, response.SizeBytes);
         Assert.Equal(0, _source.ListingCalls);
+        Assert.Null(response.Instruction);
+    }
+
+    [Fact]
+    public async Task AnInstructionIsKeptWithTheJobAndAnnounced()
+    {
+        await CacheResult();
+
+        var response = await _service.DownloadAsync(
+            "music", "r_1", "Evanescence/2003 - Fallen", null, null, null, "  Tag the album with beets.  ", CancellationToken.None);
+
+        Assert.Equal("Tag the album with beets.", response.Instruction);
+        Assert.Contains("handed off for processing", response.Note);
+        Assert.Equal("/data/media/music/Evanescence/2003 - Fallen", FakeFileSystem.Norm(response.ExpectedPath!));
+        var job = Assert.Single(await _jobs.ListAsync(null, null, CancellationToken.None));
+        Assert.Equal("Tag the album with beets.", Assert.Single(job.Job.Releases).Instruction);
+        Assert.Equal("Tag the album with beets.", job.Job.Instruction);
+
+        // The rule's folder is the forecast destination from the start.
+        Assert.Equal("/data/media/music/Evanescence/2003 - Fallen", FakeFileSystem.Norm(job.Job.Destination!));
+    }
+
+    [Fact]
+    public async Task ATooLongInstructionIsRejectedBeforeDownloading()
+    {
+        await CacheResult();
+
+        var error = await Assert.ThrowsAsync<ConvyRequestException>(() => _service.DownloadAsync(
+            "music", "r_1", null, null, null, null, new string('x', JobInstructions.MaxLength + 1), CancellationToken.None));
+
+        Assert.Contains("too long", error.Message);
+        Assert.Empty(_downloader.Added);
     }
 
     [Fact]

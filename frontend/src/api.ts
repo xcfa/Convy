@@ -59,6 +59,10 @@ export interface Job {
   speed_bytes_per_sec: number | null;
   path: string | null;
   rule: string | null;
+  /** Set when the files are handed off for processing: what to do with them. */
+  instruction: string | null;
+  /** Where handed-off files belong once processed. */
+  destination: string | null;
   error: string | null;
   created_at: string;
   /** Present only for a job with several releases. */
@@ -73,6 +77,8 @@ export interface JobRelease {
   size_bytes: number | null;
   path: string | null;
   rule: string | null;
+  instruction: string | null;
+  destination: string | null;
   error: string | null;
 }
 
@@ -162,6 +168,8 @@ export interface Rule {
   name: string | null;
   condition: string;
   path: string;
+  /** Jobs this rule matches are handed off for processing with this instruction. */
+  instruction: string | null;
   properties: string[];
   /** Empty condition: the rule matches every item. */
   matches_everything: boolean;

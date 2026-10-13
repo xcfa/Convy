@@ -47,7 +47,7 @@ public sealed class SyncCycleServiceTests : IDisposable
             new JobTransitions(_jobs, _events),
             new StaticOptions<JobOptions>(_jobOptions),
             _fs,
-            new StorageLayoutValidator(resolver, _fs, _storage, _time, NullLogger<StorageLayoutValidator>.Instance),
+            new StorageLayoutValidator(resolver, _fs, _storage, new StaticOptions<JobOptions>(_jobOptions), _time, NullLogger<StorageLayoutValidator>.Instance),
             _syncStatus,
             _time,
             NullLogger<SyncCycleService>.Instance);
@@ -68,7 +68,7 @@ public sealed class SyncCycleServiceTests : IDisposable
 
     private async Task<JobRecord> AddJob(
         string itemRef, string? clientCategory, string? subpath, JobStatus status = JobStatus.Downloading,
-        IReadOnlyList<string>? selection = null) =>
+        IReadOnlyList<string>? selection = null, string? instruction = null) =>
         await _jobs.CreateAsync(new JobRecord
         {
             Id = 0,
@@ -79,6 +79,7 @@ public sealed class SyncCycleServiceTests : IDisposable
             Subpath = subpath,
             SelectedFiles = selection,
             Title = itemRef,
+            Instruction = instruction,
             Status = status,
             LastProgressAt = _time.Now,
             CreatedAt = _time.Now,
@@ -252,6 +253,104 @@ public sealed class SyncCycleServiceTests : IDisposable
     }
 
     [Fact]
+    public async Task JobWithAnInstructionIsHandedOffToItsOwnProcessingFolder()
+    {
+        _jobOptions.ProcessingPath = "/data/processing";
+        AddCompletedItem("h1", "Manual", "Movie.2019/movie.mkv", "Movie.2019/Subs/en.srt");
+        var job = await AddJob("h1", "Movies", "Movie (2019)", instruction: "Add Russian subtitles.");
+
+        await Run();
+
+        // Linked into the job's own folder with the download's structure, not into the rule's folder.
+        Assert.Equal(
+            [$"/data/processing/{job.JobId}/Movie.2019/Subs/en.srt", $"/data/processing/{job.JobId}/Movie.2019/movie.mkv"],
+            LinkedDestinations());
+
+        var done = await Reload(job);
+        Assert.Equal((JobStatus.Completed, "movies"), (done.Status, done.Rule));
+        Assert.Equal($"/data/processing/{job.JobId}", FakeFileSystem.Norm(done.TargetPath!));
+        Assert.Equal("/data/media/movies/Movie (2019)", FakeFileSystem.Norm(done.Destination!));
+        Assert.Equal(["Movie.2019/Subs/en.srt", "Movie.2019/movie.mkv"], done.PlacedFiles!.Order(StringComparer.Ordinal));
+
+        // job_status tells the processing agent; "linked" stays for files placed by a rule.
+        Assert.Empty(_webhooks.Batches.SelectMany(b => b.Linked));
+        var completed = _events.Changes[^1].Job;
+        Assert.Equal(JobStatus.Completed, completed.Status);
+        Assert.Equal("Add Russian subtitles.", completed.Instruction);
+        Assert.Equal("/data/media/movies/Movie (2019)", FakeFileSystem.Norm(completed.Destination!));
+
+        // Placing again changes nothing, even after the agent took the files away.
+        _fs.Links.Clear();
+        await Run();
+        Assert.Empty(_fs.Links);
+    }
+
+    [Fact]
+    public async Task RuleInstructionHandsOffEveryJobItMatchesAndComesFirst()
+    {
+        _rules.Yaml =
+            """
+            rules:
+              - name: music
+                condition: "Category == Music"
+                path: /data/media/music
+                instruction: |
+                  Import the album with beets.
+            """;
+        _jobOptions.ProcessingPath = "/data/processing";
+        AddCompletedItem("h1", null, "Album/01.flac");
+        var plain = await AddJob("h1", "Music", subpath: null);
+        AddCompletedItem("h2", null, "Other/01.flac");
+        var asked = await AddJob("h2", "Music", "Artist/2020 - Album", instruction: "Use the original release year.");
+
+        await Run();
+
+        var first = await Reload(plain);
+        Assert.Equal(("Import the album with beets.", (string?)null), (first.RuleInstruction, first.Instruction));
+        Assert.Equal("Import the album with beets.", first.EffectiveInstruction);
+        Assert.Equal("/data/media/music", FakeFileSystem.Norm(first.Destination!));
+
+        var second = await Reload(asked);
+        Assert.Equal("Import the album with beets.\n\nUse the original release year.", second.EffectiveInstruction);
+        Assert.Equal("/data/media/music/Artist/2020 - Album", FakeFileSystem.Norm(second.Destination!));
+
+        Assert.DoesNotContain(LinkedDestinations(), d => d.StartsWith("/data/media/music", StringComparison.Ordinal));
+        Assert.Equal(2, LinkedDestinations().Count(d => d.StartsWith("/data/processing/", StringComparison.Ordinal)));
+    }
+
+    [Fact]
+    public async Task AForecastHandOffIsDroppedWhenTheRuleNoLongerHasAnInstruction()
+    {
+        _jobOptions.ProcessingPath = "/data/processing";
+        AddCompletedItem("h1", null, "Movie.2019/movie.mkv");
+        var job = await AddJob("h1", "Movies", subpath: null);
+        job = job with { RuleInstruction = "Add subtitles.", Destination = "/data/media/movies" };
+        Assert.True(await _jobs.TryUpdateAsync(job, job.Status, CancellationToken.None));
+
+        await Run();
+
+        Assert.Equal(["/data/media/movies/Movie.2019/movie.mkv"], LinkedDestinations());
+        var done = await Reload(job);
+        Assert.Equal(JobStatus.Completed, done.Status);
+        Assert.Equal(((string?)null, (string?)null, (string?)null), (done.RuleInstruction, done.Destination, done.EffectiveInstruction));
+    }
+
+    [Fact]
+    public async Task WithoutAProcessingPathHandedOffFilesStayWhereTheyWereDownloaded()
+    {
+        AddCompletedItem("h1", null, "Book/book.epub");
+        var job = await AddJob("h1", "Other", subpath: null, instruction: "Convert to FB2.");
+
+        await Run();
+
+        Assert.Empty(_fs.Links);
+        var done = await Reload(job);
+        Assert.Equal((JobStatus.Completed, "/data/downloads", (string?)null), (done.Status, done.TargetPath, done.Destination));
+        Assert.Equal(["Book/book.epub"], done.PlacedFiles);
+        Assert.Equal("Convert to FB2.", done.EffectiveInstruction);
+    }
+
+    [Fact]
     public async Task OnlySelectedCompleteFilesArePlaced()
     {
         _fs.AddFile("/data/downloads/Show/Season 01/e1.mkv");
@@ -421,6 +520,21 @@ public sealed class SyncCycleServiceTests : IDisposable
     }
 
     [Fact]
+    public async Task StorageCheckReportsAProcessingPathOnAnotherMount()
+    {
+        _jobOptions.ProcessingPath = "/mnt/processing";
+        _fs.Directories.Add("/data/downloads");
+        _fs.Mounts["/data"] = "10";
+        _fs.Mounts["/mnt/processing"] = "12";
+
+        await Run();
+
+        var problem = Assert.Single(_storage.Problems);
+        Assert.Contains("jobs.processing_path '/mnt/processing'", problem);
+        Assert.Contains("EXDEV", problem);
+    }
+
+    [Fact]
     public async Task StorageCheckReportsInvisibleDownloadDirectory()
     {
         await Run();
@@ -440,7 +554,7 @@ public sealed class SyncCycleServiceTests : IDisposable
             resolver, _db, _rules, new DownloadStateTracker(new EfDownloadStateStore(_db)),
             new FileLinkingService(_fs, NullLogger<FileLinkingService>.Instance), _webhooks, _jobs,
             new JobTransitions(_jobs, _events), new StaticOptions<JobOptions>(_jobOptions), _fs,
-            new StorageLayoutValidator(resolver, _fs, _storage, _time, NullLogger<StorageLayoutValidator>.Instance),
+            new StorageLayoutValidator(resolver, _fs, _storage, new StaticOptions<JobOptions>(_jobOptions), _time, NullLogger<StorageLayoutValidator>.Instance),
             new SyncStatusTracker(), _time, NullLogger<SyncCycleService>.Instance);
         _rules.Yaml =
             """
@@ -495,7 +609,7 @@ public sealed class SyncCycleServiceTests : IDisposable
             resolver, _db, _rules, new DownloadStateTracker(new EfDownloadStateStore(_db)),
             new FileLinkingService(_fs, NullLogger<FileLinkingService>.Instance), _webhooks, _jobs,
             new JobTransitions(_jobs, _events), new StaticOptions<JobOptions>(_jobOptions), _fs,
-            new StorageLayoutValidator(resolver, _fs, _storage, _time, NullLogger<StorageLayoutValidator>.Instance),
+            new StorageLayoutValidator(resolver, _fs, _storage, new StaticOptions<JobOptions>(_jobOptions), _time, NullLogger<StorageLayoutValidator>.Instance),
             new SyncStatusTracker(), _time, NullLogger<SyncCycleService>.Instance);
 
         // A rule on Tags comes first: Soulseek items have no tags, so it must be skipped.

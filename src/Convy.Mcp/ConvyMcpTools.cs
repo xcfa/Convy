@@ -81,7 +81,8 @@ public sealed class ConvyMcpTools
                  "expected to place it. Get the user's confirmation first. One result: result_id (+ subpath, include, " +
                  "exclude). Several results the user asked for together (e.g. several albums): releases, which makes ONE " +
                  "job with one status and one notification. include/exclude need the file list; without them everything " +
-                 "is downloaded.")]
+                 "is downloaded. instruction: what should be done with the files afterwards (e.g. 'convert to EPUB and " +
+                 "unify the formatting'); the files are then handed off for processing by another agent instead of placed.")]
     public Task<CallToolResult> Download(
         [Description("Category id from get_categories.")] string category,
         [Description("Result id from search, for a single result. Use releases instead for several.")] string? result_id = null,
@@ -91,14 +92,20 @@ public sealed class ConvyMcpTools
         [Description("Glob patterns or exact paths to skip, applied after include, e.g. '**/*sample*'.")] string[]? exclude = null,
         [Description("Several results downloaded as one job, each with its own subpath/include/exclude. " +
                      "Not together with result_id.")] DownloadReleaseInput[]? releases = null,
+        [Description("What should be done with the files after the download, when the user asked for more than the " +
+                     "download, e.g. 'convert to EPUB and unify the formatting'. Write it for the agent that will do it: it " +
+                     "gets the instruction, the files and expected_path as their destination. The category's rule may add " +
+                     "its own instruction. Leave it out for a plain download.")] string? instruction = null,
         CancellationToken cancellationToken = default) =>
         _run.Run("download", () => _downloads.DownloadAsync(
-            category, result_id, subpath, include, exclude, releases?.Select(r => r.ToRelease()).ToList(), cancellationToken));
+            category, result_id, subpath, include, exclude, releases?.Select(r => r.ToRelease()).ToList(), instruction,
+            cancellationToken));
 
     [McpServerTool(Name = "get_jobs", ReadOnly = true)]
     [Description("Lists jobs, newest first, with status (queued, downloading, stalled, placing, completed, failed, cancelled), " +
                  "progress, speed and path. Active jobs are read from their download client directly. 'completed' means the " +
-                 "files are in place.")]
+                 "files are in place, or, for a job with an instruction, handed off for processing at path, with destination " +
+                 "as where they belong afterwards.")]
     public Task<CallToolResult> GetJobs(
         [Description("Only jobs with this status.")] string? status = null,
         [Description("Maximum number of jobs (default 20, at most 100).")] int? limit = null,

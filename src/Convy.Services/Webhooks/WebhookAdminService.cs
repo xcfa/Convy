@@ -74,8 +74,8 @@ public sealed class WebhookAdminService
         [WebhookEvents.Linked] = ["hash", "name", "category", "savePath", "targetPath", "size", "state", "tags", "job_id", "provider"],
         [WebhookEvents.JobStatus] =
         [
-            "event", "job_id", "status", "previous_status", "provider", "category", "rule", "title", "path",
-            "files", "files_total", "size_bytes", "error", "releases",
+            "event", "job_id", "status", "previous_status", "provider", "category", "rule", "title", "instruction", "path",
+            "destination", "files", "files_total", "size_bytes", "error", "releases",
         ],
         [WebhookEvents.SourceError] = ["event", "source", "status", "message"],
     };

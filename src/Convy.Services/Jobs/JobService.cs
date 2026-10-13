@@ -31,6 +31,9 @@ public sealed record StartJobRequest
     public int? FileCount { get; init; }
     public string? ResultId { get; init; }
     public string? SourceId { get; init; }
+
+    /// <summary>What an agent should do with the files after the download; see <see cref="JobRecord.Instruction"/>.</summary>
+    public string? Instruction { get; init; }
 }
 
 /// <summary>A release that was added to its downloader, with the placement expected at that moment.</summary>
@@ -41,7 +44,11 @@ public sealed record StartJobRequest
 /// properties (<c>Ratio</c>, <c>SeedingTime</c>) are evaluated again on placement.
 /// </param>
 /// <param name="Rule">Name of the rule expected to place the files, or <c>null</c>.</param>
-public sealed record StartedRelease(StartJobRequest Request, JobRecord Release, string? ExpectedPath, string? Rule);
+/// <param name="Instruction">
+/// The instructions expected to apply (the rule's, then the request's): the files are then
+/// handed off for processing instead of placed. A forecast, like <paramref name="ExpectedPath"/>.
+/// </param>
+public sealed record StartedRelease(StartJobRequest Request, JobRecord Release, string? ExpectedPath, string? Rule, string? Instruction);
 
 /// <summary>A release its downloader did not accept; the job was started without it.</summary>
 public sealed record FailedRelease(StartJobRequest Request, string Error);
@@ -56,6 +63,10 @@ public sealed record StartJobResult(JobState Job, IReadOnlyList<StartedRelease> 
 
     /// <summary>The rule expected for every release, or <c>null</c> when they differ.</summary>
     public string? Rule => Started.Select(s => s.Rule).Distinct(StringComparer.Ordinal).Count() == 1 ? Started[0].Rule : null;
+
+    /// <summary>The instructions expected for every release, or <c>null</c> when there are none or they differ.</summary>
+    public string? Instruction =>
+        Started.Select(s => s.Instruction).Distinct(StringComparer.Ordinal).Count() == 1 ? Started[0].Instruction : null;
 }
 
 /// <summary>A job with its live state, combined from its releases.</summary>
@@ -172,7 +183,7 @@ public sealed class JobService
             EnsureFreeSpace(directory.Key, size, limits);
         }
 
-        var started = new List<(PreparedRelease Release, JobRecord Record, string? ExpectedPath, string? Rule)>();
+        var started = new List<(PreparedRelease Release, JobRecord Record, string? ExpectedPath, string? Rule, string? Instruction)>();
         var failed = new List<FailedRelease>();
         Exception? firstFailure = null;
 
@@ -202,7 +213,7 @@ public sealed class JobService
 
         return new StartJobResult(
             job,
-            started.Select((s, i) => new StartedRelease(s.Release.Request, job.Releases[i], s.ExpectedPath, s.Rule)).ToList(),
+            started.Select((s, i) => new StartedRelease(s.Release.Request, job.Releases[i], s.ExpectedPath, s.Rule, s.Instruction)).ToList(),
             failed);
     }
 
@@ -427,7 +438,7 @@ public sealed class JobService
     }
 
     /// <summary>Adds one checked release to its downloader and forecasts its placement.</summary>
-    private async Task<(PreparedRelease Release, JobRecord Record, string? ExpectedPath, string? Rule)> AddAsync(
+    private async Task<(PreparedRelease Release, JobRecord Record, string? ExpectedPath, string? Rule, string? Instruction)> AddAsync(
         PreparedRelease release, RulesSnapshot rules, CancellationToken cancellationToken)
     {
         var request = release.Request;
@@ -443,6 +454,7 @@ public sealed class JobService
         var rule = rules.ResolveRule(properties);
         var expected = PlacementPlanner.ResolveTarget(rule, release.Subpath, savePath ?? string.Empty);
         var expectedPath = expected.LeaveInPlace ? savePath : expected.Directory;
+        var instruction = JobInstructions.Combine(rule?.Instruction, request.Instruction);
         var now = _timeProvider.GetUtcNow();
 
         var record = new JobRecord
@@ -459,6 +471,11 @@ public sealed class JobService
             FileCount = request.FileCount,
             ResultId = request.ResultId,
             SourceId = request.SourceId,
+            Instruction = request.Instruction,
+            // Forecast like Rule and TargetPath, so the job's events say from the start that it
+            // is to be handed off; evaluated again when the files are placed.
+            RuleInstruction = rule?.Instruction,
+            Destination = instruction is null || rule is null ? null : expected.Directory,
             Status = JobStatus.Queued,
             Rule = rule?.Name,
             TargetPath = expectedPath,
@@ -468,7 +485,7 @@ public sealed class JobService
         };
 
         _logger.LogInformation("Added '{Title}' to {Provider} ({ItemRef}).", request.Title, downloader.Provider, itemRef);
-        return (release, record, expectedPath, rule?.Name);
+        return (release, record, expectedPath, rule?.Name, instruction);
     }
 
     /// <summary>

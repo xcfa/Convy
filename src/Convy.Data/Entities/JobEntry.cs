@@ -74,6 +74,18 @@ namespace Convy.Data.Entities
         /// <summary>JSON array of placed file paths relative to <see cref="TargetPath"/>, once completed.</summary>
         public string? PlacedFilesJson { get; set; }
 
+        /// <summary>What an agent should do with the files after the download, from the download request.</summary>
+        [MaxLength(8192)]
+        public string? Instruction { get; set; }
+
+        /// <summary>The instruction of the rule that matched when the files were handed off for processing.</summary>
+        [MaxLength(8192)]
+        public string? RuleInstruction { get; set; }
+
+        /// <summary>Where handed-off files belong once processed: the rule's folder (with the sub-path).</summary>
+        [MaxLength(2048)]
+        public string? Destination { get; set; }
+
         public int PlacementAttempts { get; set; }
 
         /// <summary>Downloaded bytes when progress was last observed; drives stall detection.</summary>

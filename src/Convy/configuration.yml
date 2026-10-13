@@ -171,6 +171,10 @@ serilog:
 #   max_placement_attempts: 10   # failed hard-link attempts before the job fails
 #   max_size_gb: 0               # largest allowed job; 0 = no limit
 #   min_free_space_gb: 0         # space that must stay free in the download directory
+#   processing_path: /data/downloads/pending-processing
+#                                # jobs with an instruction are hard-linked into <processing_path>/<job_id>
+#                                # for an agent to process (same filesystem as the downloads); without it
+#                                # their files stay where the client put them
 
 # webhooks:
 #   - name: Send anime to telegram

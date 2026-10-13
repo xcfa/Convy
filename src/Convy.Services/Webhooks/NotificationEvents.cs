@@ -41,7 +41,9 @@ public sealed class WebhookJobEvents : IJobEvents
     /// <summary>
     /// The <c>job_status</c> body. A job with several releases also lists them under
     /// <c>releases</c>; its <c>path</c> is the directory containing all of them and
-    /// <c>files</c> are relative to it.
+    /// <c>files</c> are relative to it. A job with an <c>instruction</c> is handed off rather
+    /// than placed: <c>path</c> and <c>files</c> are what to process, <c>destination</c> is
+    /// where the result belongs.
     /// </summary>
     public static WebhookEvent ToEvent(JobStatusChange change)
     {
@@ -58,7 +60,9 @@ public sealed class WebhookJobEvents : IJobEvents
             ["category"] = job.Category,
             ["rule"] = job.Rule,
             ["title"] = job.Title,
+            ["instruction"] = job.Instruction,
             ["path"] = job.TargetPath,
+            ["destination"] = job.Destination,
             ["files"] = files.Take(MaxFiles).ToList(),
             ["files_total"] = files.Count > 0 ? files.Count : job.FileCount ?? 0,
             ["size_bytes"] = job.SizeBytes,
@@ -74,7 +78,9 @@ public sealed class WebhookJobEvents : IJobEvents
                     ["status"] = r.Status.ToName(),
                     ["provider"] = r.Provider,
                     ["rule"] = r.Rule,
+                    ["instruction"] = r.EffectiveInstruction,
                     ["path"] = r.TargetPath,
+                    ["destination"] = r.Destination,
                     ["size_bytes"] = r.SizeBytes,
                     ["error"] = r.Error,
                 })

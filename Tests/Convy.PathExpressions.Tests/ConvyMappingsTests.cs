@@ -31,6 +31,30 @@ public class ConvyMappingsTests
     }
 
     [Fact]
+    public void ReadsTheOptionalInstruction()
+    {
+        var mappings = ConvyMappings.ParseYaml(
+            """
+            rules:
+              - name: music
+                condition: "Category == Music"
+                path: /data/music
+                instruction: |
+                  Import the album with beets.
+                  Keep the original year.
+              - condition: "Category == Movies"
+                path: /data/movies
+                instruction: "  "
+              - condition: ""
+                path: /data/other
+            """);
+
+        Assert.Equal("Import the album with beets.\nKeep the original year.", mappings.Rules[0].Instruction);
+        Assert.Null(mappings.Rules[1].Instruction);
+        Assert.Null(mappings.Rules[2].Instruction);
+    }
+
+    [Fact]
     public void ReturnsNullWhenNoRuleMatches()
     {
         var mappings = ConvyMappings.ParseYaml(
