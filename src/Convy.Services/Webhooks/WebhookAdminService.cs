@@ -6,21 +6,33 @@ namespace Convy.Services.Webhooks;
 
 /// <summary>A webhook as the web UI shows it.</summary>
 /// <param name="Id">Id of a webhook created in the UI; <c>null</c> for one from configuration.yml.</param>
+/// <param name="FileIndex">Position of a webhook from configuration.yml among them; <c>null</c> for one from the UI.</param>
 /// <param name="Source"><c>ui</c> (editable) or <c>file</c> (configuration.yml, read-only).</param>
+/// <param name="Headers">The headers, without their values: those are never sent to the browser.</param>
 public sealed record WebhookDto(
     [property: JsonPropertyName("id")] int? Id,
+    [property: JsonPropertyName("file_index")] int? FileIndex,
     [property: JsonPropertyName("source")] string Source,
     [property: JsonPropertyName("name")] string? Name,
     [property: JsonPropertyName("url")] string Url,
     [property: JsonPropertyName("events")] IReadOnlyList<string> Events,
     [property: JsonPropertyName("names")] IReadOnlyList<string> Names,
     [property: JsonPropertyName("params")] IReadOnlyList<WebhookParamDto> Params,
+    [property: JsonPropertyName("headers")] IReadOnlyList<WebhookHeaderDto> Headers,
     [property: JsonPropertyName("enabled")] bool Enabled);
 
 public sealed record WebhookParamDto(
     [property: JsonPropertyName("place")] string Place,
     [property: JsonPropertyName("name")] string Name,
     [property: JsonPropertyName("value")] string Value);
+
+/// <summary>
+/// A header. The UI always gets it without a value; a header sent back without a value keeps
+/// the value the webhook already has for that name.
+/// </summary>
+public sealed record WebhookHeaderDto(
+    [property: JsonPropertyName("name")] string Name,
+    [property: JsonPropertyName("value")] string? Value);
 
 /// <summary>Everything the webhook page needs.</summary>
 /// <param name="Fields">Per event, the fields a parameter can pick.</param>
@@ -39,14 +51,21 @@ public sealed class WebhookInput
     [JsonPropertyName("events")] public List<string>? Events { get; init; }
     [JsonPropertyName("names")] public List<string>? Names { get; init; }
     [JsonPropertyName("params")] public List<WebhookParamDto>? Params { get; init; }
+    [JsonPropertyName("headers")] public List<WebhookHeaderDto>? Headers { get; init; }
     [JsonPropertyName("enabled")] public bool Enabled { get; init; } = true;
 }
 
-/// <summary>A test request: a webhook (saved or not) and the event to send.</summary>
+/// <summary>
+/// A test request: a webhook (saved or not) and the event to send. <c>id</c> or
+/// <c>file_index</c> names the webhook it was opened from, whose header values fill in those
+/// the browser does not have.
+/// </summary>
 public sealed class WebhookTestRequest
 {
     [JsonPropertyName("webhook")] public WebhookInput? Webhook { get; init; }
     [JsonPropertyName("event")] public string? Event { get; init; }
+    [JsonPropertyName("id")] public int? Id { get; init; }
+    [JsonPropertyName("file_index")] public int? FileIndex { get; init; }
 }
 
 /// <summary>What happened when a test event was sent.</summary>
@@ -95,8 +114,8 @@ public sealed class WebhookAdminService
 
     public WebhookListResponse List()
     {
-        var webhooks = _catalog.FileWebhooks.Select(w => ToDto(null, "file", w, enabled: true))
-            .Concat(_catalog.StoredWebhooks.Select(w => ToDto(w.Id, "ui", w.Config, w.Enabled)))
+        var webhooks = _catalog.FileWebhooks.Select((w, i) => ToDto(null, i, "file", w, enabled: true))
+            .Concat(_catalog.StoredWebhooks.Select(w => ToDto(w.Id, null, "ui", w.Config, w.Enabled)))
             .ToList();
 
         var rules = _rules.GetCurrent().Mappings.Rules
@@ -113,16 +132,16 @@ public sealed class WebhookAdminService
         var config = Validate(input);
         var stored = await _store.AddAsync(config, input.Enabled, cancellationToken).ConfigureAwait(false);
         await _catalog.ReloadAsync(cancellationToken).ConfigureAwait(false);
-        return ToDto(stored.Id, "ui", stored.Config, stored.Enabled);
+        return ToDto(stored.Id, null, "ui", stored.Config, stored.Enabled);
     }
 
     public async Task<WebhookDto> UpdateAsync(int id, WebhookInput input, CancellationToken cancellationToken)
     {
-        var config = Validate(input);
+        var config = Validate(input, _catalog.StoredWebhooks.FirstOrDefault(w => w.Id == id)?.Config);
         var stored = await _store.UpdateAsync(id, config, input.Enabled, cancellationToken).ConfigureAwait(false)
                      ?? throw new ConvyRequestException($"Webhook {id} does not exist.");
         await _catalog.ReloadAsync(cancellationToken).ConfigureAwait(false);
-        return ToDto(stored.Id, "ui", stored.Config, stored.Enabled);
+        return ToDto(stored.Id, null, "ui", stored.Config, stored.Enabled);
     }
 
     public async Task DeleteAsync(int id, CancellationToken cancellationToken)
@@ -142,7 +161,12 @@ public sealed class WebhookAdminService
     /// </summary>
     public async Task<WebhookTestResult> TestAsync(WebhookTestRequest request, CancellationToken cancellationToken)
     {
-        var config = Validate(request.Webhook ?? new WebhookInput());
+        var opened = request.Id is { } id
+            ? _catalog.StoredWebhooks.FirstOrDefault(w => w.Id == id)?.Config
+            : request.FileIndex is { } index && index >= 0 && index < _catalog.FileWebhooks.Count
+                ? _catalog.FileWebhooks[index]
+                : null;
+        var config = Validate(request.Webhook ?? new WebhookInput(), opened);
         var eventName = request.Event ?? WebhookEvents.Linked;
 
         var (body, query) = eventName switch
@@ -164,8 +188,11 @@ public sealed class WebhookAdminService
             delivery.Exception is null ? null : Describe(delivery.Exception));
     }
 
-    /// <summary>Checks a webhook from the UI and turns it into a configuration; throws with every problem found.</summary>
-    public static WebhookConfig Validate(WebhookInput input)
+    /// <summary>
+    /// Checks a webhook from the UI and turns it into a configuration; throws with every problem
+    /// found. A header without a value takes the value <paramref name="existing"/> has for it.
+    /// </summary>
+    public static WebhookConfig Validate(WebhookInput input, WebhookConfig? existing = null)
     {
         var problems = new List<string>();
 
@@ -210,6 +237,40 @@ public sealed class WebhookAdminService
             parameters.Add(new WebhookParam { Place = place, Name = param.Name.Trim(), Value = param.Value.Trim() });
         }
 
+        var headers = new List<WebhookHeader>();
+        foreach (var (header, index) in (input.Headers ?? []).Select((h, i) => (h, i + 1)))
+        {
+            var headerName = header.Name?.Trim() ?? string.Empty;
+            if (headerName.Length == 0)
+            {
+                problems.Add($"Header {index} needs a name.");
+                continue;
+            }
+
+            if (headers.Any(h => string.Equals(h.Name, headerName, StringComparison.OrdinalIgnoreCase)))
+            {
+                problems.Add($"Header {headerName} is given twice.");
+                continue;
+            }
+
+            var value = string.IsNullOrEmpty(header.Value)
+                ? existing?.Headers?.FirstOrDefault(h => string.Equals(h.Name, headerName, StringComparison.OrdinalIgnoreCase))?.Value
+                : header.Value.Trim();
+            if (string.IsNullOrEmpty(value))
+            {
+                problems.Add($"Header {headerName} needs a value.");
+                continue;
+            }
+
+            if (WebhookHeader.Problem(headerName, value) is { } problem)
+            {
+                problems.Add(problem);
+                continue;
+            }
+
+            headers.Add(new WebhookHeader { Name = headerName, Value = value });
+        }
+
         if (problems.Count > 0)
         {
             throw new ConvyRequestException(string.Join(" ", problems));
@@ -222,17 +283,20 @@ public sealed class WebhookAdminService
             Events = events.Count > 0 ? events : null,
             Names = names.Count > 0 ? names : null,
             Params = parameters.Count > 0 ? parameters : null,
+            Headers = headers.Count > 0 ? headers : null,
         };
     }
 
-    private static WebhookDto ToDto(int? id, string source, WebhookConfig config, bool enabled) => new(
+    private static WebhookDto ToDto(int? id, int? fileIndex, string source, WebhookConfig config, bool enabled) => new(
         id,
+        fileIndex,
         source,
         config.Name,
         config.Url,
         config.Events is { Count: > 0 } events ? events : [WebhookEvents.Linked],
         config.Names ?? [],
         (config.Params ?? []).Select(p => new WebhookParamDto(p.Place.ToString().ToLowerInvariant(), p.Name, p.Value)).ToList(),
+        (config.Headers ?? []).Select(h => new WebhookHeaderDto(h.Name, null)).ToList(),
         enabled);
 
     private static string Describe(Exception exception) =>

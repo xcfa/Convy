@@ -22,7 +22,7 @@ public static partial class ConfigurationMasking
         }
 
         var name = key[(key.LastIndexOf(':') + 1)..];
-        if (SecretKey().IsMatch(name))
+        if (SecretKey().IsMatch(name) || IsHeaderValue(key))
         {
             hidden = true;
             return Hidden;
@@ -34,6 +34,15 @@ public static partial class ConfigurationMasking
 
         hidden = !string.Equals(masked, value, StringComparison.Ordinal);
         return masked;
+    }
+
+    /// <summary>A webhook header's value (<c>Webhooks:0:headers:1:value</c>): usually a token under a neutral name.</summary>
+    private static bool IsHeaderValue(string key)
+    {
+        var segments = key.Split(':');
+        return segments.Length >= 3
+               && string.Equals(segments[^1], "value", StringComparison.OrdinalIgnoreCase)
+               && string.Equals(segments[^3], "headers", StringComparison.OrdinalIgnoreCase);
     }
 
     [GeneratedRegex(@"(password|passwd|pwd|secret|token|credentials?|key)$", RegexOptions.IgnoreCase)]

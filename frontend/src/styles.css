@@ -835,7 +835,8 @@ button.chip.toggle.on {
 }
 
 .form input[type="text"],
-.form input[type="url"] {
+.form input[type="url"],
+.form input[type="password"] {
   font: inherit;
   color: var(--text);
   background: var(--surface);
@@ -869,6 +870,10 @@ button.chip.toggle.on {
   grid-template-columns: 90px minmax(0, 1fr) auto minmax(0, 1fr) auto;
   gap: 6px;
   align-items: center;
+}
+
+.param-row.header-row {
+  grid-template-columns: minmax(0, 1fr) auto minmax(0, 1.4fr) auto;
 }
 
 .button.add {

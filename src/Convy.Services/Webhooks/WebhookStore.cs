@@ -87,6 +87,7 @@ public sealed class EfWebhookStore : IWebhookStore
         entry.EventsJson = config.Events is { Count: > 0 } ? JsonSerializer.Serialize(config.Events, Json) : null;
         entry.NamesJson = config.Names is { Count: > 0 } ? JsonSerializer.Serialize(config.Names, Json) : null;
         entry.ParamsJson = config.Params is { Count: > 0 } ? JsonSerializer.Serialize(config.Params, Json) : null;
+        entry.HeadersJson = config.Headers is { Count: > 0 } ? JsonSerializer.Serialize(config.Headers, Json) : null;
         entry.Enabled = enabled;
         entry.UpdatedAt = now;
     }
@@ -100,6 +101,7 @@ public sealed class EfWebhookStore : IWebhookStore
             Events = entry.EventsJson is null ? null : JsonSerializer.Deserialize<List<string>>(entry.EventsJson, Json),
             Names = entry.NamesJson is null ? null : JsonSerializer.Deserialize<List<string>>(entry.NamesJson, Json),
             Params = entry.ParamsJson is null ? null : JsonSerializer.Deserialize<List<WebhookParam>>(entry.ParamsJson, Json),
+            Headers = entry.HeadersJson is null ? null : JsonSerializer.Deserialize<List<WebhookHeader>>(entry.HeadersJson, Json),
         },
         entry.Enabled,
         entry.CreatedAt,

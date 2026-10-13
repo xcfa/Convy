@@ -3,9 +3,11 @@ import {
   api,
   type Webhook,
   type WebhookEvent,
+  type WebhookHeader,
   type WebhookInput,
   type WebhookList,
   type WebhookParam,
+  type WebhookRef,
   type WebhookTestResult,
 } from "../api";
 import { Badge, Card, Empty, ErrorBanner } from "../components";
@@ -17,7 +19,7 @@ const eventInfo: Record<WebhookEvent, string> = {
   source_error: "when a search source starts failing",
 };
 
-type Editing = { id: number | null; input: WebhookInput; readOnly: boolean };
+type Editing = { id: number | null; fileIndex: number | null; input: WebhookInput; readOnly: boolean };
 
 function toInput(webhook: Webhook): WebhookInput {
   return {
@@ -26,11 +28,12 @@ function toInput(webhook: Webhook): WebhookInput {
     events: webhook.events,
     names: webhook.names,
     params: webhook.params,
+    headers: webhook.headers,
     enabled: webhook.enabled,
   };
 }
 
-const empty: WebhookInput = { name: "", url: "", events: ["linked"], names: [], params: [], enabled: true };
+const empty: WebhookInput = { name: "", url: "", events: ["linked"], names: [], params: [], headers: [], enabled: true };
 
 export function Webhooks() {
   const list = usePolling(api.webhooks, 0);
@@ -63,7 +66,11 @@ export function Webhooks() {
   return (
     <>
       <div className="toolbar">
-        <button className="button" onClick={() => setEditing({ id: null, input: empty, readOnly: false })} disabled={!data}>
+        <button
+          className="button"
+          onClick={() => setEditing({ id: null, fileIndex: null, input: empty, readOnly: false })}
+          disabled={!data}
+        >
           Add webhook
         </button>
         <span className="muted small">
@@ -110,6 +117,11 @@ export function Webhooks() {
                   <td className="wrap small">{w.names.length ? w.names.join(", ") : <span className="muted">all</span>}</td>
                   <td className="small">
                     {w.params.length ? `${w.params.length} parameter${w.params.length === 1 ? "" : "s"}` : "whole body"}
+                    {w.headers.length > 0 && (
+                      <div className="muted">
+                        {w.headers.length} header{w.headers.length === 1 ? "" : "s"}
+                      </div>
+                    )}
                   </td>
                   <td>
                     {w.source === "file" ? (
@@ -123,7 +135,9 @@ export function Webhooks() {
                   <td className="actions">
                     <button
                       className="button ghost small"
-                      onClick={() => setEditing({ id: w.id, input: toInput(w), readOnly: w.source === "file" })}
+                      onClick={() =>
+                        setEditing({ id: w.id, fileIndex: w.file_index, input: toInput(w), readOnly: w.source === "file" })
+                      }
                     >
                       {w.source === "file" ? "View & test" : "Edit & test"}
                     </button>
@@ -186,6 +200,13 @@ function WebhookEditor({
   function setParam(index: number, change: Partial<WebhookParam>) {
     set({ params: input.params.map((p, i) => (i === index ? { ...p, ...change } : p)) });
   }
+
+  function setHeader(index: number, change: Partial<WebhookHeader>) {
+    set({ headers: input.headers.map((h, i) => (i === index ? { ...h, ...change } : h)) });
+  }
+
+  // Headers the webhook already had: their values stay on the server unless replaced here.
+  const savedHeaders = new Set(editing.input.headers.map((h) => h.name.toLowerCase()));
 
   async function save() {
     setSaving(true);
@@ -323,6 +344,58 @@ function WebhookEditor({
               </div>
             </div>
 
+            <div className="form-row">
+              <span>Headers</span>
+              <div className="stack">
+                {input.headers.length === 0 && <span className="muted small">None.</span>}
+                {input.headers.map((header, i) => (
+                  <div key={i} className="param-row header-row">
+                    <input
+                      type="text"
+                      value={header.name}
+                      onChange={(e) => setHeader(i, { name: e.target.value })}
+                      placeholder="Authorization"
+                      aria-label="Header name"
+                    />
+                    <span className="muted">:</span>
+                    <input
+                      type="password"
+                      autoComplete="off"
+                      value={header.value ?? ""}
+                      onChange={(e) => setHeader(i, { value: e.target.value })}
+                      placeholder={
+                        readOnly ? "hidden" : savedHeaders.has(header.name.toLowerCase()) ? "hidden; type to replace" : "value"
+                      }
+                      aria-label="Header value"
+                    />
+                    {!readOnly && (
+                      <button
+                        type="button"
+                        className="button ghost small"
+                        onClick={() => set({ headers: input.headers.filter((_, j) => j !== i) })}
+                        aria-label="Remove header"
+                      >
+                        ✕
+                      </button>
+                    )}
+                  </div>
+                ))}
+                {!readOnly && (
+                  <button
+                    type="button"
+                    className="button ghost small add"
+                    onClick={() => set({ headers: [...input.headers, { name: "", value: "" }] })}
+                  >
+                    Add header
+                  </button>
+                )}
+                <span className="muted small">
+                  Sent with every request, e.g. Authorization: Bearer …. Values are secrets: they are never shown
+                  again.
+                </span>
+              </div>
+            </div>
+
             {!readOnly && (
               <label className="check">
                 <input type="checkbox" checked={input.enabled} onChange={(e) => set({ enabled: e.target.checked })} /> Enabled
@@ -342,14 +415,14 @@ function WebhookEditor({
             </div>
           )}
 
-          <WebhookTester input={input} events={list.events} />
+          <WebhookTester input={input} events={list.events} opened={{ id: editing.id, file_index: editing.fileIndex }} />
         </div>
       </div>
     </div>
   );
 }
 
-function WebhookTester({ input, events }: { input: WebhookInput; events: WebhookEvent[] }) {
+function WebhookTester({ input, events, opened }: { input: WebhookInput; events: WebhookEvent[]; opened: WebhookRef }) {
   const [event, setEvent] = useState<WebhookEvent>(input.events[0] ?? "linked");
   const [result, setResult] = useState<WebhookTestResult>();
   const [error, setError] = useState<string>();
@@ -360,7 +433,7 @@ function WebhookTester({ input, events }: { input: WebhookInput; events: Webhook
     setError(undefined);
     setResult(undefined);
     try {
-      setResult(await api.testWebhook(input, event));
+      setResult(await api.testWebhook(input, event, opened));
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e));
     } finally {
@@ -384,7 +457,9 @@ function WebhookTester({ input, events }: { input: WebhookInput; events: Webhook
         <button className="button ghost" onClick={send} disabled={sending || !input.url}>
           {sending ? "Sending…" : "Send test"}
         </button>
-        <span className="muted small">Sends sample data as the form is now (saved or not), with an X-Convy-Test: true header.</span>
+        <span className="muted small">
+          Sends sample data as the form is now (saved or not), with its headers and an X-Convy-Test: true header.
+        </span>
       </div>
       <ErrorBanner message={error} />
       {result && (

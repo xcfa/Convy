@@ -126,15 +126,25 @@ export interface WebhookParam {
   value: string;
 }
 
+/** A header sent with every request. The server never sends the value back: it is a secret. */
+export interface WebhookHeader {
+  name: string;
+  /** null or empty when saving: keep the value the webhook already has. */
+  value: string | null;
+}
+
 export interface Webhook {
   /** Set for webhooks created in the UI; null for those from configuration.yml. */
   id: number | null;
+  /** Position among the webhooks from configuration.yml; null for those from the UI. */
+  file_index: number | null;
   source: "ui" | "file";
   name: string | null;
   url: string;
   events: WebhookEvent[];
   names: string[];
   params: WebhookParam[];
+  headers: WebhookHeader[];
   enabled: boolean;
 }
 
@@ -151,7 +161,14 @@ export interface WebhookInput {
   events: WebhookEvent[];
   names: string[];
   params: WebhookParam[];
+  headers: WebhookHeader[];
   enabled: boolean;
+}
+
+/** The webhook a form was opened from, whose hidden header values a test uses. */
+export interface WebhookRef {
+  id: number | null;
+  file_index: number | null;
 }
 
 export interface WebhookTestResult {
@@ -319,8 +336,8 @@ export const api = {
   createWebhook: (input: WebhookInput) => request<Webhook>("/api/ui/webhooks", json("POST", input)),
   updateWebhook: (id: number, input: WebhookInput) => request<Webhook>(`/api/ui/webhooks/${id}`, json("PUT", input)),
   deleteWebhook: (id: number) => request<void>(`/api/ui/webhooks/${id}`, { method: "DELETE" }),
-  testWebhook: (webhook: WebhookInput, event: WebhookEvent) =>
-    request<WebhookTestResult>("/api/ui/webhooks/test", json("POST", { webhook, event })),
+  testWebhook: (webhook: WebhookInput, event: WebhookEvent, opened: WebhookRef) =>
+    request<WebhookTestResult>("/api/ui/webhooks/test", json("POST", { webhook, event, ...opened })),
   rules: () => request<RulesView>("/api/ui/rules"),
   about: () => request<AboutInfo>("/api/ui/about"),
 };

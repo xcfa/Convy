@@ -28,7 +28,15 @@ public sealed class WebhookAdminTests : IDisposable
 
     private readonly TestDb _db = new();
     private readonly RecordingHandler _handler = new();
-    private readonly List<WebhookConfig> _fileWebhooks = [new() { Name = "From file", Url = "http://file.example/hook" }];
+    private readonly List<WebhookConfig> _fileWebhooks =
+    [
+        new()
+        {
+            Name = "From file",
+            Url = "http://file.example/hook",
+            Headers = [new WebhookHeader { Name = "X-Api-Key", Value = "file-secret" }],
+        },
+    ];
     private readonly WebhookCatalog _catalog;
     private readonly WebhookAdminService _service;
 
@@ -150,6 +158,123 @@ public sealed class WebhookAdminTests : IDisposable
 
         var request = Assert.Single(_handler.Requests);
         Assert.Equal("true", Assert.Single(request.Headers.GetValues("X-Convy-Test")));
+    }
+
+    [Fact]
+    public async Task HeadersAreSentButTheirValuesNeverShown()
+    {
+        var input = Input();
+        var created = await _service.CreateAsync(new WebhookInput
+        {
+            Url = input.Url,
+            Events = input.Events,
+            Headers = [new WebhookHeaderDto(" Authorization ", " Bearer s3cr3t "), new WebhookHeaderDto("X-Source", "convy")],
+        }, CancellationToken.None);
+
+        // The browser gets the names only, also in the list.
+        Assert.Equal([("Authorization", (string?)null), ("X-Source", null)], created.Headers.Select(h => (h.Name, h.Value)));
+        Assert.DoesNotContain("s3cr3t", JsonSerializer.Serialize(_service.List()));
+
+        // Saving without values (as the browser does, e.g. when switching the webhook off) keeps them.
+        await _service.UpdateAsync(created.Id!.Value, new WebhookInput
+        {
+            Url = input.Url,
+            Events = input.Events,
+            Headers = [new WebhookHeaderDto("authorization", null), new WebhookHeaderDto("X-Source", "convy-2")],
+            Enabled = false,
+        }, CancellationToken.None);
+        var stored = Assert.Single(_catalog.StoredWebhooks).Config.Headers!;
+        Assert.Equal([("authorization", "Bearer s3cr3t"), ("X-Source", "convy-2")], stored.Select(h => (h.Name, h.Value)));
+
+        // A test from the editor uses the stored values of the webhook it was opened from.
+        await _service.TestAsync(new WebhookTestRequest
+        {
+            Webhook = new WebhookInput { Url = input.Url, Headers = [new WebhookHeaderDto("Authorization", null)] },
+            Event = "job_status",
+            Id = created.Id,
+        }, CancellationToken.None);
+        var request = Assert.Single(_handler.Requests);
+        Assert.Equal("Bearer s3cr3t", Assert.Single(request.Headers.GetValues("Authorization")));
+    }
+
+    [Fact]
+    public async Task AFileWebhookIsTestedWithItsOwnHeaders()
+    {
+        var file = _service.List().Webhooks[0];
+        Assert.Equal((0, "X-Api-Key", (string?)null), (file.FileIndex!.Value, file.Headers[0].Name, file.Headers[0].Value));
+
+        await _service.TestAsync(new WebhookTestRequest
+        {
+            Webhook = new WebhookInput { Url = file.Url, Headers = [.. file.Headers] },
+            Event = "linked",
+            FileIndex = file.FileIndex,
+        }, CancellationToken.None);
+
+        Assert.Equal("file-secret", Assert.Single(Assert.Single(_handler.Requests).Headers.GetValues("X-Api-Key")));
+    }
+
+    [Theory]
+    [InlineData("", "v", "Header 1 needs a name.")]
+    [InlineData("X-Token", "", "Header X-Token needs a value.")]
+    [InlineData("Bad Name", "v", "'Bad Name' is not a header name")]
+    [InlineData("Content-Type", "text/plain", "Content-Type is set by Convy")]
+    [InlineData("Host", "evil.example", "Host is set by Convy")]
+    [InlineData("X-Token", "a\r\nX-Injected: 1", "contains a line break")]
+    public void RejectsBadHeaders(string name, string value, string message)
+    {
+        var ex = Assert.Throws<ConvyRequestException>(() => WebhookAdminService.Validate(new WebhookInput
+        {
+            Url = "https://x.example",
+            Headers = [new WebhookHeaderDto(name, value)],
+        }));
+
+        Assert.Contains(message, ex.Message);
+    }
+
+    [Fact]
+    public void RejectsAHeaderGivenTwice()
+    {
+        var ex = Assert.Throws<ConvyRequestException>(() => WebhookAdminService.Validate(new WebhookInput
+        {
+            Url = "https://x.example",
+            Headers = [new WebhookHeaderDto("X-Token", "a"), new WebhookHeaderDto("x-token", "b")],
+        }));
+
+        Assert.Contains("Header x-token is given twice.", ex.Message);
+    }
+
+    [Fact]
+    public async Task HeadersSurviveARestart()
+    {
+        await _service.CreateAsync(new WebhookInput { Url = "https://x.example", Headers = [new WebhookHeaderDto("X-Token", "t")] },
+            CancellationToken.None);
+
+        var restarted = new WebhookCatalog(
+            new WebhookConfigSource(new StaticOptions<List<WebhookConfig>>([]), NullLogger<WebhookConfigSource>.Instance),
+            new EfWebhookStore(_db, new FakeTime()),
+            NullLogger<WebhookCatalog>.Instance);
+        await restarted.ReloadAsync(CancellationToken.None);
+
+        var header = Assert.Single(Assert.Single(restarted.Active).Headers!);
+        Assert.Equal(("X-Token", "t"), (header.Name, header.Value));
+    }
+
+    [Fact]
+    public async Task AnInvalidHeaderFromTheFileIsLeftOutAndTheRestSent()
+    {
+        var sender = new WebhookSender(new HttpClient(_handler), NullLogger<WebhookSender>.Instance);
+        var webhook = new WebhookConfig
+        {
+            Url = "https://x.example/hook",
+            Headers = [new WebhookHeader { Name = "Content-Length", Value = "1" }, new WebhookHeader { Name = "X-Token", Value = "t" }],
+        };
+
+        var delivery = await sender.DeliverAsync(webhook, new { }, new Dictionary<string, string>(), test: false, CancellationToken.None);
+
+        Assert.True(delivery.Success);
+        var request = Assert.Single(_handler.Requests);
+        Assert.Equal("t", Assert.Single(request.Headers.GetValues("X-Token")));
+        Assert.Equal(2, request.Content!.Headers.ContentLength);
     }
 
     [Fact]

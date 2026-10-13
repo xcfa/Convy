@@ -391,6 +391,9 @@ namespace Convy.Data.Migrations
                     b.Property<string>("EventsJson")
                         .HasColumnType("TEXT");
 
+                    b.Property<string>("HeadersJson")
+                        .HasColumnType("TEXT");
+
                     b.Property<string>("Name")
                         .HasMaxLength(256)
                         .HasColumnType("TEXT");

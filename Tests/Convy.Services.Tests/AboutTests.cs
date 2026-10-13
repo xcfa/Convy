@@ -19,6 +19,8 @@ public class ConfigurationMaskingTests
     [InlineData("Opds:catalogs:0:password", "pw")]
     [InlineData("Serilog:WriteTo:1:Args:apiKey", "seq-key")]
     [InlineData("Something:AccessToken", "t")]
+    [InlineData("Webhooks:0:headers:0:value", "Bearer abc")]
+    [InlineData("Webhooks:2:Headers:1:Value", "abc")]
     public void HidesValuesOfSecretKeys(string key, string value)
     {
         Assert.Equal(ConfigurationMasking.Hidden, ConfigurationMasking.Mask(key, value, out var hidden));
@@ -33,6 +35,7 @@ public class ConfigurationMaskingTests
     [InlineData("ConnectionStrings:SQLite", "Data Source=/var/lib/convy/convy.db", "Data Source=/var/lib/convy/convy.db", false)]
     [InlineData("ConnectionStrings:Other", "Host=db;Username=u;Password=p4ss;Pooling=true", "Host=db;Username=u;Password=••••••;Pooling=true", true)]
     [InlineData("Ui:Oidc:ClientId", "convy", "convy", false)]
+    [InlineData("Webhooks:0:headers:0:name", "Authorization", "Authorization", false)]
     [InlineData("Categories:music:path_hint", "Artist/Year - Album", "Artist/Year - Album", false)]
     public void HidesCredentialsInsideValues(string key, string value, string expected, bool wasHidden)
     {

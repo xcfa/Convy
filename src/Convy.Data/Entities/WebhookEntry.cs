@@ -26,6 +26,9 @@ namespace Convy.Data.Entities
         /// <summary>JSON array of <c>{ place, name, value }</c>; <c>null</c> to send whole bodies.</summary>
         public string? ParamsJson { get; set; }
 
+        /// <summary>JSON array of <c>{ name, value }</c> headers sent with every request; the values are secrets.</summary>
+        public string? HeadersJson { get; set; }
+
         /// <summary>A disabled webhook is kept but never called.</summary>
         public bool Enabled { get; set; } = true;
 
