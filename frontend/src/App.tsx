@@ -62,7 +62,7 @@ export function App() {
       <main className="content">
         {route.tab === "overview" && <Overview />}
         {route.tab === "jobs" && <Jobs status={route.params.get("status") ?? ""} />}
-        {route.tab === "logs" && <Logs />}
+        {route.tab === "logs" && <Logs job={route.params.get("job") ?? ""} />}
         {route.tab === "data" && <Data table={route.params.get("table")} />}
         {route.tab === "webhooks" && <Webhooks />}
         {route.tab === "rules" && <Rules />}

@@ -1,6 +1,7 @@
 using Convy.Data.Context;
 using Convy.Data.Entities;
 using Convy.Infrastructure.Helpers;
+using Convy.Services.Diagnostics;
 using Convy.PathExpressions.Mappings;
 using Convy.Services.Downloads;
 using Convy.Services.Jobs;
@@ -321,6 +322,8 @@ public sealed class SyncCycleService
             return ProcessOutcome.NoMatch;
         }
 
+        using var scope = LogScopes.Job(_logger, job);
+
         var item = await downloader.GetItemAsync(job.ItemRef, cancellationToken).ConfigureAwait(false);
         if (item is null || !item.IsDownloaded)
         {
@@ -465,11 +468,15 @@ public sealed class SyncCycleService
         }
 
         var attempts = job.PlacementAttempts + 1;
+        var maxAttempts = _jobOptions.CurrentValue.MaxPlacementAttempts;
         var reason = outcome.Errors.Count > 0
             ? string.Join("; ", outcome.Errors.Distinct())
-            : $"{outcome.MissingSources} file(s) not found under '{item.SavePath}'";
+            : MissingReason(item, outcome.Missing);
 
-        if (attempts >= _jobOptions.CurrentValue.MaxPlacementAttempts)
+        _logger.LogWarning(
+            "Job {JobId}: placement attempt {Attempt} of {MaxAttempts} failed: {Reason}", job.JobId, attempts, maxAttempts, reason);
+
+        if (attempts >= maxAttempts)
         {
             await FailJobAsync(job, $"Placement failed after {attempts} attempt(s): {reason}", now, cancellationToken)
                 .ConfigureAwait(false);
@@ -480,6 +487,19 @@ public sealed class SyncCycleService
             job, job with { PlacementAttempts = attempts, Error = reason, UpdatedAt = now }, cancellationToken)
             .ConfigureAwait(false);
         return (outcome, ProcessOutcome.Retry);
+    }
+
+    /// <summary>
+    /// Why files of a downloaded item cannot be linked: they are gone although the downloader
+    /// reports them complete, so something else took them after the download.
+    /// </summary>
+    private static string MissingReason(DownloadItem item, IReadOnlyList<string> missing)
+    {
+        const int Shown = 5;
+        var names = string.Join(", ", missing.Take(Shown).Select(m => $"'{m}'"))
+                    + (missing.Count > Shown ? $" and {missing.Count - Shown} more" : string.Empty);
+        return $"{missing.Count} file(s) missing from '{item.SavePath}': {names}. {item.Provider} reports them downloaded, " +
+               "so something else moved or deleted them after the download, e.g. an import that watches the download directory.";
     }
 
     private async Task<ProcessOutcome> ProcessManualAsync(

@@ -25,6 +25,9 @@ public interface IJobStore
     /// <summary>The newest release of the item that is not finished, or <c>null</c>.</summary>
     Task<JobRecord?> FindActiveAsync(string provider, string itemRef, CancellationToken cancellationToken);
 
+    /// <summary>The newest job of each item in <paramref name="itemRefs"/> that has one: item reference → job id.</summary>
+    Task<IReadOnlyDictionary<string, string>> GetJobIdsByItemAsync(IReadOnlyCollection<string> itemRefs, CancellationToken cancellationToken);
+
     /// <summary>The newest <paramref name="limit"/> jobs, newest first, each with its releases.</summary>
     Task<IReadOnlyList<IReadOnlyList<JobRecord>>> ListGroupsAsync(int limit, CancellationToken cancellationToken);
 

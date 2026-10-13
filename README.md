@@ -633,8 +633,14 @@ Convy serves a small web interface at `/`:
   outcome of its last read, search sources, the storage-layout check, job counts, version.
 - **Jobs** — the agent's jobs with live progress, filtered by status; a job with several
   releases unfolds into them; active ones can be cancelled (downloaded data and links are kept).
-- **Logs** — the last 5000 log entries kept in memory, followed live, filtered by level and
-  text. The full log stays in the console and the log files.
+  **Logs** opens the job's log entries.
+- **Logs** — the last 5000 log entries kept in memory, followed live, filtered by level, text
+  and job. Every entry about a job carries its id, also those of the downloader that only know
+  the item (queued, downloaded into …), so a job's story reads in one place: added, downloaded,
+  each failed placement attempt with what is missing and why. Entries can be grouped by job and
+  shown as lines, as plain text like the log files, or as JSON Lines with the structured
+  properties (`JobId`, `ItemRef`, `Attempt`, …), each ready to copy. The full log stays in the
+  console and the log files.
 - **Database** — every table read-only, with search, sorting and paging. Values that hold
   secrets are never sent: a search result's content id (it contains the Prowlarr API key)
   is left out, and binary columns (`.torrent` files) are shown only as their size.

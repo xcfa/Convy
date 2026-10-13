@@ -175,6 +175,21 @@ public sealed class EfJobStore : IJobStore
         }
     }
 
+    public async Task<IReadOnlyDictionary<string, string>> GetJobIdsByItemAsync(
+        IReadOnlyCollection<string> itemRefs, CancellationToken cancellationToken)
+    {
+        await using var db = await _dbFactory.CreateDbContextAsync(cancellationToken).ConfigureAwait(false);
+        var jobs = await db.Jobs.AsNoTracking()
+            .Where(j => itemRefs.Contains(j.ItemRef))
+            .Select(j => new { j.ItemRef, j.GroupId })
+            .ToListAsync(cancellationToken)
+            .ConfigureAwait(false);
+
+        return jobs
+            .GroupBy(j => j.ItemRef, StringComparer.Ordinal)
+            .ToDictionary(g => g.Key, g => JobIds.Format(g.Max(j => j.GroupId)), StringComparer.Ordinal);
+    }
+
     private static void Apply(JobRecord job, JobEntry entry)
     {
         entry.ItemRef = job.ItemRef;
