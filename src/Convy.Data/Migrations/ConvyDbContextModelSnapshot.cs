@@ -118,6 +118,10 @@ namespace Convy.Data.Migrations
                     b.Property<DateTimeOffset>("CreatedAt")
                         .HasColumnType("TEXT");
 
+                    b.Property<string>("Destination")
+                        .HasMaxLength(2048)
+                        .HasColumnType("TEXT");
+
                     b.Property<string>("Error")
                         .HasMaxLength(4096)
                         .HasColumnType("TEXT");
@@ -127,6 +131,10 @@ namespace Convy.Data.Migrations
 
                     b.Property<int>("GroupId")
                         .HasColumnType("INTEGER");
+
+                    b.Property<string>("Instruction")
+                        .HasMaxLength(8192)
+                        .HasColumnType("TEXT");
 
                     b.Property<string>("ItemRef")
                         .IsRequired()
@@ -156,6 +164,10 @@ namespace Convy.Data.Migrations
 
                     b.Property<string>("Rule")
                         .HasMaxLength(256)
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("RuleInstruction")
+                        .HasMaxLength(8192)
                         .HasColumnType("TEXT");
 
                     b.Property<string>("SelectedFilesJson")

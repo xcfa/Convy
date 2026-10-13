@@ -33,6 +33,19 @@ public sealed record JobState
     /// <summary>The release's directory; for several releases the deepest directory containing all of them.</summary>
     public string? TargetPath => HasManyReleases ? CommonDirectory(Releases.Select(r => r.TargetPath)) : Releases[0].TargetPath;
 
+    /// <summary>
+    /// The instructions for processing the files (the rule's, then the request's) when every
+    /// release has the same; <c>null</c> when there are none or they differ (see the releases).
+    /// </summary>
+    public string? Instruction =>
+        Releases.Select(r => r.EffectiveInstruction).Distinct(StringComparer.Ordinal).Count() == 1 ? Releases[0].EffectiveInstruction : null;
+
+    /// <summary>
+    /// Where the handed-off files belong once processed; for several releases the deepest
+    /// directory containing all of them.
+    /// </summary>
+    public string? Destination => HasManyReleases ? CommonDirectory(Releases.Select(r => r.Destination)) : Releases[0].Destination;
+
     public long? SizeBytes => SumOrNull(Releases.Select(r => r.SizeBytes));
 
     public int? FileCount => Releases.Any(r => r.FileCount is not null) ? Releases.Sum(r => r.FileCount ?? 0) : null;

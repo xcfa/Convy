@@ -19,12 +19,14 @@ public sealed record RulesView(
     [property: JsonPropertyName("error")] string? Error,
     [property: JsonPropertyName("error_at")] DateTimeOffset? ErrorAt);
 
+/// <param name="Instruction">What an agent should do with a job's files first; such jobs are handed off, not placed.</param>
 /// <param name="MatchesEverything">The rule has an empty condition (a catch-all).</param>
 /// <param name="Unreachable">An earlier rule matches everything, so this one is never used.</param>
 public sealed record RuleDto(
     [property: JsonPropertyName("name")] string? Name,
     [property: JsonPropertyName("condition")] string Condition,
     [property: JsonPropertyName("path")] string Path,
+    [property: JsonPropertyName("instruction")] string? Instruction,
     [property: JsonPropertyName("properties")] IReadOnlyList<string> Properties,
     [property: JsonPropertyName("matches_everything")] bool MatchesEverything,
     [property: JsonPropertyName("unreachable")] bool Unreachable);
@@ -63,6 +65,7 @@ public sealed class RulesViewService
                 r.Name,
                 r.RawCondition,
                 r.OutputPath,
+                r.Instruction,
                 r.ReferencedProperties.Order(StringComparer.Ordinal).ToList(),
                 r.MatchesEverything,
                 catchAll >= 0 && i > catchAll))

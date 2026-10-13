@@ -1023,3 +1023,19 @@ tr.unreachable td {
     width: 100%;
   }
 }
+
+.handoff {
+  margin-top: 4px;
+}
+
+/* An agent's instruction: prose, so not monospace; long ones are cut to three lines (full text in the title). */
+.instruction {
+  font: 13px/1.4 system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  display: -webkit-box;
+  -webkit-line-clamp: 3;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+  margin-top: 2px;
+}

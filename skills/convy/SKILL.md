@@ -46,6 +46,10 @@ Talk to the user in their language. Show releases as short readable lines, never
    `failed`; tell the user. Report `job_id`,
    `expected_path` (a forecast; rules are evaluated again at placement) and `rule`. Without a
    rule (`rule: null`) the files stay in the client's download folder; say so.
+   When the user wants more than the download (convert the books to one format, unify the
+   formatting, retag), put that in `instruction`, written for the agent that will do it. The
+   files are then handed off for processing instead of placed; `instruction` in the response
+   also shows a category rule's own instruction. Say that the processing happens afterwards.
 8. **Follow up** with `get_jobs` when the user asks, or once right after downloading to see
    that it started. Do not poll in a loop.
 
@@ -137,7 +141,7 @@ A pattern that matches no file is an error: check the names with `list_files`.
 | `downloading` | In progress | Report `progress` and speed |
 | `stalled` | No progress for a while (no seeds, peer offline) | Offer to wait, pick another result, or cancel |
 | `placing` | Downloaded, waiting for placement | Normal; takes up to one sync cycle |
-| `completed` | Files are in the library at `path` | Done |
+| `completed` | Files are in the library at `path`; with an `instruction`, handed off for processing at `path`, to end up in `destination` | Done, or say processing follows |
 | `failed` | Client error, peer refusal, placement failed | Quote `error`; offer another result |
 | `cancelled` | Cancelled by `cancel_job` | — |
 

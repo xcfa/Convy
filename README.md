@@ -78,6 +78,11 @@ rules:
     path: /data/media/shows/favourite
   - condition: "SeedingTime > 86400"
     path: /data/media/archive
+  - name: music                                   # jobs are handed off to an agent first
+    condition: "Category == Music"
+    path: /data/media/music
+    instruction: |
+      Import the album with beets into the destination; keep the original release year.
   - name: soulseek-other                          # Soulseek downloads not placed above
     condition: "Provider == slskd"
     path: /data/media/soulseek
@@ -88,6 +93,11 @@ rules:
 
 The optional `name` on a rule lets you scope webhooks to specific rules — see
 [Webhooks](#webhooks).
+
+The optional `instruction` asks an agent to process a job's files before they go into the
+rule's `path`: such jobs are handed off instead of placed, see
+[Jobs with an instruction](#jobs-with-an-instruction). It applies to jobs started through Convy;
+downloads added to the client by hand are placed by the rule as before.
 
 An **empty condition** (`condition: ""`, or `condition:` with no value) matches every
 download, from any client, so a catch-all rule at the end of the list places everything the
@@ -188,7 +198,9 @@ as before):
   "category": "music",
   "rule": "music",
   "title": "…",
+  "instruction": null,
   "path": "/data/media/music/Evanescence/2003 - Fallen",
+  "destination": null,
   "files": ["01 - Going Under.flac", "…"],
   "files_total": 12,
   "size_bytes": 432000000,
@@ -196,8 +208,12 @@ as before):
 }
 ```
 
+For a job handed off for processing (see [Jobs with an instruction](#jobs-with-an-instruction)),
+`instruction` says what to do, `path` and `files` are what to process and `destination` is where
+the result belongs.
+
 A job with several releases (see [Jobs and placement](#jobs-and-placement)) also carries
-`"releases": [{ "title", "status", "provider", "rule", "path", "size_bytes", "error" }, …]`;
+`"releases": [{ "title", "status", "provider", "rule", "instruction", "path", "destination", "size_bytes", "error" }, …]`;
 its `path` is the directory holding all releases, `files` are relative to it, and `rule` is set
 only when every release has the same one.
 
@@ -364,8 +380,8 @@ this setup; edit the "Release preferences" section to change them.
 | `search` | `category`, `queries[]`, `sources[]?` | `search_id`, results of the first batch, a status per source, `has_more` |
 | `search_next` | `search_id` | results of the next batch of sources, `has_more` |
 | `list_files` | `result_id`, `path?`, `glob?`, `offset?` | top-level tree with per-directory summary, one expanded directory, or glob matches; or `status: timeout` |
-| `download` | `category`, and `result_id` + `subpath?`, `include[]?`, `exclude[]?` for one result, or `releases[]` (each `{result_id, subpath?, include?, exclude?}`) for several as one job | `job_id`, expected path and rule, file count and size; per release with `releases` |
-| `get_jobs` | `status?`, `limit?` | jobs with status, progress, speed and path (active jobs are read from the client directly) |
+| `download` | `category`, and `result_id` + `subpath?`, `include[]?`, `exclude[]?` for one result, or `releases[]` (each `{result_id, subpath?, include?, exclude?}`) for several as one job; `instruction?` to have the files processed afterwards | `job_id`, expected path, rule and instruction, file count and size; per release with `releases` |
+| `get_jobs` | `status?`, `limit?` | jobs with status, progress, speed, path, and for handed-off jobs instruction and destination (active jobs are read from the client directly) |
 | `cancel_job` | `job_id` | stops the download; data and links are kept |
 
 Responses are compact JSON; a rejected request (unknown category, invalid sub-path, a pattern
@@ -531,6 +547,41 @@ A sub-path must be relative, use `/` as separator, contain no `.`/`..`/empty seg
 control characters and none of `<>:"|?*`, have segments of at most 255 bytes, and stay inside
 its base directory after resolving symbolic links. An invalid sub-path is rejected, never
 corrected silently. Manual downloads (without a job) are handled exactly as before.
+
+### Jobs with an instruction
+
+Some downloads need work before they belong in the library: albums tagged with beets, books
+converted to one format and style. Such a job carries an **instruction**, from the agent's
+`download` request (`instruction`), from the matching rule (`instruction:` in `rules.yaml`), or
+both: the rule's comes first, the request's is appended.
+
+A job with an instruction is **handed off** instead of placed:
+
+1. Once downloaded, its files are hard-linked into a folder of its own,
+   `<jobs.processing_path>/<job_id>/`, with the download's structure (only the selected files).
+   Without `jobs.processing_path` they stay where the client put them.
+2. The job is `completed`, and its `job_status` webhook carries `instruction`, `path` and `files`
+   (what to process) and `destination`: where the rule would have put them, with the sub-path
+   (`null` when no rule matches).
+3. The rest is up to the receiver, e.g. n8n passing the event to an agent that runs beets and
+   writes the result into `destination`. Convy does not watch the processing folder; clean it up
+   when done.
+
+The `download` response and the job's events from `queued` on already show the instruction and
+the expected `destination`, a forecast like `expected_path`; both are settled when the files are
+handed off.
+
+```yaml
+jobs:
+  processing_path: /data/downloads/pending-processing   # same filesystem as the downloads
+```
+
+The files in the processing folder are **hard links to the seeding files**. A tool that
+rewrites a file in place (tag editors, beets with `write: yes` on those files) changes the
+seeding copy too, and the client then reports it as damaged. Have the agent copy what it
+changes into `destination` and leave the processing folder untouched; unchanged files can be
+hard-linked again (`ln`, `cp -l`). How Convy itself could guarantee this is open, see
+[TODO](TODO.md).
 
 ### Immediate placement
 

@@ -190,6 +190,9 @@ public sealed class EfJobStore : IJobStore
         entry.TargetPath = job.TargetPath;
         entry.Error = job.Error;
         entry.PlacedFilesJson = job.PlacedFiles is null ? null : JsonSerializer.Serialize(job.PlacedFiles);
+        entry.Instruction = job.Instruction;
+        entry.RuleInstruction = job.RuleInstruction;
+        entry.Destination = job.Destination;
         entry.PlacementAttempts = job.PlacementAttempts;
         entry.LastDownloadedBytes = job.LastDownloadedBytes;
         entry.LastProgressAt = job.LastProgressAt;
@@ -236,6 +239,9 @@ public sealed class EfJobStore : IJobStore
         PlacedFiles = entry.PlacedFilesJson is null
             ? null
             : JsonSerializer.Deserialize<List<string>>(entry.PlacedFilesJson),
+        Instruction = entry.Instruction,
+        RuleInstruction = entry.RuleInstruction,
+        Destination = entry.Destination,
         PlacementAttempts = entry.PlacementAttempts,
         LastDownloadedBytes = entry.LastDownloadedBytes,
         LastProgressAt = entry.LastProgressAt,

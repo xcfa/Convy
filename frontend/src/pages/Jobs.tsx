@@ -1,6 +1,6 @@
 import { Fragment, useState } from "react";
 import { api, type Job } from "../api";
-import { Empty, ErrorBanner, JobStatusBadge, Progress } from "../components";
+import { Badge, Empty, ErrorBanner, JobStatusBadge, Progress } from "../components";
 import { bytes, dateTimeText, percent, speed } from "../format";
 import { navigate } from "../route";
 import { usePolling } from "../usePolling";
@@ -116,6 +116,7 @@ export function Jobs({ status }: { status: string }) {
                   <td className="wrap mono small">
                     {job.path ?? "—"}
                     {job.rule && <div className="muted">rule: {job.rule}</div>}
+                    <Handoff instruction={job.instruction} destination={job.destination} />
                   </td>
                   <td className="small">{dateTimeText(job.created_at)}</td>
                   <td>
@@ -149,6 +150,7 @@ export function Jobs({ status }: { status: string }) {
                       <td className="wrap mono small">
                         {release.path ?? "—"}
                         {release.rule && <div className="muted">rule: {release.rule}</div>}
+                        {!job.instruction && <Handoff instruction={release.instruction} destination={release.destination} />}
                       </td>
                       <td />
                       <td />
@@ -161,5 +163,24 @@ export function Jobs({ status }: { status: string }) {
         </div>
       )}
     </>
+  );
+}
+
+/** A job handed off for processing: where its files belong afterwards and what to do with them. */
+function Handoff({ instruction, destination }: { instruction: string | null; destination: string | null }) {
+  if (!instruction) {
+    return null;
+  }
+
+  return (
+    <div className="handoff">
+      <Badge tone="info" title="Handed off for processing by an agent instead of placed by a rule">
+        handed off
+      </Badge>
+      {destination && <div className="muted">then: {destination}</div>}
+      <div className="instruction" title={instruction}>
+        {instruction}
+      </div>
+    </div>
   );
 }

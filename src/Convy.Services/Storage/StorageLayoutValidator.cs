@@ -1,7 +1,9 @@
 using Convy.Infrastructure.Helpers;
 using Convy.Services.Downloads;
+using Convy.Services.Jobs;
 using Convy.Services.Rules;
 using Microsoft.Extensions.Logging;
+using Microsoft.Extensions.Options;
 
 namespace Convy.Services.Storage;
 
@@ -26,15 +28,16 @@ public sealed class StorageLayoutStatus
 }
 
 /// <summary>
-/// Hard links cannot cross mounts, so every rule path must live on the same mount as the
-/// download directories of every downloader. Run whenever the rules are (re)loaded; problems
-/// are logged as errors and exposed through <c>/health</c>.
+/// Hard links cannot cross mounts, so every rule path (and <c>jobs.processing_path</c>) must
+/// live on the same mount as the download directories of every downloader. Run whenever the
+/// rules are (re)loaded; problems are logged as errors and exposed through <c>/health</c>.
 /// </summary>
 public sealed class StorageLayoutValidator
 {
     private readonly IDownloaderResolver _downloaders;
     private readonly IFileSystemInspector _fileSystem;
     private readonly StorageLayoutStatus _status;
+    private readonly IOptionsMonitor<JobOptions> _jobOptions;
     private readonly TimeProvider _timeProvider;
     private readonly ILogger<StorageLayoutValidator> _logger;
 
@@ -42,12 +45,14 @@ public sealed class StorageLayoutValidator
         IDownloaderResolver downloaders,
         IFileSystemInspector fileSystem,
         StorageLayoutStatus status,
+        IOptionsMonitor<JobOptions> jobOptions,
         TimeProvider timeProvider,
         ILogger<StorageLayoutValidator> logger)
     {
         _downloaders = downloaders;
         _fileSystem = fileSystem;
         _status = status;
+        _jobOptions = jobOptions;
         _timeProvider = timeProvider;
         _logger = logger;
     }
@@ -61,11 +66,18 @@ public sealed class StorageLayoutValidator
         var problems = new List<string>();
         var notChecked = new List<string>();
 
-        var rulePaths = new List<(string Rule, string Path, string? Mount)>();
+        // Everything files are linked into: the rule paths, and the folder of jobs handed off for processing.
+        var targets = new List<(string What, string? Mount)>();
         foreach (var rule in rules.Mappings.Rules)
         {
             var mount = await _fileSystem.GetMountIdAsync(rule.OutputPath, cancellationToken).ConfigureAwait(false);
-            rulePaths.Add((rule.Name ?? rule.RawCondition, rule.OutputPath, mount));
+            targets.Add(($"Rule '{rule.Name ?? rule.RawCondition}' path '{rule.OutputPath}'", mount));
+        }
+
+        if (_jobOptions.CurrentValue.ProcessingPath is { } processingPath && !string.IsNullOrWhiteSpace(processingPath))
+        {
+            var mount = await _fileSystem.GetMountIdAsync(processingPath.Trim(), cancellationToken).ConfigureAwait(false);
+            targets.Add(($"jobs.processing_path '{processingPath.Trim()}'", mount));
         }
 
         foreach (var downloader in _downloaders.All)
@@ -98,12 +110,12 @@ public sealed class StorageLayoutValidator
                     continue;
                 }
 
-                foreach (var (rule, path, ruleMount) in rulePaths)
+                foreach (var (what, targetMount) in targets)
                 {
-                    if (ruleMount is not null && ruleMount != mount)
+                    if (targetMount is not null && targetMount != mount)
                     {
                         problems.Add(
-                            $"Rule '{rule}' path '{path}' is on a different mount than {downloader.Provider} " +
+                            $"{what} is on a different mount than {downloader.Provider} " +
                             $"download directory '{directory}'; hard links will fail (EXDEV).");
                     }
                 }

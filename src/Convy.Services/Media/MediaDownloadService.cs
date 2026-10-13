@@ -38,6 +38,8 @@ public sealed class MediaDownloadService
     /// <summary>
     /// The <c>download</c> tool: either one result (<paramref name="resultId"/> with its
     /// sub-path and patterns) or several (<paramref name="releases"/>), never both.
+    /// <paramref name="instruction"/> asks an agent to process the files after the download:
+    /// they are then handed off instead of placed (see <see cref="JobRecord.Instruction"/>).
     /// </summary>
     public Task<DownloadResponse> DownloadAsync(
         string categoryId,
@@ -46,8 +48,15 @@ public sealed class MediaDownloadService
         IReadOnlyList<string>? include,
         IReadOnlyList<string>? exclude,
         IReadOnlyList<DownloadRelease>? releases,
+        string? instruction,
         CancellationToken cancellationToken)
     {
+        instruction = string.IsNullOrWhiteSpace(instruction) ? null : instruction.Trim();
+        if (instruction is { Length: > JobInstructions.MaxLength })
+        {
+            throw new ConvyRequestException($"The instruction is too long: at most {JobInstructions.MaxLength} characters.");
+        }
+
         if (releases is { Count: > 0 })
         {
             if (resultId is not null || subpath is not null || include is { Count: > 0 } || exclude is { Count: > 0 })
@@ -56,12 +65,12 @@ public sealed class MediaDownloadService
                     "Pass either result_id (with subpath, include, exclude) or releases, not both; each release has its own.");
             }
 
-            return DownloadAsync(categoryId, releases, cancellationToken);
+            return DownloadAsync(categoryId, releases, instruction, cancellationToken);
         }
 
         return string.IsNullOrWhiteSpace(resultId)
             ? throw new ConvyRequestException("Pass result_id, or releases to download several results as one job.")
-            : DownloadAsync(resultId, categoryId, subpath, include, exclude, cancellationToken);
+            : DownloadAsync(categoryId, [new DownloadRelease(resultId, subpath, include, exclude)], instruction, cancellationToken);
     }
 
     /// <summary>Downloads one result as a job with one release.</summary>
@@ -72,14 +81,14 @@ public sealed class MediaDownloadService
         IReadOnlyList<string>? include,
         IReadOnlyList<string>? exclude,
         CancellationToken cancellationToken) =>
-        DownloadAsync(categoryId, [new DownloadRelease(resultId, subpath, include, exclude)], cancellationToken);
+        DownloadAsync(categoryId, [new DownloadRelease(resultId, subpath, include, exclude)], null, cancellationToken);
 
     /// <summary>
     /// Downloads several results as one job (e.g. several albums). Each release is prepared
     /// first (result, file selection, payload); a problem with any of them rejects the request.
     /// </summary>
     public async Task<DownloadResponse> DownloadAsync(
-        string categoryId, IReadOnlyList<DownloadRelease> releases, CancellationToken cancellationToken)
+        string categoryId, IReadOnlyList<DownloadRelease> releases, string? instruction, CancellationToken cancellationToken)
     {
         if (releases.Count == 0)
         {
@@ -94,7 +103,7 @@ public sealed class MediaDownloadService
             var prefix = releases.Count > 1 ? $"{release.ResultId}: " : string.Empty;
             try
             {
-                requests.Add(await PrepareAsync(category, release, cancellationToken).ConfigureAwait(false));
+                requests.Add(await PrepareAsync(category, release, instruction, cancellationToken).ConfigureAwait(false));
             }
             catch (ConvyRequestException ex) when (prefix.Length > 0)
             {
@@ -111,9 +120,13 @@ public sealed class MediaDownloadService
             job.Status.ToName(),
             started.ExpectedPath,
             started.Rule,
+            started.Instruction,
             job.FileCount,
             job.SizeBytes,
-            "expected_path is a forecast: rules that depend on changing properties are evaluated again when the files are placed.",
+            started.Started.Any(s => s.Instruction is not null)
+                ? "With an instruction the files are not placed in expected_path: once downloaded they are handed off for " +
+                  "processing, and the job_status webhook carries the instruction, the files and expected_path as the destination."
+                : "expected_path is a forecast: rules that depend on changing properties are evaluated again when the files are placed.",
             many
                 ? started.Started.Select(s => new DownloadReleaseDto(
                     s.Request.ResultId, s.Request.Title, s.ExpectedPath, s.Rule, s.Release.FileCount, s.Release.SizeBytes)).ToList()
@@ -124,7 +137,8 @@ public sealed class MediaDownloadService
     }
 
     /// <summary>Turns one release of a request into what the job service starts.</summary>
-    private async Task<StartJobRequest> PrepareAsync(Category category, DownloadRelease release, CancellationToken cancellationToken)
+    private async Task<StartJobRequest> PrepareAsync(
+        Category category, DownloadRelease release, string? instruction, CancellationToken cancellationToken)
     {
         if (!SubpathValidator.TryValidate(release.Subpath, out _, out var subpathError))
         {
@@ -180,6 +194,7 @@ public sealed class MediaDownloadService
             FileCount = fileCount,
             ResultId = result.Id,
             SourceId = result.SourceId,
+            Instruction = instruction,
         };
     }
 

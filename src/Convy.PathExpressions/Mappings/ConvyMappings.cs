@@ -12,10 +12,14 @@ namespace Convy.PathExpressions.Mappings;
 /// rules:
 ///   - condition: "Size > 100 &amp;&amp; Tags.Contains(Test) &amp;&amp; Category == Test"
 ///     path: /data/media/test
+///   - condition: "Category == convy-music"
+///     path: /data/music
+///     instruction: Import the album with beets.
 ///   - condition: "State == StalledUpload || Ratio >= 2.0"
 ///     path: /data/media/done
 /// </code>
-/// The condition is the filter DSL; <c>path</c> is the destination. Rules are evaluated
+/// The condition is the filter DSL; <c>path</c> is the destination; the optional
+/// <c>instruction</c> asks an agent to process a job's files first. Rules are evaluated
 /// top to bottom and the first match wins. An empty condition (<c>condition: ""</c>) matches
 /// every item, e.g. for a catch-all rule at the end; leaving the key out is an error, so a
 /// misspelt key never turns a rule into a catch-all.
@@ -85,6 +89,7 @@ public sealed class ConvyMappings
                 throw new FilterParseException($"Rule #{index}: 'path' is required.");
 
             var name = fields.GetValueOrDefault("name");
+            var instruction = fields.GetValueOrDefault("instruction");
             var raw = condition?.Trim() ?? string.Empty;
 
             try
@@ -94,6 +99,7 @@ public sealed class ConvyMappings
                     Condition = raw.Length == 0 ? TrueExpression.Instance : TorrentFilter.Parse(raw),
                     OutputPath = path.Trim(),
                     Name = string.IsNullOrWhiteSpace(name) ? null : name.Trim(),
+                    Instruction = string.IsNullOrWhiteSpace(instruction) ? null : instruction.Trim(),
                     RawCondition = raw,
                 });
             }

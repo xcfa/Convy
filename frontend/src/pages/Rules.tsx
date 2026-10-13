@@ -72,7 +72,19 @@ export function Rules() {
                         <Tokens tokens={highlightCondition(rule.condition)} />
                       )}
                     </td>
-                    <td className="wrap mono small">{rule.path}</td>
+                    <td className="wrap mono small">
+                      {rule.path}
+                      {rule.instruction && (
+                        <div className="handoff">
+                          <Badge tone="info" title="Jobs this rule matches are handed off for processing, then belong here">
+                            instruction
+                          </Badge>
+                          <div className="instruction" title={rule.instruction}>
+                            {rule.instruction}
+                          </div>
+                        </div>
+                      )}
+                    </td>
                     <td className="wrap">
                       <div className="chips">
                         {rule.properties.map((p) => (

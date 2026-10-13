@@ -1,6 +1,7 @@
 using Convy.Data.Context;
 using Convy.Data.Entities;
 using Convy.Infrastructure.Helpers;
+using Convy.PathExpressions.Mappings;
 using Convy.Services.Downloads;
 using Convy.Services.Jobs;
 using Convy.Services.Linking;
@@ -330,8 +331,14 @@ public sealed class SyncCycleService
         var rule = rules.ResolveRule(RuleInputs.For(item, job.ClientCategory));
         var target = PlacementPlanner.ResolveTarget(rule, job.Subpath, item.SavePath);
         var now = _timeProvider.GetUtcNow();
+        var instruction = JobInstructions.Combine(rule?.Instruction, job.Instruction);
+        if (instruction is null)
+        {
+            // Placed by the rule after all (the rule changed since the forecast): no hand-off.
+            job = job with { RuleInstruction = null, Destination = null };
+        }
 
-        if (target.LeaveInPlace)
+        if (target.LeaveInPlace && instruction is null)
         {
             _logger.LogInformation(
                 "Job {JobId}: no rule and no sub-path; files stay in '{SavePath}'.", job.JobId, item.SavePath);
@@ -362,35 +369,18 @@ public sealed class SyncCycleService
             return ProcessOutcome.NoMatch;
         }
 
-        // A file counts as placed only when it is linked to this very destination: the item
-        // may have been placed elsewhere before (manually, by a rule) and is placed again here.
-        var links = PlacementPlanner.PlanLinks(wanted, target.Directory!, root);
-        var alreadyLinked = await LoadLinkedTargetsAsync(context, item.Provider, item.ItemRef, cancellationToken).ConfigureAwait(false);
-        var pending = links.Where(l => !alreadyLinked.Contains((l.Source, l.Destination))).ToList();
+        if (instruction is not null)
+        {
+            return await HandOffAsync(context, job, item, rule, target, wanted, now, cancellationToken).ConfigureAwait(false);
+        }
 
         _logger.LogInformation("Job {JobId}: {Provider} item {ItemRef} -> {Target}", job.JobId, item.Provider, item.ItemRef, target.Directory);
 
-        var outcome = _linkingService.LinkPlanned(item.SavePath, pending);
-        RecordLinks(context, item, pending, outcome);
-
-        if (!outcome.AllLinked)
+        var links = PlacementPlanner.PlanLinks(wanted, target.Directory!, root);
+        var (outcome, unfinished) = await LinkOrRetryAsync(context, job, item, links, now, cancellationToken).ConfigureAwait(false);
+        if (unfinished is { } stop)
         {
-            var attempts = job.PlacementAttempts + 1;
-            var reason = outcome.Errors.Count > 0
-                ? string.Join("; ", outcome.Errors.Distinct())
-                : $"{outcome.MissingSources} file(s) not found under '{item.SavePath}'";
-
-            if (attempts >= _jobOptions.CurrentValue.MaxPlacementAttempts)
-            {
-                await FailJobAsync(job, $"Placement failed after {attempts} attempt(s): {reason}", now, cancellationToken)
-                    .ConfigureAwait(false);
-                return ProcessOutcome.NoMatch;
-            }
-
-            await _transitions.ApplyAsync(
-                job, job with { PlacementAttempts = attempts, Error = reason, UpdatedAt = now }, cancellationToken)
-                .ConfigureAwait(false);
-            return ProcessOutcome.Retry;
+            return stop;
         }
 
         var placedFiles = wanted.Select(path => PlacementPlanner.MapPath(path, root)).ToList();
@@ -402,6 +392,94 @@ public sealed class SyncCycleService
         }
 
         return ProcessOutcome.Handled;
+    }
+
+    /// <summary>
+    /// Hands a job with an instruction off for processing by an agent: its files are linked into
+    /// its own folder under <c>jobs.processing_path</c> (left where the downloader put them without
+    /// one), and the rule's folder becomes the destination the <c>job_status</c> webhook reports.
+    /// What happens next is up to whoever receives the webhook.
+    /// </summary>
+    private async Task<ProcessOutcome> HandOffAsync(
+        ConvyDbContext context,
+        JobRecord job,
+        DownloadItem item,
+        MappingRule? rule,
+        PlacementTarget target,
+        IReadOnlyList<string> files,
+        DateTimeOffset now,
+        CancellationToken cancellationToken)
+    {
+        var handedOff = job with { RuleInstruction = rule?.Instruction, Destination = rule is null ? null : target.Directory };
+
+        var processingPath = _jobOptions.CurrentValue.ProcessingPath;
+        if (string.IsNullOrWhiteSpace(processingPath))
+        {
+            _logger.LogInformation(
+                "Job {JobId}: handed off for processing; files stay in '{SavePath}' (jobs.processing_path is not set).",
+                job.JobId, item.SavePath);
+            await CompleteJobAsync(handedOff, rule?.Name, item.SavePath, files, now, cancellationToken).ConfigureAwait(false);
+            return ProcessOutcome.Handled;
+        }
+
+        var directory = Path.Combine(processingPath.Trim(), job.JobId);
+        _logger.LogInformation(
+            "Job {JobId}: {Provider} item {ItemRef} handed off for processing in {Directory}; destination {Destination}.",
+            job.JobId, item.Provider, item.ItemRef, directory, handedOff.Destination ?? "none");
+
+        var links = PlacementPlanner.PlanLinks(files, directory, null);
+        var (_, unfinished) = await LinkOrRetryAsync(context, job, item, links, now, cancellationToken).ConfigureAwait(false);
+        if (unfinished is { } stop)
+        {
+            return stop;
+        }
+
+        await CompleteJobAsync(handedOff, rule?.Name, directory, files, now, cancellationToken).ConfigureAwait(false);
+        return ProcessOutcome.Handled;
+    }
+
+    /// <summary>
+    /// Links what is not linked yet. When something could not be linked, the attempt is counted
+    /// and the job fails after <c>jobs.max_placement_attempts</c>; <c>Unfinished</c> then says
+    /// how the caller should report the item.
+    /// </summary>
+    private async Task<(LinkOutcome Outcome, ProcessOutcome? Unfinished)> LinkOrRetryAsync(
+        ConvyDbContext context,
+        JobRecord job,
+        DownloadItem item,
+        IReadOnlyList<PlannedLink> links,
+        DateTimeOffset now,
+        CancellationToken cancellationToken)
+    {
+        // A file counts as placed only when it is linked to this very destination: the item
+        // may have been placed elsewhere before (manually, by a rule) and is placed again here.
+        var alreadyLinked = await LoadLinkedTargetsAsync(context, item.Provider, item.ItemRef, cancellationToken).ConfigureAwait(false);
+        var pending = links.Where(l => !alreadyLinked.Contains((l.Source, l.Destination))).ToList();
+
+        var outcome = _linkingService.LinkPlanned(item.SavePath, pending);
+        RecordLinks(context, item, pending, outcome);
+
+        if (outcome.AllLinked)
+        {
+            return (outcome, null);
+        }
+
+        var attempts = job.PlacementAttempts + 1;
+        var reason = outcome.Errors.Count > 0
+            ? string.Join("; ", outcome.Errors.Distinct())
+            : $"{outcome.MissingSources} file(s) not found under '{item.SavePath}'";
+
+        if (attempts >= _jobOptions.CurrentValue.MaxPlacementAttempts)
+        {
+            await FailJobAsync(job, $"Placement failed after {attempts} attempt(s): {reason}", now, cancellationToken)
+                .ConfigureAwait(false);
+            return (outcome, ProcessOutcome.NoMatch);
+        }
+
+        await _transitions.ApplyAsync(
+            job, job with { PlacementAttempts = attempts, Error = reason, UpdatedAt = now }, cancellationToken)
+            .ConfigureAwait(false);
+        return (outcome, ProcessOutcome.Retry);
     }
 
     private async Task<ProcessOutcome> ProcessManualAsync(

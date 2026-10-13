@@ -19,6 +19,13 @@ public sealed class MappingRule
     /// </summary>
     public string? Name { get; init; }
 
+    /// <summary>
+    /// Optional instruction for an agent that processes what the rule matches (e.g. "tag with
+    /// beets"). A job with an instruction is not placed in <see cref="OutputPath"/> but handed off
+    /// for processing, with <see cref="OutputPath"/> as the destination; <c>null</c> for none.
+    /// </summary>
+    public string? Instruction { get; init; }
+
     /// <summary>The original condition text, kept for logging / diagnostics; empty for a catch-all rule.</summary>
     public required string RawCondition { get; init; }
 
