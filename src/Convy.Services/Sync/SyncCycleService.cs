@@ -377,6 +377,16 @@ public sealed class SyncCycleService
             return await HandOffAsync(context, job, item, rule, target, wanted, now, cancellationToken).ConfigureAwait(false);
         }
 
+        if (rule is not null && IsInRuleFolder(rule, item.SavePath))
+        {
+            _logger.LogInformation(
+                "Job {JobId}: the files are already in the folder of rule {Rule}, '{RulePath}' (in '{SavePath}'); nothing to link{Note}.",
+                job.JobId, rule.Name ?? rule.RawCondition, rule.OutputPath, item.SavePath,
+                job.Subpath is null ? string.Empty : $", so the sub-path '{job.Subpath}' is not applied");
+            await CompleteJobAsync(job, rule.Name, item.SavePath, wanted, now, cancellationToken).ConfigureAwait(false);
+            return ProcessOutcome.Handled;
+        }
+
         _logger.LogInformation("Job {JobId}: {Provider} item {ItemRef} -> {Target}", job.JobId, item.Provider, item.ItemRef, target.Directory);
 
         var links = PlacementPlanner.PlanLinks(wanted, target.Directory!, root);
@@ -534,6 +544,11 @@ public sealed class SyncCycleService
             return ProcessOutcome.Retry;
         }
 
+        if (IsInRuleFolder(rule, item.SavePath))
+        {
+            return await RecordInPlaceAsync(context, item, rule, webhookBatch, cancellationToken).ConfigureAwait(false);
+        }
+
         _logger.LogInformation("{Provider} item {ItemRef} -> {Target}", provider, itemRef, targetPath);
 
         var alreadyLinked = await LoadLinkedAsync(context, provider, itemRef, cancellationToken).ConfigureAwait(false);
@@ -629,6 +644,45 @@ public sealed class SyncCycleService
         }
 
         return safe;
+    }
+
+    /// <summary>
+    /// Whether the downloader already put the files inside the rule's folder: Convy's own OPDS
+    /// downloads under the books folder, a client saving into the library. They are in place
+    /// then, and a hard link would only give them a second name in the same library.
+    /// </summary>
+    private bool IsInRuleFolder(MappingRule rule, string savePath)
+    {
+        var ruleFolder = Path.TrimEndingDirectorySeparator(Path.GetFullPath(_fileSystem.GetRealPath(rule.OutputPath)));
+        var download = Path.TrimEndingDirectorySeparator(Path.GetFullPath(_fileSystem.GetRealPath(savePath)));
+        return string.Equals(ruleFolder, download, StringComparison.Ordinal) || SubpathValidator.IsInside(ruleFolder, download);
+    }
+
+    /// <summary>
+    /// A download that is already inside its rule's folder: nothing is linked, its files are
+    /// recorded as placed where they are and reported in the <c>linked</c> batch once.
+    /// </summary>
+    private async Task<ProcessOutcome> RecordInPlaceAsync(
+        ConvyDbContext context, DownloadItem item, MappingRule rule, WebhookBatch webhookBatch, CancellationToken cancellationToken)
+    {
+        var recorded = await LoadLinkedAsync(context, item.Provider, item.ItemRef, cancellationToken).ConfigureAwait(false);
+        var fresh = SafePaths(item, item.Files
+            .Where(f => f.IsComplete)
+            .Select(f => f.Path)
+            .Where(path => !recorded.Contains(path)));
+        if (fresh.Count == 0)
+        {
+            return ProcessOutcome.Handled;
+        }
+
+        _logger.LogInformation(
+            "{Provider} item {ItemRef} is already in the folder of rule {Rule}, '{RulePath}' (in '{SavePath}'); nothing to link.",
+            item.Provider, item.ItemRef, rule.Name ?? rule.RawCondition, rule.OutputPath, item.SavePath);
+
+        var inPlace = fresh.Select(path => new PlannedLink(path, Path.Combine(item.SavePath, path))).ToList();
+        RecordLinks(context, item, inPlace, new LinkOutcome(fresh, [], AllLinked: true, []));
+        webhookBatch.AddLinked(rule.Name, BuildWebhookProperties(item, item.SavePath));
+        return ProcessOutcome.Handled;
     }
 
     private static void RecordLinks(ConvyDbContext context, DownloadItem item, IReadOnlyList<PlannedLink> links, LinkOutcome outcome)
