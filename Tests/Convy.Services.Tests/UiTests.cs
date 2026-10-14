@@ -1,3 +1,4 @@
+using System.Globalization;
 using Convy.Data.Context;
 using Convy.Data.Entities;
 using Convy.Services.Diagnostics;
@@ -108,6 +109,23 @@ public class UiOptionsTests
         Assert.Equal(UiMode.Disabled, Configured(o => o.Oidc.ClientSecret = " ").ResolveMode(out problem));
         Assert.Contains("Ui:Oidc:ClientSecret", problem);
     }
+
+    [Theory]
+    [InlineData("30.00:00:00", "30.00:00:00", false)]
+    [InlineData("12:00:00", "12:00:00", false)]
+    [InlineData("00:01:00", "00:05:00", true)]
+    [InlineData("500.00:00:00", "400.00:00:00", true)]
+    public void SessionLifetimeStaysWithinWhatBrowsersKeep(string configured, string expected, bool corrected)
+    {
+        var options = Configured(o => o.SessionLifetime = TimeSpan.Parse(configured, CultureInfo.InvariantCulture));
+
+        Assert.Equal(TimeSpan.Parse(expected, CultureInfo.InvariantCulture), options.EffectiveSessionLifetime(out var problem));
+        Assert.Equal(corrected, problem is not null);
+    }
+
+    [Fact]
+    public void SessionsLastThirtyDaysByDefault() =>
+        Assert.Equal(TimeSpan.FromDays(30), new UiOptions().EffectiveSessionLifetime(out _));
 
     [Fact]
     public void ModeNoneOpensTheUiAndUnknownModesTurnItOff()

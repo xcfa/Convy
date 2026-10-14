@@ -692,6 +692,7 @@ need no sign-in. The IP allow-list applies to the UI as well.
 | `UI__OIDC__LOGOUTURL` | Optional: where "Sign out" goes after ending Convy's session, e.g. `https://auth.example.com/logout`; Convy adds `rd=<public url>`. Without it only Convy's session ends. |
 | `UI__OIDC__SCOPES__0`, … | Optional: scopes to request; default `openid profile email groups`. |
 | `UI__OIDC__REQUIREHTTPSMETADATA` | `true` by default. Only turn off to test against a provider on plain HTTP. |
+| `UI__SESSIONLIFETIME` | How long a sign-in lasts without using the UI, as `days.hh:mm:ss`: `30.00:00:00` (the default), `7.00:00:00`, `12:00:00`. Every visit renews it, and it survives browser restarts. 5 minutes to 400 days. |
 | `UI__AUTH` | `oidc` (default) or `none`: no sign-in at all, the UI is protected by the IP allow-list only. |
 
 These settings are read at startup. The startup log says which mode the UI is in, or why it

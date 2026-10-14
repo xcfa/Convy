@@ -80,7 +80,7 @@ public static class UiSetup
 
         if (mode == UiMode.Oidc)
         {
-            AddOidc(builder, options.Oidc, connectionString);
+            AddOidc(builder, options.Oidc, options.EffectiveSessionLifetime(out _), connectionString);
         }
     }
 
@@ -105,7 +105,15 @@ public static class UiSetup
         switch (state.Mode)
         {
             case UiMode.Oidc:
-                app.Logger.LogInformation("Web UI at / with OIDC sign-in ({Authority}).", options.Oidc.Authority);
+                var sessionLifetime = options.EffectiveSessionLifetime(out var sessionProblem);
+                app.Logger.LogInformation(
+                    "Web UI at / with OIDC sign-in ({Authority}); a sign-in lasts {SessionLifetime} without a visit.",
+                    options.Oidc.Authority, sessionLifetime);
+                if (sessionProblem is not null)
+                {
+                    app.Logger.LogWarning("{Problem}", sessionProblem);
+                }
+
                 if (options.Oidc.ClientSecretLooksLikeDigest)
                 {
                     app.Logger.LogWarning(
@@ -170,7 +178,7 @@ public static class UiSetup
         auth.MapGet("/failed", (UiAuthService service) => service.Page(UiPage.Failed));
     }
 
-    private static void AddOidc(WebApplicationBuilder builder, UiOidcOptions oidc, string? connectionString)
+    private static void AddOidc(WebApplicationBuilder builder, UiOidcOptions oidc, TimeSpan sessionLifetime, string? connectionString)
     {
         // Cookies are encrypted with Data Protection keys; kept next to the database so a
         // restart does not sign everyone out.
@@ -198,8 +206,15 @@ public static class UiSetup
                 cookie.Cookie.HttpOnly = true;
                 cookie.Cookie.SameSite = SameSiteMode.Lax;
                 cookie.Cookie.SecurePolicy = CookieSecurePolicy.SameAsRequest;
-                cookie.ExpireTimeSpan = TimeSpan.FromHours(12);
+                // Every visit renews the session (once half of it has passed); a persistent cookie
+                // keeps it across browser restarts until the lifetime passes without a visit.
+                cookie.ExpireTimeSpan = sessionLifetime;
                 cookie.SlidingExpiration = true;
+                cookie.Events.OnSigningIn = context =>
+                {
+                    context.Properties.IsPersistent = true;
+                    return Task.CompletedTask;
+                };
                 cookie.AccessDeniedPath = "/auth/denied";
                 cookie.Events.OnRedirectToAccessDenied = context =>
                 {
