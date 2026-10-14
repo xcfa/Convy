@@ -368,6 +368,60 @@ public sealed class SyncCycleServiceTests : IDisposable
         Assert.Equal(["/data/media/movies/Show (2019)/Season 02/e1.mkv"], LinkedDestinations());
     }
 
+    private const string BooksRules =
+        """
+        rules:
+          - name: books
+            condition: 'Category == "convy-books"'
+            path: /data/books
+        """;
+
+    [Fact]
+    public async Task AJobDownloadedIntoItsRulesFolderIsNotLinkedAgain()
+    {
+        _rules.Yaml = BooksRules;
+        _fs.AddFile("/data/books/flibusta/b1/Dickens - Pickwick/Dickens - Pickwick.fb2");
+        _downloader.Items["b1"] = FakeDownloader.Item(
+            "b1", DownloadState.Completed, savePath: "/data/books/flibusta/b1",
+            files: [FakeDownloader.Done("Dickens - Pickwick/Dickens - Pickwick.fb2")]);
+        var job = await AddJob("b1", "convy-books", "Dickens - The Pickwick Papers");
+
+        await Run();
+
+        Assert.Empty(_fs.Links);
+        var done = await Reload(job);
+        Assert.Equal((JobStatus.Completed, "books", "/data/books/flibusta/b1"), (done.Status, done.Rule, done.TargetPath));
+        Assert.Equal(["Dickens - Pickwick/Dickens - Pickwick.fb2"], done.PlacedFiles);
+    }
+
+    [Fact]
+    public async Task AManualDownloadInsideItsRulesFolderIsRecordedInPlaceOnce()
+    {
+        _rules.Yaml = BooksRules;
+        _fs.AddFile("/data/books/Some Book/book.epub");
+        _downloader.Items["h1"] = FakeDownloader.Item(
+            "h1", DownloadState.Completed, savePath: "/data/books", category: "convy-books",
+            files: [FakeDownloader.Done("Some Book/book.epub")]);
+
+        await Run();
+
+        Assert.Empty(_fs.Links);
+        var linked = Assert.Single(Assert.Single(_webhooks.Batches).Linked);
+        Assert.Equal("books", linked.RuleName);
+        Assert.Equal("/data/books", linked.Properties["targetPath"]);
+
+        await using (var db = _db.CreateDbContext())
+        {
+            var entry = Assert.Single(await db.FileEntries.ToListAsync());
+            Assert.Equal("/data/books/Some Book/book.epub", FakeFileSystem.Norm(entry.TargetPath));
+        }
+
+        // Seen again (e.g. its state changed): nothing new to report.
+        _downloader.Items["h1"] = _downloader.Items["h1"] with { State = DownloadState.Paused };
+        await Run();
+        Assert.Single(_webhooks.Batches);
+    }
+
     [Fact]
     public async Task AFileTakenAwayAfterTheDownloadIsNamedWithTheLikelyCause()
     {

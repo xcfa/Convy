@@ -548,6 +548,11 @@ Replacing the root folder: `Movie.2019.2160p.WEB-DL/movie.mkv` with `subpath = "
 lands in `<rule path>/Movie (2019)/movie.mkv`; a single-file download goes straight into the
 sub-path. Only selected files are linked (qBittorrent files with priority 0 are skipped).
 
+A download that already lies inside the matching rule's folder (a client that saves into the
+library, or `opds.downloads_path` inside a rule's path) is **not linked**: a link would only
+give its files a second name in the same library. The files count as placed where they are,
+and a sub-path is not applied. Downloads added by hand are treated the same way.
+
 A download belongs to one job at a time: requesting a download that already has an unfinished
 job is rejected with that job's id. A download that was placed before (by a rule, or by an earlier
 job) is linked again to the new job's target. Paths a client reports that would leave the save
