@@ -29,7 +29,41 @@ public sealed class UiOptions
     /// </summary>
     public string? PublicUrl { get; set; }
 
+    /// <summary>The shortest sign-in session accepted.</summary>
+    public static readonly TimeSpan MinSessionLifetime = TimeSpan.FromMinutes(5);
+
+    /// <summary>The longest sign-in session accepted: browsers keep a cookie at most 400 days.</summary>
+    public static readonly TimeSpan MaxSessionLifetime = TimeSpan.FromDays(400);
+
+    /// <summary>
+    /// How long a sign-in lasts without using the UI, e.g. <c>30.00:00:00</c> (the default, 30
+    /// days) or <c>12:00:00</c>. Every visit renews it, and it survives browser restarts.
+    /// </summary>
+    public TimeSpan SessionLifetime { get; set; } = TimeSpan.FromDays(30);
+
     public UiOidcOptions Oidc { get; set; } = new();
+
+    /// <summary>
+    /// <see cref="SessionLifetime"/> kept between <see cref="MinSessionLifetime"/> and
+    /// <see cref="MaxSessionLifetime"/>; <paramref name="problem"/> says when it had to be.
+    /// </summary>
+    public TimeSpan EffectiveSessionLifetime(out string? problem)
+    {
+        problem = null;
+        if (SessionLifetime < MinSessionLifetime)
+        {
+            problem = $"Ui:SessionLifetime {SessionLifetime} is shorter than {MinSessionLifetime}; using {MinSessionLifetime}.";
+            return MinSessionLifetime;
+        }
+
+        if (SessionLifetime > MaxSessionLifetime)
+        {
+            problem = $"Ui:SessionLifetime {SessionLifetime} is longer than browsers keep a cookie; using {MaxSessionLifetime.TotalDays:0} days.";
+            return MaxSessionLifetime;
+        }
+
+        return SessionLifetime;
+    }
 
     /// <summary>The mode these settings ask for; <paramref name="problem"/> says why the UI is off.</summary>
     public UiMode ResolveMode(out string? problem)
