@@ -369,6 +369,21 @@ public sealed class SyncCycleServiceTests : IDisposable
     }
 
     [Fact]
+    public async Task AFileTakenAwayAfterTheDownloadIsNamedWithTheLikelyCause()
+    {
+        _downloader.Items["h1"] = FakeDownloader.Item(
+            "h1", DownloadState.Completed, files: [FakeDownloader.Done("Book/book.fb2")]);
+        var job = await AddJob("h1", "Movies", subpath: null);
+
+        await Run();
+
+        var placing = await Reload(job);
+        Assert.Equal(1, placing.PlacementAttempts);
+        Assert.Contains("1 file(s) missing from '/data/downloads': 'Book/book.fb2'", placing.Error);
+        Assert.Contains("reports them downloaded, so something else moved or deleted them", placing.Error);
+    }
+
+    [Fact]
     public async Task FailedPlacementIsRetriedUntilAttemptsRunOut()
     {
         AddCompletedItem("h1", null, "Movie/movie.mkv");

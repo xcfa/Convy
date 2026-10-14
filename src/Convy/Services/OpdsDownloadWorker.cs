@@ -2,7 +2,9 @@ using System;
 using System.Linq;
 using System.Threading;
 using System.Threading.Tasks;
+using Convy.Services.Diagnostics;
 using Convy.Services.Downloaders.Opds;
+using Convy.Services.Downloads;
 using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging;
 
@@ -73,6 +75,7 @@ public sealed class OpdsDownloadWorker : BackgroundService
         await foreach (var itemRef in _queue.ReadAllAsync(stoppingToken).ConfigureAwait(false))
         {
             using var stop = CancellationTokenSource.CreateLinkedTokenSource(stoppingToken);
+            using var scope = LogScopes.Item(_logger, DownloadProviders.Opds, itemRef);
             _queue.Started(itemRef, stop);
             try
             {

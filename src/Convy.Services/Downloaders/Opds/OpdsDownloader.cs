@@ -1,3 +1,4 @@
+using Convy.Services.Diagnostics;
 using Convy.Services.Downloads;
 using Convy.Sources;
 using Microsoft.Extensions.Logging;
@@ -61,6 +62,7 @@ public sealed class OpdsDownloader : IDownloader
             throw new ConvyRequestException("None of the selected files is a format of this book.");
         }
 
+        using var scope = LogScopes.Item(_logger, Provider, itemRef);
         var now = _timeProvider.GetUtcNow();
         var complete = files.Where(f => f.Wanted).All(f => f.Done);
         await _store.SaveAsync(new OpdsDownload

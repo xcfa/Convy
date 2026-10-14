@@ -89,6 +89,10 @@ export interface LogEntry {
   category: string | null;
   message: string;
   exception: string | null;
+  /** The job the entry is about, when known. */
+  job_id: string | null;
+  /** Structured properties of the entry (message template and scopes). */
+  properties: Record<string, unknown> | null;
 }
 
 export interface LogPage {
@@ -320,8 +324,8 @@ function query(params: Record<string, string | number | boolean | null | undefin
 export const api = {
   me: () => request<UiUser>("/api/ui/me"),
   status: () => request<UiStatus>("/api/ui/status"),
-  logs: (after: number, level: Level, q: string, limit = 500) =>
-    request<LogPage>(`/api/ui/logs${query({ after, level, q, limit })}`),
+  logs: (after: number, level: Level, q: string, job: string, limit = 500) =>
+    request<LogPage>(`/api/ui/logs${query({ after, level, q, job, limit })}`),
   jobs: (status: string, limit = 200) => request<{ jobs: Job[] }>(`/api/ui/jobs${query({ status, limit })}`),
   cancelJob: (jobId: string) =>
     request<{ job_id: string; status: string; note: string }>(`/api/ui/jobs/${encodeURIComponent(jobId)}/cancel`, {

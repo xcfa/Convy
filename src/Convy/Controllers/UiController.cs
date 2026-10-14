@@ -23,7 +23,7 @@ public sealed class UiController : ControllerBase
 {
     private readonly UiAuthService _auth;
     private readonly UiStatusService _status;
-    private readonly LogBuffer _logs;
+    private readonly UiLogService _logs;
     private readonly MediaCatalogService _catalog;
     private readonly ISyncControlService _sync;
     private readonly DataBrowserService _data;
@@ -34,7 +34,7 @@ public sealed class UiController : ControllerBase
     public UiController(
         UiAuthService auth,
         UiStatusService status,
-        LogBuffer logs,
+        UiLogService logs,
         MediaCatalogService catalog,
         ISyncControlService sync,
         DataBrowserService data,
@@ -61,10 +61,12 @@ public sealed class UiController : ControllerBase
     [HttpGet("status")]
     public Task<UiStatus> Status(CancellationToken cancellationToken) => _status.GetAsync(cancellationToken);
 
-    /// <summary>Recent log entries newer than <paramref name="after"/>.</summary>
+    /// <summary>Recent log entries newer than <paramref name="after"/>, each with its job; only those of <paramref name="job"/> when given.</summary>
     [HttpGet("logs")]
-    public LogPage Logs(long after = 0, LogSeverity level = LogSeverity.Information, string? q = null, int limit = 500)
-        => _logs.Read(after, level, q, limit);
+    public Task<LogPage> Logs(
+        long after = 0, LogSeverity level = LogSeverity.Information, string? q = null, string? job = null, int limit = 500,
+        CancellationToken cancellationToken = default)
+        => _logs.ReadAsync(after, level, q, job, limit, cancellationToken);
 
     /// <summary>Jobs, newest first.</summary>
     [HttpGet("jobs")]

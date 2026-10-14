@@ -48,6 +48,7 @@ public static class UiSetup
         builder.Services.AddSingleton(options);
         builder.Services.AddSingleton(new UiState(mode, problem));
         builder.Services.AddSingleton<UiStatusService>();
+        builder.Services.AddSingleton<UiLogService>();
         builder.Services.AddSingleton<DataBrowserService>();
         builder.Services.AddSingleton<WebhookAdminService>();
         builder.Services.AddSingleton<RulesViewService>();

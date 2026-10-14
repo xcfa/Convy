@@ -100,7 +100,9 @@ public sealed class OpdsDownloadRunner
             return;
         }
 
-        _logger.LogInformation("Downloaded {Folder} from {Catalog}.", download.Folder, client.Catalog.Name);
+        _logger.LogInformation(
+            "Downloaded {Files} from {Catalog} into {Directory}.",
+            string.Join(", ", download.WantedFiles.Select(f => f.Name)), client.Catalog.Name, Path.Combine(download.SavePath, download.Folder));
     }
 
     private async Task<long> DownloadFileAsync(OpdsClient client, OpdsDownload download, OpdsDownloadFile file, CancellationToken cancellationToken)

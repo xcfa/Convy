@@ -9,13 +9,17 @@ namespace Convy.Services.Linking
     /// Source paths (relative to the save path) that should now be recorded as linked (freshly
     /// linked, or found already present on disk and only needing a record).
     /// </param>
-    /// <param name="MissingSources">Files whose source wasn't present yet.</param>
+    /// <param name="Missing">Files (relative to the save path) whose source wasn't there.</param>
     /// <param name="AllLinked">
     /// <c>true</c> when every file is now linked (nothing missing, no link failure).
     /// </param>
     /// <param name="Errors">Messages of failed link attempts.</param>
     public readonly record struct LinkOutcome(
-        IReadOnlyList<string> NewlyLinked, int MissingSources, bool AllLinked, IReadOnlyList<string> Errors);
+        IReadOnlyList<string> NewlyLinked, IReadOnlyList<string> Missing, bool AllLinked, IReadOnlyList<string> Errors)
+    {
+        /// <summary>How many files' sources weren't there.</summary>
+        public int MissingSources => Missing.Count;
+    }
 
     /// <summary>
     /// Pure linking logic over an <see cref="IFileLinker"/>: hard-links the given files
@@ -46,7 +50,7 @@ namespace Convy.Services.Linking
         {
             var newlyLinked = new List<string>();
             var errors = new List<string>();
-            var missingSources = 0;
+            var missing = new List<string>();
             var allLinked = true;
 
             foreach (var (name, dest) in links)
@@ -64,8 +68,8 @@ namespace Convy.Services.Linking
 
                 if (!_linker.Exists(source))
                 {
-                    _logger.LogWarning("Source not present yet, will retry: {Source}", source);
-                    missingSources++;
+                    _logger.LogWarning("Cannot link {Source}: the file is not there.", source);
+                    missing.Add(name);
                     allLinked = false;
                     continue;
                 }
@@ -84,7 +88,7 @@ namespace Convy.Services.Linking
                 }
             }
 
-            return new LinkOutcome(newlyLinked, missingSources, allLinked, errors);
+            return new LinkOutcome(newlyLinked, missing, allLinked, errors);
         }
     }
 }

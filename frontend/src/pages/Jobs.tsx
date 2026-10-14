@@ -2,7 +2,7 @@ import { Fragment, useState } from "react";
 import { api, type Job } from "../api";
 import { Badge, Empty, ErrorBanner, JobStatusBadge, Progress } from "../components";
 import { bytes, dateTimeText, percent, speed } from "../format";
-import { navigate } from "../route";
+import { href, navigate } from "../route";
 import { usePolling } from "../usePolling";
 
 const statuses = ["", "queued", "downloading", "stalled", "placing", "completed", "failed", "cancelled"];
@@ -119,7 +119,10 @@ export function Jobs({ status }: { status: string }) {
                     <Handoff instruction={job.instruction} destination={job.destination} />
                   </td>
                   <td className="small">{dateTimeText(job.created_at)}</td>
-                  <td>
+                  <td className="actions">
+                    <a className="button ghost small" href={href("logs", { job: job.job_id })} title="This job's log entries">
+                      Logs
+                    </a>
                     {cancellable.has(job.status) && (
                       <button className="button danger small" disabled={busy === job.job_id} onClick={() => cancel(job)}>
                         Cancel
