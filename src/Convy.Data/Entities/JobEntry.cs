@@ -55,6 +55,14 @@ namespace Convy.Data.Entities
         [MaxLength(128)]
         public string? SourceId { get; set; }
 
+        /// <summary>Page of the release for a human (not the download link), when the source has one.</summary>
+        [MaxLength(2048)]
+        public string? OriginUrl { get; set; }
+
+        /// <summary>The query variant that found the release.</summary>
+        [MaxLength(1024)]
+        public string? OriginQuery { get; set; }
+
         /// <summary>Job status (<c>queued</c>, <c>downloading</c>, …). Concurrency token: writers never overwrite each other.</summary>
         [MaxLength(16)]
         [ConcurrencyCheck]

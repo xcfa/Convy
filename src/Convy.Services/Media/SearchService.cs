@@ -415,6 +415,7 @@ public sealed class SearchService
             MatchedQueries = _queries,
             DedupKey = Key,
             SourceId = _source.Id,
+            InfoUrl = _content.InfoUrl,
             ContentId = _content.ContentId,
             ExpiresAt = expiresAt,
         };

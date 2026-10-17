@@ -38,6 +38,15 @@ public sealed record JobRecord
     public string? ResultId { get; init; }
     public string? SourceId { get; init; }
 
+    /// <summary>Page of the release for a human (not the download link); <c>null</c> when the source has none.</summary>
+    public string? OriginUrl { get; init; }
+
+    /// <summary>The query variant that found the release.</summary>
+    public string? OriginQuery { get; init; }
+
+    /// <summary>Where the release comes from, or <c>null</c> when nothing is known.</summary>
+    public JobOrigin? Origin => JobOrigin.From(SourceId, OriginUrl, OriginQuery);
+
     public required JobStatus Status { get; init; }
     public string? Rule { get; init; }
     public string? TargetPath { get; init; }
@@ -67,6 +76,16 @@ public sealed record JobRecord
     public DateTimeOffset CreatedAt { get; init; }
     public DateTimeOffset UpdatedAt { get; init; }
     public DateTimeOffset? CompletedAt { get; init; }
+}
+
+/// <summary>
+/// Where a release comes from: the source id, the release page for a human and the query that
+/// found it. Any part may be missing (Soulseek has no page).
+/// </summary>
+public sealed record JobOrigin(string? Source, string? Url, string? Query)
+{
+    public static JobOrigin? From(string? source, string? url, string? query) =>
+        source is null && url is null && query is null ? null : new JobOrigin(source, url, query);
 }
 
 /// <summary>Instructions for processing a job's files after the download.</summary>

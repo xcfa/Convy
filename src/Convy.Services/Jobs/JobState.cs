@@ -30,6 +30,9 @@ public sealed record JobState
     /// <summary>The rule shared by every release, or <c>null</c> when they differ or none matched.</summary>
     public string? Rule => Releases.Select(r => r.Rule).Distinct(StringComparer.Ordinal).Count() == 1 ? Releases[0].Rule : null;
 
+    /// <summary>The origin shared by every release, or <c>null</c> when they differ or none is known (see the releases).</summary>
+    public JobOrigin? Origin => Releases.Select(r => r.Origin).Distinct().Count() == 1 ? Releases[0].Origin : null;
+
     /// <summary>The release's directory; for several releases the deepest directory containing all of them.</summary>
     public string? TargetPath => HasManyReleases ? CommonDirectory(Releases.Select(r => r.TargetPath)) : Releases[0].TargetPath;
 

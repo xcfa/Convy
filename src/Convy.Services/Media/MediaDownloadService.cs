@@ -194,6 +194,8 @@ public sealed class MediaDownloadService
             FileCount = fileCount,
             ResultId = result.Id,
             SourceId = result.SourceId,
+            OriginUrl = result.InfoUrl,
+            OriginQuery = result.MatchedQueries.FirstOrDefault(),
             Instruction = instruction,
         };
     }

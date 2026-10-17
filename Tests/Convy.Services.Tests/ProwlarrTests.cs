@@ -85,6 +85,22 @@ public class ProwlarrTests
     }
 
     [Fact]
+    public async Task TheReleasePageIsKeptOnlyWhenItIsAnHttpAddress()
+    {
+        var (client, http) = Client();
+        http.Respond = _ => Json("""
+            [{"guid":"g1","title":"A","size":1,"indexerId":12,"infoUrl":"https://tracker.example/topic/1","protocol":"torrent"},
+             {"guid":"g2","title":"B","size":1,"indexerId":12,"infoUrl":"/topic/2","protocol":"torrent"},
+             {"guid":"g3","title":"C","size":1,"indexerId":12,"infoUrl":"","protocol":"torrent"},
+             {"guid":"g4","title":"D","size":1,"indexerId":12,"protocol":"torrent"}]
+            """);
+
+        var results = await Search(Source(client));
+
+        Assert.Equal(["https://tracker.example/topic/1", null, null, null], results.Select(r => r.InfoUrl));
+    }
+
+    [Fact]
     public async Task EmptyResultFromAFailingIndexerIsAnError()
     {
         var (client, http) = Client();

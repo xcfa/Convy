@@ -246,6 +246,61 @@ public class JobStatusEventTests
     }
 
     [Fact]
+    public void OriginIsNestedAndAlsoFlatForParams()
+    {
+        var job = new JobRecord
+        {
+            Id = 7, Provider = "qbittorrent", ItemRef = "h", Category = "manga", Title = "Berserk", Status = JobStatus.Completed,
+            SourceId = "prowlarr:3", OriginUrl = "https://tracker.example/topic/9", OriginQuery = "berserk",
+        };
+
+        var json = JsonSerializer.SerializeToElement(WebhookJobEvents.ToEvent(new JobStatusChange(JobState.From([job]), null)).Payload);
+
+        var origin = json.GetProperty("origin");
+        Assert.Equal("prowlarr:3", origin.GetProperty("source").GetString());
+        Assert.Equal("https://tracker.example/topic/9", origin.GetProperty("url").GetString());
+        Assert.Equal("berserk", origin.GetProperty("query").GetString());
+        Assert.Equal("prowlarr:3", json.GetProperty("origin_source").GetString());
+        Assert.Equal("https://tracker.example/topic/9", json.GetProperty("origin_url").GetString());
+        Assert.Equal("berserk", json.GetProperty("origin_query").GetString());
+    }
+
+    [Fact]
+    public void OriginPartsMayBeMissing()
+    {
+        var job = new JobRecord
+        {
+            Id = 8, Provider = "slskd", ItemRef = "bob/album", Category = "music", Title = "Album", Status = JobStatus.Queued,
+            SourceId = "soulseek", OriginQuery = "album",
+        };
+
+        var json = JsonSerializer.SerializeToElement(WebhookJobEvents.ToEvent(new JobStatusChange(JobState.From([job]), null)).Payload);
+
+        Assert.Equal(JsonValueKind.Null, json.GetProperty("origin").GetProperty("url").ValueKind);
+        Assert.Equal(JsonValueKind.Null, json.GetProperty("origin_url").ValueKind);
+        Assert.Equal("soulseek", json.GetProperty("origin_source").GetString());
+    }
+
+    [Fact]
+    public void ReleasesCarryTheirOwnOriginAndTheJobOnlyACommonOne()
+    {
+        JobRecord Release(int id, string url) => new()
+        {
+            Id = id, GroupId = 1, Provider = "qbittorrent", ItemRef = $"h{id}", Category = "manga", Title = $"R{id}", Status = JobStatus.Queued,
+            SourceId = "prowlarr:3", OriginUrl = url,
+        };
+
+        var json = JsonSerializer.SerializeToElement(
+            WebhookJobEvents.ToEvent(new JobStatusChange(JobState.From([Release(1, "https://t/1"), Release(2, "https://t/2")]), null)).Payload);
+
+        Assert.Equal(JsonValueKind.Null, json.GetProperty("origin").ValueKind);
+        Assert.Equal(JsonValueKind.Null, json.GetProperty("origin_url").ValueKind);
+        var releases = json.GetProperty("releases");
+        Assert.Equal("https://t/1", releases[0].GetProperty("origin").GetProperty("url").GetString());
+        Assert.Equal("https://t/2", releases[1].GetProperty("origin").GetProperty("url").GetString());
+    }
+
+    [Fact]
     public void NewJobHasNoPreviousStatus()
     {
         var job = new JobRecord

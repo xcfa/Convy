@@ -33,6 +33,7 @@ public sealed record ProwlarrRelease
     public int IndexerId { get; init; }
     public string? DownloadUrl { get; init; }
     public string? MagnetUrl { get; init; }
+    public string? InfoUrl { get; init; }
     public string? InfoHash { get; init; }
     public int? Seeders { get; init; }
     public int? Leechers { get; init; }

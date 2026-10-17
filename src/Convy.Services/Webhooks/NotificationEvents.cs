@@ -38,6 +38,10 @@ public sealed class WebhookJobEvents : IJobEvents
         return Task.CompletedTask;
     }
 
+    private static Dictionary<string, object?>? ToPayload(JobOrigin? origin) => origin is null
+        ? null
+        : new Dictionary<string, object?> { ["source"] = origin.Source, ["url"] = origin.Url, ["query"] = origin.Query };
+
     /// <summary>
     /// The <c>job_status</c> body. A job with several releases also lists them under
     /// <c>releases</c>; its <c>path</c> is the directory containing all of them and
@@ -60,6 +64,11 @@ public sealed class WebhookJobEvents : IJobEvents
             ["category"] = job.Category,
             ["rule"] = job.Rule,
             ["title"] = job.Title,
+            // Webhook params select top-level fields only, hence the flat copies of origin.
+            ["origin"] = ToPayload(job.Origin),
+            ["origin_source"] = job.Origin?.Source,
+            ["origin_url"] = job.Origin?.Url,
+            ["origin_query"] = job.Origin?.Query,
             ["instruction"] = job.Instruction,
             ["path"] = job.TargetPath,
             ["destination"] = job.Destination,
@@ -77,6 +86,7 @@ public sealed class WebhookJobEvents : IJobEvents
                     ["title"] = r.Title,
                     ["status"] = r.Status.ToName(),
                     ["provider"] = r.Provider,
+                    ["origin"] = ToPayload(r.Origin),
                     ["rule"] = r.Rule,
                     ["instruction"] = r.EffectiveInstruction,
                     ["path"] = r.TargetPath,
