@@ -201,6 +201,8 @@ public sealed class EfJobStore : IJobStore
         entry.FileCount = job.FileCount;
         entry.ResultId = job.ResultId;
         entry.SourceId = job.SourceId;
+        entry.OriginUrl = job.OriginUrl;
+        entry.OriginQuery = job.OriginQuery;
         entry.Rule = job.Rule;
         entry.TargetPath = job.TargetPath;
         entry.Error = job.Error;
@@ -247,6 +249,8 @@ public sealed class EfJobStore : IJobStore
         FileCount = entry.FileCount,
         ResultId = entry.ResultId,
         SourceId = entry.SourceId,
+        OriginUrl = entry.OriginUrl,
+        OriginQuery = entry.OriginQuery,
         Status = JobStatusNames.Parse(entry.Status),
         Rule = entry.Rule,
         TargetPath = entry.TargetPath,

@@ -67,6 +67,7 @@ public sealed class MediaDownloadServiceTests : IDisposable
             MatchedQueries = ["fallen"],
             DedupKey = "btih:abc",
             SourceId = "prowlarr:1",
+            InfoUrl = "https://tracker.example/topic/42",
             ContentId = "c",
             ExpiresAt = _time.Now + TimeSpan.FromHours(6),
         }], CancellationToken.None);
@@ -169,6 +170,17 @@ public sealed class MediaDownloadServiceTests : IDisposable
         Assert.Equal(999, response.SizeBytes);
         Assert.Equal(0, _source.ListingCalls);
         Assert.Null(response.Instruction);
+    }
+
+    [Fact]
+    public async Task TheJobRemembersWhereTheReleaseCameFrom()
+    {
+        await CacheResult();
+
+        await _service.DownloadAsync("r_1", "music", "Evanescence/2003 - Fallen", null, null, CancellationToken.None);
+
+        var job = Assert.Single(await _jobs.ListAsync(null, null, CancellationToken.None));
+        Assert.Equal(new JobOrigin("prowlarr:1", "https://tracker.example/topic/42", "fallen"), job.Job.Origin);
     }
 
     [Fact]

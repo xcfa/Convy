@@ -71,6 +71,10 @@ namespace Convy.Data.Entities
         [MaxLength(128)]
         public required string SourceId { get; set; }
 
+        /// <summary>Page of the release for a human, when the source has one.</summary>
+        [MaxLength(2048)]
+        public string? InfoUrl { get; set; }
+
         /// <summary>Source-specific opaque reference; never shown to the agent.</summary>
         public required string ContentId { get; set; }
 

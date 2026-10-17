@@ -126,10 +126,15 @@ public sealed class ProwlarrSource : IContentSource
                 SizeBytes = release.Size > 0 ? release.Size : null,
                 FileCount = release.Files,
                 DedupKey = infoHash is null ? null : $"btih:{infoHash}",
+                InfoUrl = HttpUrl(release.InfoUrl),
                 Availability = new Availability { Seeders = release.Seeders, Leechers = release.Leechers },
             };
         }
     }
+
+    /// <summary>The URL when it is an absolute http(s) address; indexers also report relative or empty values.</summary>
+    private static string? HttpUrl(string? value) =>
+        Uri.TryCreate(value?.Trim(), UriKind.Absolute, out var uri) && uri.Scheme is "http" or "https" ? uri.AbsoluteUri : null;
 
     public async Task<FileListing> ListFilesAsync(string contentId, CancellationToken cancellationToken)
     {

@@ -32,6 +32,12 @@ public sealed record StartJobRequest
     public string? ResultId { get; init; }
     public string? SourceId { get; init; }
 
+    /// <summary>Page of the release for a human; see <see cref="JobOrigin"/>.</summary>
+    public string? OriginUrl { get; init; }
+
+    /// <summary>The query that found the release; see <see cref="JobOrigin"/>.</summary>
+    public string? OriginQuery { get; init; }
+
     /// <summary>What an agent should do with the files after the download; see <see cref="JobRecord.Instruction"/>.</summary>
     public string? Instruction { get; init; }
 }
@@ -471,6 +477,8 @@ public sealed class JobService
             FileCount = request.FileCount,
             ResultId = request.ResultId,
             SourceId = request.SourceId,
+            OriginUrl = request.OriginUrl,
+            OriginQuery = request.OriginQuery,
             Instruction = request.Instruction,
             // Forecast like Rule and TargetPath, so the job's events say from the start that it
             // is to be handed off; evaluated again when the files are placed.

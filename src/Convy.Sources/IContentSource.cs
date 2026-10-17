@@ -96,6 +96,9 @@ public sealed record ContentInfo
     /// </summary>
     public string? DedupKey { get; init; }
 
+    /// <summary>Page of the release for a human (not a download link), or <c>null</c> when the source has none.</summary>
+    public string? InfoUrl { get; init; }
+
     public Availability Availability { get; init; } = new();
 }
 

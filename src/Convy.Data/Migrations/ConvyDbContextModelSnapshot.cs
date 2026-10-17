@@ -147,6 +147,14 @@ namespace Convy.Data.Migrations
                     b.Property<DateTimeOffset>("LastProgressAt")
                         .HasColumnType("TEXT");
 
+                    b.Property<string>("OriginQuery")
+                        .HasMaxLength(1024)
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("OriginUrl")
+                        .HasMaxLength(2048)
+                        .HasColumnType("TEXT");
+
                     b.Property<string>("PlacedFilesJson")
                         .HasColumnType("TEXT");
 
@@ -300,6 +308,10 @@ namespace Convy.Data.Migrations
 
                     b.Property<int?>("FileCount")
                         .HasColumnType("INTEGER");
+
+                    b.Property<string>("InfoUrl")
+                        .HasMaxLength(2048)
+                        .HasColumnType("TEXT");
 
                     b.Property<string>("MatchedQueriesJson")
                         .IsRequired()

@@ -198,6 +198,10 @@ as before):
   "category": "music",
   "rule": "music",
   "title": "…",
+  "origin": { "source": "prowlarr:3", "url": "https://tracker.example/topic/42", "query": "evanescence fallen" },
+  "origin_source": "prowlarr:3",
+  "origin_url": "https://tracker.example/topic/42",
+  "origin_query": "evanescence fallen",
   "instruction": null,
   "path": "/data/media/music/Evanescence/2003 - Fallen",
   "destination": null,
@@ -208,12 +212,20 @@ as before):
 }
 ```
 
+`origin` says where the release comes from: `source` is the id of the source that found it
+(`prowlarr:<indexer>`, `soulseek`, `opds:<id>`), `url` is the release page for a human (Prowlarr's
+`infoUrl`; not the download link), `query` is the first query that found it. Any part may be `null`
+(Soulseek has no page); `origin` itself is `null` when nothing is known. A job with several releases
+lists each release's `origin` under `releases` and has its own only when they all agree. `params`
+select top-level fields only, so `origin_source`, `origin_url` and `origin_query` repeat the parts
+for them: use e.g. `{ place: Body, name: url, value: origin_url }`.
+
 For a job handed off for processing (see [Jobs with an instruction](#jobs-with-an-instruction)),
 `instruction` says what to do, `path` and `files` are what to process and `destination` is where
 the result belongs.
 
 A job with several releases (see [Jobs and placement](#jobs-and-placement)) also carries
-`"releases": [{ "title", "status", "provider", "rule", "instruction", "path", "destination", "size_bytes", "error" }, …]`;
+`"releases": [{ "title", "status", "provider", "origin", "rule", "instruction", "path", "destination", "size_bytes", "error" }, …]`;
 its `path` is the directory holding all releases, `files` are relative to it, and `rule` is set
 only when every release has the same one.
 

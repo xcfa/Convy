@@ -38,6 +38,9 @@ public sealed record CachedResult
     /// <summary>The source the result is listed and resolved through.</summary>
     public required string SourceId { get; init; }
 
+    /// <summary>Page of the release for a human, when the source has one.</summary>
+    public string? InfoUrl { get; init; }
+
     public required string ContentId { get; init; }
     public required DateTimeOffset ExpiresAt { get; init; }
 }
@@ -180,6 +183,7 @@ public sealed class EfSearchCache : ISearchCache
                     SourcesJson = "[]",
                     MatchedQueriesJson = "[]",
                     SourceId = result.SourceId,
+                    InfoUrl = result.InfoUrl,
                     ContentId = result.ContentId,
                     CreatedAt = Now(),
                 };
@@ -273,6 +277,7 @@ public sealed class EfSearchCache : ISearchCache
         MatchedQueries = JsonSerializer.Deserialize<List<string>>(entry.MatchedQueriesJson, Json) ?? [],
         DedupKey = entry.DedupKey ?? entry.Id,
         SourceId = entry.SourceId,
+        InfoUrl = entry.InfoUrl,
         ContentId = entry.ContentId,
         ExpiresAt = DateTimeOffset.FromUnixTimeSeconds(entry.ExpiresAt),
     };
