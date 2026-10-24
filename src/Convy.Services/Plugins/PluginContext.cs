@@ -24,6 +24,8 @@ public sealed class PluginContext : IPluginContext, IPluginSettings, IPluginLog,
 
     public IPluginSettings Settings => this;
 
+    public IPluginHtml Html { get; } = new PluginHtml();
+
     public IPluginLog Log => this;
 
     /// <summary>Whether the plugin is switched on in the current configuration.</summary>

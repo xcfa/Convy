@@ -59,7 +59,41 @@ public interface IPluginContext
     /// </summary>
     IPluginSettings Settings { get; }
 
+    /// <summary>An HTML parser with CSS selectors, so a plugin needs no parser of its own (the audit refuses most).</summary>
+    IPluginHtml Html { get; }
+
     IPluginLog Log { get; }
+}
+
+/// <summary>Parses HTML the way browsers do, malformed markup included.</summary>
+public interface IPluginHtml
+{
+    /// <summary>The document's root element; <paramref name="baseUrl"/> resolves relative addresses in <see cref="IPluginElement.GetUrl"/>.</summary>
+    IPluginElement Parse(string html, Uri? baseUrl = null);
+}
+
+/// <summary>An element of a parsed document.</summary>
+public interface IPluginElement
+{
+    /// <summary>Lower case: <c>div</c>.</summary>
+    string TagName { get; }
+
+    /// <summary>The text of the element and its descendants, whitespace as in the document.</summary>
+    string Text { get; }
+
+    string InnerHtml { get; }
+
+    /// <summary>The attribute's value, <c>null</c> when absent.</summary>
+    string? GetAttribute(string name);
+
+    /// <summary>The attribute (<c>href</c>, <c>src</c>) as an absolute http(s) address, resolved against the document's base; <c>null</c> when absent or not one.</summary>
+    Uri? GetUrl(string attribute);
+
+    /// <summary>The first descendant matching the CSS selector, or <c>null</c>.</summary>
+    IPluginElement? QuerySelector(string selector);
+
+    /// <summary>Every descendant matching the CSS selector, in document order.</summary>
+    IReadOnlyList<IPluginElement> QuerySelectorAll(string selector);
 }
 
 /// <summary>HTTP as the host provides it: the plugin builds the request, the host sends it.</summary>

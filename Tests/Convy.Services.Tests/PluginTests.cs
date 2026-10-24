@@ -213,4 +213,20 @@ public class PluginHostTests
         Assert.Empty(host.Plugins);
         Assert.Empty(host.Problems);
     }
+
+    [Fact]
+    public void TheHtmlParserReadsMalformedMarkupAndResolvesLinks()
+    {
+        var html = new PluginHtml();
+
+        var root = html.Parse("<div class=a><p>Hi <b>there</b><a href='/g/1/'>link<a href='https://x.test/i.jpg'>", new Uri("https://site.test/list"));
+
+        Assert.Equal("html", root.TagName);
+        Assert.Equal("Hi there", root.QuerySelector("div.a > p")!.Text.TrimEnd("link".ToCharArray()));
+        Assert.Equal(new Uri("https://site.test/g/1/"), root.QuerySelector("a")!.GetUrl("href"));
+        Assert.Equal(new Uri("https://x.test/i.jpg"), root.QuerySelectorAll("a")[1].GetUrl("href"));
+        Assert.Null(root.QuerySelector("p")!.GetUrl("href"));
+        var bad = Assert.Throws<SourceException>(() => root.QuerySelector("div["));
+        Assert.Contains("selector", bad.Message);
+    }
 }

@@ -585,7 +585,7 @@ A plugin is a class library referencing `Convy.Sources.Abstractions` with
   `RequestsPerSecond`.
 - `CreateSources(IPluginContext context)` — the sources; `context.Http` sends requests
   (`SendAsync(request, streaming, ct)`), `context.Settings.Get(key)` reads the current value of
-  a setting, `context.Log` writes to Convy's log.
+  a setting, `context.Html.Parse(html)` parses a page (CSS selectors), `context.Log` writes to Convy's log.
 - A source implements `IGallerySource` (`IContentSource` plus `Manifest`, `ResolveUrlAsync`,
   `GetPagesAsync`, `GetImageUrlAsync`, `OpenImageAsync`, optionally `RetryImageUrlAsync` for a
   second image server) and returns `GalleryPayload` from `GetPayloadAsync`; `IGalleryBrowser`
