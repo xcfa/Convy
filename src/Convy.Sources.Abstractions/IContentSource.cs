@@ -65,7 +65,11 @@ public interface IContentSource
 /// <summary>One query variant within a category.</summary>
 /// <param name="Query">The query text as the agent wrote it.</param>
 /// <param name="Category">Category settings for the providers.</param>
-public sealed record SearchRequest(string Query, CategorySearchSettings Category);
+public sealed record SearchRequest(string Query, CategorySearchSettings Category)
+{
+    /// <summary>Language, filters and page for a gallery source (<see cref="IGallerySource"/>); <c>null</c> — none given.</summary>
+    public GallerySearch? Gallery { get; init; }
+}
 
 /// <summary>
 /// The provider-specific part of a category. Each provider reads only its own fields.
@@ -100,6 +104,15 @@ public sealed record ContentInfo
     public string? InfoUrl { get; init; }
 
     public Availability Availability { get; init; } = new();
+
+    /// <summary>
+    /// What the source knows about the release beyond the title: tags, artists, language, cover, … under shared
+    /// names (<c>tags</c>, <c>artists</c>, <c>language</c>, <c>cover</c>, <c>rating</c>, <c>pages</c>, <c>published</c>;
+    /// lists joined with <c>, </c>). Shown to clients of the REST API as is; empty when the source has nothing to add.
+    /// </summary>
+    public IReadOnlyDictionary<string, string> Properties { get; init; } = EmptyProperties;
+
+    private static readonly IReadOnlyDictionary<string, string> EmptyProperties = new Dictionary<string, string>();
 }
 
 /// <summary>How available a content is; torrents fill the swarm fields, Soulseek the peer fields.</summary>
@@ -129,6 +142,9 @@ public enum SourceErrorKind
     /// <summary>The backend rejected the credentials or the session (expired cookies, captcha).</summary>
     AuthFailed,
 
+    /// <summary>The site wants a human to pass a challenge (a captcha); <see cref="SourceException.ChallengeUrl"/> says where.</summary>
+    Challenge,
+
     /// <summary>Any other failure.</summary>
     Error,
 }
@@ -143,6 +159,9 @@ public sealed class SourceException : Exception
     }
 
     public SourceErrorKind Kind { get; }
+
+    /// <summary>For <see cref="SourceErrorKind.Challenge"/>: the page a human opens to pass the challenge; else <c>null</c>.</summary>
+    public Uri? ChallengeUrl { get; init; }
 
     /// <summary>
     /// "<paramref name="what"/> is unreachable: …" with the causes of <paramref name="failure"/>

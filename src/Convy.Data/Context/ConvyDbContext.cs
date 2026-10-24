@@ -21,6 +21,8 @@ namespace Convy.Data.Context
 
 		public DbSet<OpdsDownloadEntry> OpdsDownloads => Set<OpdsDownloadEntry>();
 
+		public DbSet<GalleryDownloadEntry> GalleryDownloads => Set<GalleryDownloadEntry>();
+
 		public ConvyDbContext(DbContextOptions<ConvyDbContext> context)
 			: base(context)
 		{

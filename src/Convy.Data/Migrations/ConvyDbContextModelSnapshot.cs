@@ -97,6 +97,84 @@ namespace Convy.Data.Migrations
                     b.ToTable("FileListings");
                 });
 
+            modelBuilder.Entity("Convy.Data.Entities.GalleryDownloadEntry", b =>
+                {
+                    b.Property<string>("ItemRef")
+                        .HasMaxLength(512)
+                        .HasColumnType("TEXT");
+
+                    b.Property<int>("Attempts")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<long>("Bytes")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<string>("Category")
+                        .HasMaxLength(256)
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("ContentId")
+                        .IsRequired()
+                        .HasMaxLength(512)
+                        .HasColumnType("TEXT");
+
+                    b.Property<DateTimeOffset>("CreatedAt")
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("Error")
+                        .HasMaxLength(4096)
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("FileName")
+                        .IsRequired()
+                        .HasMaxLength(512)
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("Folder")
+                        .IsRequired()
+                        .HasMaxLength(512)
+                        .HasColumnType("TEXT");
+
+                    b.Property<long?>("NextAttemptAt")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<int>("PagesDone")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<int?>("PagesTotal")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<string>("SavePath")
+                        .IsRequired()
+                        .HasMaxLength(2048)
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("SourceId")
+                        .IsRequired()
+                        .HasMaxLength(128)
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("State")
+                        .IsConcurrencyToken()
+                        .IsRequired()
+                        .HasMaxLength(16)
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("Title")
+                        .IsRequired()
+                        .HasMaxLength(1024)
+                        .HasColumnType("TEXT");
+
+                    b.Property<DateTimeOffset>("UpdatedAt")
+                        .HasColumnType("TEXT");
+
+                    b.HasKey("ItemRef");
+
+                    b.HasIndex("State");
+
+                    b.ToTable("GalleryDownloads");
+                });
+
             modelBuilder.Entity("Convy.Data.Entities.JobEntry", b =>
                 {
                     b.Property<int>("Id")

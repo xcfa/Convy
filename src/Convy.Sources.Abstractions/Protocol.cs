@@ -14,4 +14,10 @@ public enum Protocol
 
     /// <summary>Plain HTTP download of books from an OPDS catalog (e.g. Flibusta).</summary>
     Opds,
+
+    /// <summary>
+    /// A gallery (a manga or comic release) downloaded page by page from a site and stored as one
+    /// CBZ archive; the source implements <see cref="IGallerySource"/>.
+    /// </summary>
+    Gallery,
 }
