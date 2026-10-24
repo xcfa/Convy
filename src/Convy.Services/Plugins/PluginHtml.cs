@@ -37,7 +37,7 @@ public sealed class PluginHtml : IPluginHtml
                 return null;
             if (Uri.TryCreate(value, UriKind.Absolute, out var absolute) && absolute.Scheme is "http" or "https")
                 return absolute;
-            return baseUrl is not null && Uri.TryCreate(baseUrl, value, out var resolved) ? resolved : null;
+            return baseUrl is not null && Uri.TryCreate(baseUrl, value, out var resolved) && resolved.Scheme is "http" or "https" ? resolved : null;
         }
 
         public IPluginElement? QuerySelector(string selector) =>

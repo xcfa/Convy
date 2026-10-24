@@ -62,6 +62,13 @@ public sealed class GalleryDownloader : IDownloader
             UpdatedAt = _timeProvider.GetUtcNow(),
         };
 
+        // A download of the same release that is running keeps running: a second record would race it for the folder.
+        if (existing is { IsActive: true })
+        {
+            _logger.LogInformation("{Title} from {Source} is already being downloaded.", gallery.Title, gallery.SourceId);
+            return itemRef;
+        }
+
         // An archive of an earlier download that is still on disk is not fetched again.
         if (existing is { State: GalleryDownloadState.Completed } && File.Exists(existing.ArchivePath))
         {
@@ -139,7 +146,8 @@ public sealed class GalleryDownloader : IDownloader
 
     /// <summary>
     /// A file-system safe name, the same on every platform: no path separators, none of <c>: * ? " &lt; &gt; |</c>, no
-    /// control characters, trimmed, at most 150 characters.
+    /// control characters, trimmed, at most <see cref="MaxNameBytes"/> bytes of UTF-8 (Linux allows 255 per name, and
+    /// <c>.cbz</c> is added), cut between characters, never inside one.
     /// </summary>
     public static string SafeName(string title)
     {
@@ -150,13 +158,29 @@ public sealed class GalleryDownloader : IDownloader
         }
 
         var name = builder.ToString().Trim().TrimEnd('.');
-        if (name.Length > 150)
+        if (Encoding.UTF8.GetByteCount(name) > MaxNameBytes)
         {
-            name = name[..150].TrimEnd();
+            var bytes = 0;
+            var length = 0;
+            foreach (var rune in name.EnumerateRunes())
+            {
+                if (bytes + rune.Utf8SequenceLength > MaxNameBytes)
+                {
+                    break;
+                }
+
+                bytes += rune.Utf8SequenceLength;
+                length += rune.Utf16SequenceLength;
+            }
+
+            name = name[..length].TrimEnd().TrimEnd('.');
         }
 
         return name.Length == 0 ? "gallery" : name;
     }
+
+    /// <summary>The longest name in bytes of UTF-8: room for <c>.cbz</c> and <c>.part</c> under the 255 of Linux and ext4.</summary>
+    public const int MaxNameBytes = 200;
 
     /// <summary>A short, file-system safe key of a content id (which may hold slashes).</summary>
     public static string Key(string contentId) =>
@@ -164,7 +188,6 @@ public sealed class GalleryDownloader : IDownloader
 
     private DownloadItem ToItem(GalleryDownload download)
     {
-        var live = download.State == GalleryDownloadState.Downloading ? _queue.LiveBytes(download.ItemRef) : 0;
         var complete = download.State == GalleryDownloadState.Completed;
         var properties = new Dictionary<string, object?>(StringComparer.OrdinalIgnoreCase)
         {
@@ -193,7 +216,7 @@ public sealed class GalleryDownloader : IDownloader
                 _ => DownloadState.Paused,
             },
             Size = complete ? download.Bytes : null,
-            Downloaded = download.Bytes + live,
+            Downloaded = download.Bytes,
             Error = download.Error,
             Files = [new DownloadFile($"{download.Folder}/{download.FileName}", complete ? download.Bytes : 0, complete ? 1 : Progress(download), Selected: true)],
             Properties = properties,

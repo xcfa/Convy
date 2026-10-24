@@ -139,9 +139,20 @@ public sealed partial class PluginPackage
                     throw Invalid($"The package unpacks to more than {MaxUnpackedBytes / (1024 * 1024)} MB.");
                 }
 
+                // The header's size is a claim: copy no more than the limit allows, whatever the stream inflates to.
                 using var stream = entry.Open();
-                using var copy = new MemoryStream((int)entry.Length);
-                stream.CopyTo(copy);
+                using var copy = new MemoryStream((int)Math.Min(entry.Length, MaxUnpackedBytes));
+                var buffer = new byte[81920];
+                for (int read; (read = stream.Read(buffer)) > 0;)
+                {
+                    if (total - entry.Length + copy.Length + read > MaxUnpackedBytes)
+                    {
+                        throw Invalid($"The package unpacks to more than {MaxUnpackedBytes / (1024 * 1024)} MB.");
+                    }
+
+                    copy.Write(buffer, 0, read);
+                }
+
                 files[entry.Name] = copy.ToArray();
             }
         }

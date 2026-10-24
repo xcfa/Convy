@@ -160,7 +160,9 @@ public sealed class GalleryApiService
         }
         catch (ConvyRequestException ex)
         {
-            throw new ApiException(409, ex.Message, ex);
+            // The same release in flight already (a race with another client) is a conflict; anything else the job
+            // layer refuses (a bad category, nothing to download) is the request's fault.
+            throw new ApiException(ex.Message.Contains("same download", StringComparison.Ordinal) || ex.Message.Contains("already", StringComparison.Ordinal) ? 409 : 400, ex.Message, ex);
         }
     }
 
@@ -236,7 +238,10 @@ public sealed class GalleryApiService
         }
         catch (SourceException ex)
         {
-            throw new ApiException(ex.Kind == SourceErrorKind.AuthFailed ? 401 : 502, $"{source.Name}: {ex.Message}", ex);
+            throw new ApiException(ex.Kind switch { SourceErrorKind.AuthFailed => 401, SourceErrorKind.Challenge => 403, _ => 502 }, $"{source.Name}: {ex.Message}", ex)
+            {
+                ChallengeUrl = ex.Kind == SourceErrorKind.Challenge ? ex.ChallengeUrl : null,
+            };
         }
     }
 

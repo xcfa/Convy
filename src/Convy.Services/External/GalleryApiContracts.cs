@@ -70,4 +70,10 @@ public sealed class ApiException : Exception
     }
 
     public int Status { get; }
+
+    /// <summary>For a <see cref="SourceErrorKind.Challenge"/> (403): the page a human opens to pass the site's challenge.</summary>
+    public Uri? ChallengeUrl { get; init; }
 }
+
+/// <summary>The body of an error answer: <c>{ "error": "…" }</c>, with <c>challengeUrl</c> for a challenge.</summary>
+public sealed record ApiErrorDto(string Error, string? ChallengeUrl = null);

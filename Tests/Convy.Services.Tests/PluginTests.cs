@@ -172,14 +172,24 @@ public class PluginHostTests
         Assert.Contains("not among the plugin's domains", refused.Message);
         Assert.DoesNotContain("https://evil.test/x.jpg", web.Requested);
 
-        // A redirect that leaves the domains is refused too.
-        web.Answer("https://img.gallery.test/leave.jpg", r => new HttpResponseMessage(HttpStatusCode.OK)
-        {
-            RequestMessage = new HttpRequestMessage(HttpMethod.Get, "https://cdn.other.test/x.jpg"),
-            Content = new ByteArrayContent([1]),
-        });
+        // A redirect that leaves the domains is refused before the hop is sent, even when the chain would come back.
+        web.Answer("https://img.gallery.test/leave.jpg", _ => new HttpResponseMessage(HttpStatusCode.Found) { Headers = { Location = new Uri("https://cdn.other.test/x.jpg") } });
+        web.Answer("https://cdn.other.test/x.jpg", _ => new HttpResponseMessage(HttpStatusCode.Found) { Headers = { Location = new Uri("https://img.gallery.test/back.jpg") } });
         var left = await Assert.ThrowsAsync<SourceException>(() => source.OpenImageAsync(new Uri("https://img.gallery.test/leave.jpg"), CancellationToken.None));
         Assert.Contains("redirected to cdn.other.test", left.Message);
+        Assert.DoesNotContain("https://cdn.other.test/x.jpg", web.Requested);
+
+        // A redirect within the domains is followed (relative too), a downgrade to http is not, a loop ends.
+        web.Answer("https://img.gallery.test/moved.jpg", _ => new HttpResponseMessage(HttpStatusCode.MovedPermanently) { Headers = { Location = new Uri("/final.jpg", UriKind.Relative) } });
+        web.Bytes("https://img.gallery.test/final.jpg", [9], "image/png");
+        using (var moved = await source.OpenImageAsync(new Uri("https://img.gallery.test/moved.jpg"), CancellationToken.None))
+        {
+            Assert.Equal("image/png", moved.MediaType);
+        }
+        web.Answer("https://img.gallery.test/down.jpg", _ => new HttpResponseMessage(HttpStatusCode.Found) { Headers = { Location = new Uri("http://img.gallery.test/x.jpg") } });
+        Assert.Contains("https to http", (await Assert.ThrowsAsync<SourceException>(() => source.OpenImageAsync(new Uri("https://img.gallery.test/down.jpg"), CancellationToken.None))).Message);
+        web.Answer("https://img.gallery.test/loop.jpg", _ => new HttpResponseMessage(HttpStatusCode.Found) { Headers = { Location = new Uri("https://img.gallery.test/loop.jpg") } });
+        Assert.Contains("more than", (await Assert.ThrowsAsync<SourceException>(() => source.OpenImageAsync(new Uri("https://img.gallery.test/loop.jpg"), CancellationToken.None))).Message);
     }
 
     [Fact]

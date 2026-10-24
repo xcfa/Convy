@@ -1,5 +1,6 @@
 using System.IO.Compression;
 using System.Net;
+using System.Text;
 using Convy.Services.Downloaders.Gallery;
 using Convy.Services.Downloads;
 using Convy.Services.External;
@@ -212,6 +213,19 @@ public class GalleryDownloaderTests
     [InlineData("  ...  ", "gallery")]
     [InlineData("Ünïcode 日本語", "Ünïcode 日本語")]
     public void NamesAreMadeSafeForTheFileSystem(string title, string expected) => Assert.Equal(expected, GalleryDownloader.SafeName(title));
+
+    [Fact]
+    public void LongNamesAreCutByBytesBetweenCharacters()
+    {
+        var japanese = GalleryDownloader.SafeName(new string('日', 150) + "!");
+        Assert.Equal(66, japanese.Length); // 3 bytes each: 66 fit in 200
+        Assert.True(Encoding.UTF8.GetByteCount(japanese) <= GalleryDownloader.MaxNameBytes);
+
+        var emoji = GalleryDownloader.SafeName(string.Concat(Enumerable.Repeat("\U0001F600", 60)));
+        Assert.True(Encoding.UTF8.GetByteCount(emoji) <= GalleryDownloader.MaxNameBytes);
+        Assert.Equal(0, emoji.Length % 2); // never half a surrogate pair
+        Assert.Equal(200, GalleryDownloader.SafeName(new string('a', 250)).Length);
+    }
 }
 
 public class GalleryApiTests

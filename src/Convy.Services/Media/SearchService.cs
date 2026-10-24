@@ -250,7 +250,8 @@ public sealed class SearchService
         }
         catch (SourceException ex)
         {
-            var status = ex.Kind == SourceErrorKind.AuthFailed ? SourceSearchStatus.AuthFailed : SourceSearchStatus.Error;
+            // A challenge (a captcha) needs a human like expired credentials do.
+            var status = ex.Kind is SourceErrorKind.AuthFailed or SourceErrorKind.Challenge ? SourceSearchStatus.AuthFailed : SourceSearchStatus.Error;
             _logger.LogWarning("Source {Source} failed for '{Query}': {Message}", source.Id, request.Query, ex.Message);
             return new QueryOutcome(source, queryIndex, results, status, ex.Message);
         }

@@ -10,7 +10,7 @@ namespace Convy.Services.Plugins;
 /// carry, and framework APIs for the network, files, processes, native code, environment variables and loading code.
 /// Read from metadata, without loading. A tripwire, not a sandbox: a plugin is still code in the server's process,
 /// and reflection over a type it got legitimately can reach anything; the check catches a plugin that takes the
-/// easy way around the host's HTTP (domain allow-list, rate limit, journal) or reads Convy's secrets.
+/// easy way around the host's HTTP (domain allow-list, rate limit, proxy) or reads Convy's secrets.
 /// </summary>
 internal static class PluginAudit
 {
@@ -27,7 +27,7 @@ internal static class PluginAudit
     {
         "System.Net.Sockets", "System.Net.WebSockets", "System.Net.Quic", "System.Net.Security",
         "System.Net.NetworkInformation", "System.Net.Mail",
-        "System.IO.Pipes", "System.IO.MemoryMappedFiles", "System.IO.IsolatedStorage",
+        "System.IO.Pipes", "System.IO.MemoryMappedFiles", "System.IO.IsolatedStorage", "System.IO.Enumeration",
         "System.Runtime.Loader", "System.Reflection.Emit", "System.Xml.Xsl",
         // Late binding (dynamic, VB's Option Strict Off) is invoking by reflection; VB's own file and network helpers.
         "Microsoft.CSharp.RuntimeBinder", "Microsoft.VisualBasic.FileIO", "Microsoft.VisualBasic.Devices",
@@ -54,6 +54,7 @@ internal static class PluginAudit
         "System.Runtime.InteropServices.DllImportAttribute", "System.Runtime.InteropServices.LibraryImportAttribute",
         "System.AppDomain", "Microsoft.Win32.Registry", "Microsoft.Win32.RegistryKey",
         "System.Runtime.Remoting.ObjectHandle", // what Activator.CreateInstance(assemblyName, typeName) returns
+        "System.Reflection.MethodInvoker", "System.Reflection.ConstructorInvoker", // invoke without MethodBase.Invoke
         "System.Xml.XmlUrlResolver",
         "Microsoft.VisualBasic.FileSystem", "Microsoft.VisualBasic.Interaction",
         "Microsoft.VisualBasic.CompilerServices.LateBinding", "Microsoft.VisualBasic.CompilerServices.NewLateBinding",
@@ -85,7 +86,7 @@ internal static class PluginAudit
         ["System.Linq.Expressions.Expression`1"] = ["Compile"],
         ["System.Reflection.ConstructorInfo"] = ["Invoke"],
         ["System.Reflection.PropertyInfo"] = ["GetValue", "SetValue"],
-        ["System.Reflection.FieldInfo"] = ["GetValue", "SetValue"],
+        ["System.Reflection.FieldInfo"] = ["GetValue", "SetValue", "GetValueDirect", "SetValueDirect"],
         ["System.Activator"] = ["CreateInstanceFrom"],
     };
 
@@ -106,6 +107,9 @@ internal static class PluginAudit
         ["System.Xml.Linq.XDocument"] = ["Load", "Save"],
         ["System.Xml.Linq.XElement"] = ["Load", "Save"],
         ["System.Xml.Linq.XStreamingElement"] = ["Save"],
+        ["System.Security.Cryptography.X509Certificates.X509Certificate2"] = [".ctor"],
+        ["System.Security.Cryptography.X509Certificates.X509Certificate"] = [".ctor", "CreateFromCertFile", "CreateFromSignedFile"],
+        ["System.Diagnostics.FileVersionInfo"] = ["GetVersionInfo"],
     };
 
     /// <summary>

@@ -76,8 +76,9 @@ public sealed class GalleryDownloadRunner
         }
         catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
         {
-            // Unless it was cancelled, Convy is shutting down: carry on after the next start.
-            await UpdateAsync(download with { State = GalleryDownloadState.Queued }, stored).ConfigureAwait(false);
+            // Unless it was cancelled, Convy is shutting down: carry on after the next start, from the pages saved so far.
+            var latest = await _store.GetAsync(itemRef, CancellationToken.None).ConfigureAwait(false);
+            await UpdateAsync((latest is { State: GalleryDownloadState.Downloading } ? latest : download) with { State = GalleryDownloadState.Queued }, stored).ConfigureAwait(false);
             throw;
         }
         catch (Exception ex) when (ex is SourceException or HttpRequestException or IOException or InvalidDataException
@@ -121,7 +122,8 @@ public sealed class GalleryDownloadRunner
         var options = _options.CurrentValue;
         var pending = pages.Where(p => Existing(download.WorkPath, p.Number) is null).OrderBy(p => p.Number).ToList();
         using var gate = new SemaphoreSlim(Math.Clamp(options.ParallelPages, 1, 8));
-        var progress = new object();
+        // Pages finish in any order; the stored progress is written by one page at a time, so it never goes backwards.
+        using var saving = new SemaphoreSlim(1, 1);
         var state = download;
         Exception? failure = null;
 
@@ -138,16 +140,18 @@ public sealed class GalleryDownloadRunner
 
                 var bytes = await FetchPageAsync(source, state.WorkPath, page, TimeSpan.FromSeconds(Math.Max(10, options.PageTimeoutSeconds)), cancellationToken)
                     .ConfigureAwait(false);
-                GalleryDownload next;
-                lock (progress)
+                await saving.WaitAsync(CancellationToken.None).ConfigureAwait(false);
+                try
                 {
                     state = state with { PagesDone = state.PagesDone + 1, Bytes = state.Bytes + bytes };
-                    next = state;
+                    if (!await UpdateAsync(state, GalleryDownloadState.Downloading).ConfigureAwait(false))
+                    {
+                        Interlocked.CompareExchange(ref failure, new ProgressLost(), null);
+                    }
                 }
-
-                if (!await UpdateAsync(next, GalleryDownloadState.Downloading).ConfigureAwait(false))
+                finally
                 {
-                    Interlocked.CompareExchange(ref failure, new ProgressLost(), null);
+                    saving.Release();
                 }
             }
             catch (Exception ex) when (ex is not OperationCanceledException || !cancellationToken.IsCancellationRequested)
@@ -264,7 +268,7 @@ public sealed class GalleryDownloadRunner
         {
             Directory.Delete(download.WorkPath, recursive: true);
         }
-        catch (IOException)
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
         {
             // Left behind; harmless.
         }
@@ -334,7 +338,7 @@ public sealed class GalleryDownloadRunner
         {
             File.Delete(path);
         }
-        catch (IOException)
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
         {
             // Left behind; overwritten by the next attempt.
         }

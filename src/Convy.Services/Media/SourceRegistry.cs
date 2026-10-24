@@ -180,7 +180,7 @@ public sealed class SourceRegistry : ISourceRegistry, IDisposable
 
                 // Every source of the provider is affected; before any is known, the
                 // provider itself is reported (e.g. a rejected Prowlarr key at startup).
-                var status = failure is SourceException { Kind: SourceErrorKind.AuthFailed } ? "auth_failed" : "error";
+                var status = failure is SourceException { Kind: SourceErrorKind.AuthFailed or SourceErrorKind.Challenge } ? "auth_failed" : "error";
                 foreach (var id in previous.Count > 0 ? previous.Select(s => s.Id) : [provider.Name])
                 {
                     _health.Report(id, status, failure.Message);

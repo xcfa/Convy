@@ -524,7 +524,7 @@ NuGet package `Convy.Sources.Abstractions` (GitHub Packages, tag `sources-api-v*
 plugins:
   path: /data/plugins          # the default
   # trusted: false             # true skips the package audit: only for plugins you built yourself
-  settings:                    # per plugin, by its id; hot-reloaded (a proxy change needs a restart)
+  settings:                    # per plugin, by its id; hot-reloaded (path, trusted and a proxy need a restart)
     e-hentai:
       # enabled: true
       proxy: socks5://tor:9050 # optional
@@ -543,11 +543,12 @@ gallery:
   read and a package that opens its own connections (`HttpClient`, sockets), touches files,
   processes, the environment or native code, or loads assemblies by name is refused and shown
   as a problem of the plugin. A plugin talks to its sites only through the HTTP client the host
-  gives it, which allows the domains of the plugin's manifest alone, applies the plugin's
-  rate limit, proxy and timeout, and logs the calls. `trusted: true` turns the audit off.
+  gives it, which allows the domains of the plugin's manifest alone (every hop of a redirect
+  included) and applies the plugin's rate limit, proxy and timeout. `trusted: true` turns the
+  audit off.
 - **Sources.** Each plugin's sources join the others (`get_sources`, categories' `sources:`), so
   an agent searches and downloads from them like from Prowlarr. A gallery is downloaded by
-  Convy itself into `<downloads_path>/<source>/<key>/<title>.cbz`, pages in parallel
+  Convy itself into `<downloads_path>/<source>/<key>/<title>/<title>.cbz`, pages in parallel
   (`parallel_pages`); a failed page is retried after 1 and 5 minutes, then the job fails.
   Unfinished downloads resume after a restart. Without `gallery.downloads_path` the sources
   can be searched but nothing is downloaded.
@@ -570,10 +571,13 @@ through a small REST API behind the MCP key (`MCP__APIKEY`, as `X-Api-Key` or
 | `GET /api/jobs/{id}` | `status`, `title`, `pagesDone`, `pagesTotal`, `sizeBytes`, `archiveReady`, `error` |
 | `GET /api/jobs/{id}/archive` | streams the CBZ once `archiveReady` is true (range requests supported) |
 
-Errors are `{ "error": "…" }` with `400` (bad request), `404` (unknown source, job or link),
-`409` (the source cannot search), `502` (the site failed), `503` (the source is not ready or
-downloads are off) or `504` (the site timed out). A job started here is placed like any other:
-the rules see the category's client category as `Category` (`Provider == gallery`).
+Errors are `{ "error": "…" }` with `400` (a bad request: a missing parameter, a source that
+does not browse asked without `q`, an unknown category), `401` (the site refused the plugin's
+credentials), `403` (the site asks a human for a captcha: `challengeUrl` names the page), `404`
+(unknown source, job or link), `409` (the same release is already being downloaded by a job
+Convy could not reuse), `502` (the site failed), `503` (downloads are off: no
+`gallery.downloads_path`) or `504` (the site timed out). A job started here is placed like any
+other: the rules see the category's client category as `Category` (`Provider == gallery`).
 
 #### Writing a plugin
 
@@ -588,7 +592,7 @@ A plugin is a class library referencing `Convy.Sources.Abstractions` with
   a setting, `context.Html.Parse(html)` parses a page (CSS selectors), `context.Log` writes to Convy's log.
 - A source implements `IGallerySource` (`IContentSource` plus `Manifest`, `ResolveUrlAsync`,
   `GetPagesAsync`, `GetImageUrlAsync`, `OpenImageAsync`, optionally `RetryImageUrlAsync` for a
-  second image server) and returns `GalleryPayload` from `GetPayloadAsync`; `IGalleryBrowser`
+  second image server) and returns a `GalleryPayload` from `ResolveAsync`; `IGalleryBrowser`
   adds browsing with a language, filters and a page token. A site asking for a captcha is
   reported as `SourceErrorKind.Challenge` with `ChallengeUrl`.
 - Dependencies beyond the BCL go into the zip next to the DLL; everything else the audit refuses.
