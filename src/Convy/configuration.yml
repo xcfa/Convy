@@ -163,6 +163,27 @@ serilog:
 #     qbittorrent_category: Books   # the rules see it as Category
 #     sources: [opds:flibusta]
 
+# ── Gallery plugins (manga and comics sites) ───────────────────────────────
+# Plugins (DLL or zip) in plugins.path are loaded at startup; their sources join the
+# others. Galleries are downloaded by Convy itself into gallery.downloads_path as CBZ
+# (same filesystem as the rule paths). See README "Gallery plugins". The settings
+# of a plugin are hot-reloaded; path, trusted and a proxy need a restart.
+# plugins:
+#   path: /data/plugins
+#   trusted: false                  # true skips the package audit (own plugins only)
+#   settings:
+#     e-hentai:                     # the plugin's id
+#       enabled: true
+#       proxy: socks5://tor:9050
+#       timeout_sec: 60
+#       values:                     # its own settings, as the manifest lists them
+#         cookies: ipb_member_id=…  # or a Docker secret: Plugins__settings__e-hentai__values__cookies
+# gallery:
+#   downloads_path: /data/downloads/gallery
+#   category: other                 # for jobs started through the REST API without a category
+#   parallel_pages: 2
+#   page_timeout_sec: 120
+
 # ── Jobs ───────────────────────────────────────────────────────────────────
 # Downloads started by the agent (MCP `download` tool) become jobs with a unified
 # status. All values are optional; the defaults are shown.

@@ -102,6 +102,13 @@ names with `list_files` and use `include` (see below).
   go into one `download` with `releases`.
 - Sub-path for books follows the category's `path_hint`, e.g. `Стругацкий Аркадий/Пикник на обочине`.
 
+### Comics and manga (gallery plugins)
+
+- A result from a gallery source (e-hentai, MangaDex, … — plugins the owner installed) is one
+  gallery or chapter; its `properties` carry the site's tags, artists, language and page count.
+  The download is one CBZ archive built by Convy page by page; progress shows pages done.
+- There is no file selection: `include` is ignored for galleries.
+
 ### Other categories
 
 Audiobooks, software and the `other` category have no fixed preferences: pick the most

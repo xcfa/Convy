@@ -257,6 +257,18 @@ public sealed class JobService
         return cancelled;
     }
 
+    /// <summary>One job with its live state (its active releases asked of their downloaders), or <c>null</c> for an unknown id.</summary>
+    public async Task<JobView?> GetAsync(string jobId, CancellationToken cancellationToken)
+    {
+        if (!JobIds.TryParse(jobId, out var id))
+        {
+            return null;
+        }
+
+        var releases = await _store.GetGroupAsync(id, cancellationToken).ConfigureAwait(false);
+        return releases.Count == 0 ? null : await ViewAsync(JobState.From(releases), new Dictionary<string, string>(StringComparer.Ordinal), cancellationToken).ConfigureAwait(false);
+    }
+
     /// <summary>
     /// Newest jobs first with their live state. Active releases are looked up in their
     /// downloader directly, so the result does not wait for a sync cycle.

@@ -512,6 +512,88 @@ opds:
   catalog's searches and downloads; `username`/`password` are sent as HTTP basic authentication
   (pass the password as a Docker secret, e.g. `Opds__catalogs__0__password`).
 
+### Gallery plugins (manga and comics sites)
+
+Sites that serve galleries of pages (e-hentai, MangaDex, …) are not built in: they come as
+**plugins**, DLLs or zips dropped into `plugins.path` (`/data/plugins` by default) and loaded at
+startup, each in its own isolated load context. The plugins for the known sites are published
+from [xcfa/common-packages](https://github.com/xcfa/common-packages); the API they implement is the
+NuGet package `Convy.Sources.Abstractions` (GitHub Packages, tag `sources-api-v*`).
+
+```yaml
+plugins:
+  path: /data/plugins          # the default
+  # trusted: false             # true skips the package audit: only for plugins you built yourself
+  settings:                    # per plugin, by its id; hot-reloaded (a proxy change needs a restart)
+    e-hentai:
+      # enabled: true
+      proxy: socks5://tor:9050 # optional
+      timeout_sec: 60
+      values:                  # the plugin's own settings, as its manifest lists them
+        cookies: ipb_member_id=…; ipb_pass_hash=…   # a Docker secret: Plugins__settings__e-hentai__values__cookies
+
+gallery:
+  downloads_path: /data/downloads/gallery   # same filesystem as the rule paths (hard links)
+  # category: other            # for jobs started through the REST API without a category
+  # parallel_pages: 2
+  # page_timeout_sec: 120
+```
+
+- **Audit.** A package from outside is checked before it is loaded: every DLL's metadata is
+  read and a package that opens its own connections (`HttpClient`, sockets), touches files,
+  processes, the environment or native code, or loads assemblies by name is refused and shown
+  as a problem of the plugin. A plugin talks to its sites only through the HTTP client the host
+  gives it, which allows the domains of the plugin's manifest alone, applies the plugin's
+  rate limit, proxy and timeout, and logs the calls. `trusted: true` turns the audit off.
+- **Sources.** Each plugin's sources join the others (`get_sources`, categories' `sources:`), so
+  an agent searches and downloads from them like from Prowlarr. A gallery is downloaded by
+  Convy itself into `<downloads_path>/<source>/<key>/<title>.cbz`, pages in parallel
+  (`parallel_pages`); a failed page is retried after 1 and 5 minutes, then the job fails.
+  Unfinished downloads resume after a restart. Without `gallery.downloads_path` the sources
+  can be searched but nothing is downloaded.
+- **Metadata.** A result carries the site's metadata as `properties` (title, tags, artists,
+  language, pages, …) with the vocabulary of `SiteProperties` in common-packages, so a client
+  such as Shizuka can import a gallery with its tags.
+
+#### REST API for other services
+
+Shizuka (its `Shizuka.Sources.Convy` provider) and similar clients use the gallery sources
+through a small REST API behind the MCP key (`MCP__APIKEY`, as `X-Api-Key` or
+`Authorization: Bearer`) and the IP allow-list; without the key it answers `503`.
+
+| Method and path | What it does |
+| --- | --- |
+| `GET /api/sources` | the gallery sources: `id`, `name`, `status`, `domains`, `nsfw`, `languages`, `defaultAgeRating`, `canSearch`, `filters` |
+| `GET /api/sources/{id}/search?q=&language=&page=&<filter>=` | a page of releases (`items`, `nextPage`); an empty `q` is the site's front page; any other parameter is a filter of the source's `filters` |
+| `GET /api/sources/{id}/resolve?url=` | the release a link of the site points to (`404` when the source has none) |
+| `POST /api/jobs` `{ "sourceId", "contentId", "category"? }` | starts a download job (or returns the running one for the same release): `jobId` |
+| `GET /api/jobs/{id}` | `status`, `title`, `pagesDone`, `pagesTotal`, `sizeBytes`, `archiveReady`, `error` |
+| `GET /api/jobs/{id}/archive` | streams the CBZ once `archiveReady` is true (range requests supported) |
+
+Errors are `{ "error": "…" }` with `400` (bad request), `404` (unknown source, job or link),
+`409` (the source cannot search), `502` (the site failed), `503` (the source is not ready or
+downloads are off) or `504` (the site timed out). A job started here is placed like any other:
+the rules see the category's client category as `Category` (`Provider == gallery`).
+
+#### Writing a plugin
+
+A plugin is a class library referencing `Convy.Sources.Abstractions` with
+`ExcludeAssets="runtime"` (the host provides the assembly), with one public `SourcePlugin`:
+
+- `Manifest` — `Id` (lower case, the key under `plugins.settings`), `Name`, `Domains` the plugin
+  may talk to, `Settings` the user can fill in (`PluginSetting`, secret or required),
+  `RequestsPerSecond`.
+- `CreateSources(IPluginContext context)` — the sources; `context.Http` sends requests
+  (`SendAsync(request, streaming, ct)`), `context.Settings.Get(key)` reads the current value of
+  a setting, `context.Log` writes to Convy's log.
+- A source implements `IGallerySource` (`IContentSource` plus `Manifest`, `ResolveUrlAsync`,
+  `GetPagesAsync`, `GetImageUrlAsync`, `OpenImageAsync`, optionally `RetryImageUrlAsync` for a
+  second image server) and returns `GalleryPayload` from `GetPayloadAsync`; `IGalleryBrowser`
+  adds browsing with a language, filters and a page token. A site asking for a captcha is
+  reported as `SourceErrorKind.Challenge` with `ChallengeUrl`.
+- Dependencies beyond the BCL go into the zip next to the DLL; everything else the audit refuses.
+  `Tests/Convy.Sources.TestPlugin` is a complete example over a fake site.
+
 ## Jobs and placement
 
 Downloads started by the agent (see [MCP](#mcp-search-and-download)) become **jobs**. The
@@ -876,11 +958,12 @@ downloads a JRE automatically the first time, so no separate Java installation i
 | --- | --- |
 | `Convy` | ASP.NET host: the polling worker, dependency injection, HTTP endpoints |
 | `frontend` | the web UI (React + Vite), built into `src/Convy/wwwroot` |
-| `Convy.Services` | downloaders (qBittorrent behind `IDownloader`), sync cycle, file linking, state tracker, webhook notifier |
-| `Convy.Sources` | search sources (Prowlarr), torrent metadata (.torrent parsing, magnet metadata from DHT), shared contracts |
+| `Convy.Services` | downloaders (qBittorrent, OPDS, galleries behind `IDownloader`), plugin host, sync cycle, file linking, state tracker, webhook notifier |
+| `Convy.Sources.Abstractions` | the contract of sources and plugins (`IContentSource`, `IGallerySource`, `SourcePlugin`), a NuGet package for plugin authors |
+| `Convy.Sources` | search sources (Prowlarr), torrent metadata (.torrent parsing, magnet metadata from DHT) |
 | `Convy.Mcp` | MCP tool definitions, a thin layer over the services |
 | `skills/convy` | the agent skill: how to search, choose releases and download through the MCP tools |
 | `Convy.PathExpressions` | the rule language: ANTLR grammar, expression tree over item properties, mapping-file loader |
 | `Convy.Data` | EF Core (SQLite) entities and migrations |
 | `Convy.Infrastructure` | low-level helpers (the native hard-link wrapper) |
-| `Tests/*` | unit tests for the rule language and the state tracker |
+| `Tests/*` | unit tests for the rule language and the state tracker; `Convy.Sources.TestPlugin` — a plugin over a fake site the plugin tests load |

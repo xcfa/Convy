@@ -44,6 +44,18 @@ public sealed record OpdsPayload(string CatalogId, string BookKey, string Folder
 /// </param>
 public sealed record OpdsFile(string Name, string Url, long? Size, bool Unzip, int? Preference);
 
+/// <summary>
+/// A gallery to download page by page into a CBZ, by the <see cref="IGallerySource"/> that found it; the
+/// downloader asks that source for the pages and the images.
+/// </summary>
+/// <param name="SourceId">The source's <see cref="IContentSource.Id"/>.</param>
+/// <param name="ContentId">The release within the source (<see cref="ContentInfo.ContentId"/>).</param>
+/// <param name="Title">The release's name: the archive is <c>&lt;Title&gt;.cbz</c> (unsafe characters replaced).</param>
+/// <param name="PageCount">How many pages the source announced, when known.</param>
+/// <param name="InfoUrl">The release's page on the site, for the job's origin; <c>null</c> when there is none.</param>
+public sealed record GalleryPayload(string SourceId, string ContentId, string Title, int? PageCount = null, string? InfoUrl = null)
+    : DownloadPayload(Protocol.Gallery);
+
 /// <summary>A remote Soulseek file.</summary>
 /// <param name="Filename">Full remote file name, including the directory.</param>
 /// <param name="Size">Size in bytes as reported by the peer.</param>

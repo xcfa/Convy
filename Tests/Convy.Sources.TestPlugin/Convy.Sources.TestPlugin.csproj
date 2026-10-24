@@ -1,0 +1,18 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <!-- A plugin as a third party would build one: against the API only, nothing of Convy itself. The tests load its
+       DLL from the plugins folder of their output like a user would. -->
+  <PropertyGroup>
+    <TargetFramework>net10.0</TargetFramework>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+    <IsPackable>false</IsPackable>
+    <Version>1.0.0</Version>
+    <GenerateDocumentationFile>false</GenerateDocumentationFile>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\..\src\Convy.Sources.Abstractions\Convy.Sources.Abstractions.csproj" Private="false" />
+  </ItemGroup>
+
+</Project>

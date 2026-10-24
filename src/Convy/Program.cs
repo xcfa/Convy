@@ -17,6 +17,9 @@ using Convy.Sources.Slskd;
 using Convy.Sources.Torrents;
 using Convy.Sources.Opds;
 using Convy.Services.Downloaders.Opds;
+using Convy.Services.Downloaders.Gallery;
+using Convy.Services.External;
+using Convy.Services.Plugins;
 using System.Linq;
 using Convy.Services.Linking;
 using Convy.Services.Sync;
@@ -308,6 +311,30 @@ public class Program
 			builder.Services.AddHostedService<OpdsDownloadWorker>();
 		}
 
+		// Plugins (/data/plugins): each package in its own load context; their sources join the others. Galleries from
+		// them are downloaded by Convy's own downloader into gallery.downloads_path, as CBZ.
+		builder.Services.AddOptions<PluginsOptions>().Bind(builder.Configuration.GetSection(PluginsOptions.SectionName));
+		builder.Services.AddOptions<GalleryOptions>().Bind(builder.Configuration.GetSection(GalleryOptions.SectionName));
+		builder.Services.AddSingleton<PluginHost>();
+		builder.Services.AddSingleton<ISourceProvider>(sp => sp.GetRequiredService<PluginHost>());
+		var galleryOptions = builder.Configuration.GetSection(GalleryOptions.SectionName).Get<GalleryOptions>() ?? new GalleryOptions();
+		var galleryDownloadsPath = string.IsNullOrWhiteSpace(galleryOptions.DownloadsPath) ? null : galleryOptions.DownloadsPath.Trim();
+		if (galleryDownloadsPath is not null)
+		{
+			builder.Services.AddSingleton<IGalleryDownloadStore, EfGalleryDownloadStore>();
+			builder.Services.AddSingleton<GalleryDownloadQueue>();
+			builder.Services.AddSingleton<GalleryDownloadRunner>();
+			builder.Services.AddSingleton<IDownloader>(sp => new GalleryDownloader(
+				galleryDownloadsPath,
+				sp.GetRequiredService<IGalleryDownloadStore>(),
+				sp.GetRequiredService<GalleryDownloadQueue>(),
+				sp.GetRequiredService<TimeProvider>(),
+				sp.GetRequiredService<ILogger<GalleryDownloader>>()));
+			builder.Services.AddHostedService<GalleryDownloadWorker>();
+		}
+
+		builder.Services.AddSingleton<GalleryApiService>();
+
 		// Sources are listed in the background, so pages and searches never wait for the providers.
 		builder.Services.AddSingleton<SourceRegistry>();
 		builder.Services.AddSingleton<ISourceRegistry>(sp => sp.GetRequiredService<SourceRegistry>());
@@ -355,6 +382,14 @@ public class Program
 		if (opdsCatalogs.Count > 0 && opdsDownloadsPath is null)
 		{
 			app.Logger.LogWarning("opds.downloads_path is not set: books can be found but not downloaded.");
+		}
+
+		// Plugins load once, before the sources are first listed; a broken package is logged and skipped.
+		var plugins = app.Services.GetRequiredService<PluginHost>();
+		plugins.LoadAll();
+		if (plugins.Plugins.Count > 0 && galleryDownloadsPath is null)
+		{
+			app.Logger.LogWarning("gallery.downloads_path is not set: galleries can be found but not downloaded.");
 		}
 
 		// Load DB-backed settings now that the table exists — async, so startup never

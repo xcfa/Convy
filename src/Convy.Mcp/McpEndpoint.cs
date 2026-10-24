@@ -23,14 +23,17 @@ public static class McpEndpoint
         return services;
     }
 
+    /// <summary>The REST paths for external clients that share the MCP key (the Shizuka provider).</summary>
+    public static readonly string[] ApiPaths = ["/api/sources", "/api/jobs"];
+
     /// <summary>
-    /// Maps <c>/mcp</c> behind the API key check. Call after the IP allow-list middleware,
-    /// so both apply.
+    /// Maps <c>/mcp</c> behind the API key check, and puts the external REST paths (<see cref="ApiPaths"/>) behind the
+    /// same check. Call after the IP allow-list middleware, so both apply.
     /// </summary>
     public static WebApplication MapConvyMcp(this WebApplication app)
     {
         app.UseWhen(
-            context => context.Request.Path.StartsWithSegments(Path),
+            context => context.Request.Path.StartsWithSegments(Path) || ApiPaths.Any(p => context.Request.Path.StartsWithSegments(p)),
             branch => branch.UseMiddleware<McpApiKeyMiddleware>());
 
         app.MapMcp(Path);
@@ -38,7 +41,7 @@ public static class McpEndpoint
     }
 }
 
-/// <summary>Rejects <c>/mcp</c> requests without the right key (<c>X-Api-Key</c> or <c>Authorization: Bearer</c>).</summary>
+/// <summary>Rejects requests to <c>/mcp</c> and the external REST API without the right key (<c>X-Api-Key</c> or <c>Authorization: Bearer</c>).</summary>
 public sealed class McpApiKeyMiddleware
 {
     private readonly RequestDelegate _next;
@@ -60,7 +63,7 @@ public sealed class McpApiKeyMiddleware
 
             case McpAccess.NotConfigured:
                 context.Response.StatusCode = StatusCodes.Status503ServiceUnavailable;
-                await context.Response.WriteAsync("MCP is disabled: set MCP__APIKEY.", context.RequestAborted).ConfigureAwait(false);
+                await context.Response.WriteAsync("The API is disabled: set MCP__APIKEY.", context.RequestAborted).ConfigureAwait(false);
                 return;
 
             default:

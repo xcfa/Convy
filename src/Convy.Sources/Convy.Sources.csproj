@@ -7,6 +7,10 @@
   </PropertyGroup>
 
   <ItemGroup>
+    <ProjectReference Include="..\Convy.Sources.Abstractions\Convy.Sources.Abstractions.csproj" />
+  </ItemGroup>
+
+  <ItemGroup>
     <PackageReference Include="BencodeNET" Version="5.0.0" />
     <PackageReference Include="Microsoft.Extensions.Logging.Abstractions" Version="10.0.9" />
     <PackageReference Include="MonoTorrent" Version="3.0.2" />
