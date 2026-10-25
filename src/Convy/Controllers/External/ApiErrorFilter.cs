@@ -14,7 +14,7 @@ public sealed class ApiErrorFilter : IExceptionFilter
             return;
         }
 
-        context.Result = new ObjectResult(new ApiErrorDto(error.Message, error.ChallengeUrl?.AbsoluteUri)) { StatusCode = error.Status };
+        context.Result = new ObjectResult(new ApiErrorDto(error.Message, error.ChallengeUrl?.AbsoluteUri, error.ChallengeId)) { StatusCode = error.Status };
         context.ExceptionHandled = true;
     }
 }

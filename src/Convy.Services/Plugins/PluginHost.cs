@@ -1,4 +1,5 @@
 using System.Runtime.CompilerServices;
+using Convy.Services.Captcha;
 using Convy.Sources;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
@@ -30,17 +31,21 @@ public sealed class PluginHost : ISourceProvider, IDisposable
     private readonly ILoggerFactory _loggers;
     private readonly ILogger<PluginHost> _logger;
     private readonly Func<string?, HttpMessageHandler> _handlers;
+    private readonly CaptchaService? _captcha;
     private readonly List<(LoadedPlugin Plugin, PluginContext Context, PluginLoadContext LoadContext)> _loaded = [];
     private readonly List<PluginProblem> _problems = [];
 
-    public PluginHost(IOptionsMonitor<PluginsOptions> options, TimeProvider timeProvider, ILoggerFactory loggers)
-        : this(options, timeProvider, loggers, PluginHttp.CreateHandler)
+    public PluginHost(IOptionsMonitor<PluginsOptions> options, TimeProvider timeProvider, ILoggerFactory loggers, CaptchaService captcha)
+        : this(options, timeProvider, loggers, PluginHttp.CreateHandler, captcha)
     {
     }
 
     /// <param name="handlers">The transport for a plugin's proxy setting; tests pass a fake.</param>
-    public PluginHost(IOptionsMonitor<PluginsOptions> options, TimeProvider timeProvider, ILoggerFactory loggers, Func<string?, HttpMessageHandler> handlers)
+    /// <param name="captcha">The service of checks the plugins' requests hand bot checks to.</param>
+    public PluginHost(IOptionsMonitor<PluginsOptions> options, TimeProvider timeProvider, ILoggerFactory loggers, Func<string?, HttpMessageHandler> handlers,
+        CaptchaService? captcha = null)
     {
+        _captcha = captcha;
         _options = options;
         _timeProvider = timeProvider;
         _loggers = loggers;
@@ -53,6 +58,10 @@ public sealed class PluginHost : ISourceProvider, IDisposable
     public IReadOnlyList<LoadedPlugin> Plugins => _loaded.Select(l => l.Plugin).ToList();
 
     public IReadOnlyList<PluginProblem> Problems => _problems;
+
+    /// <summary>The manifest of the plugin <paramref name="source"/> comes from; null — not a plugin's.</summary>
+    public PluginManifest? PluginOf(IContentSource source) =>
+        _loaded.FirstOrDefault(l => l.Plugin.Sources.Contains(source)).Plugin?.Manifest;
 
     /// <summary>The folder's packages (<c>*.dll</c>, <c>*.zip</c>), by name. A missing folder is simply empty.</summary>
     public void LoadAll()
@@ -143,7 +152,7 @@ public sealed class PluginHost : ISourceProvider, IDisposable
             }
 
             var settings = _options.CurrentValue.For(manifest.Id);
-            context = new PluginContext(manifest, _options, _handlers(settings.Proxy), _timeProvider, _loggers.CreateLogger($"Convy.Plugins.{manifest.Id}"));
+            context = new PluginContext(manifest, _options, _handlers(settings.Proxy), _timeProvider, _loggers.CreateLogger($"Convy.Plugins.{manifest.Id}"), _captcha);
             var sources = plugin.CreateSources(context) ?? [];
             var taken = _loaded.SelectMany(l => l.Plugin.Sources).Select(s => s.Id).ToHashSet(StringComparer.OrdinalIgnoreCase);
             foreach (var source in sources)

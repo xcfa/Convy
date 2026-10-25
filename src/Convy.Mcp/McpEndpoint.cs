@@ -23,8 +23,8 @@ public static class McpEndpoint
         return services;
     }
 
-    /// <summary>The REST paths for external clients that share the MCP key (the Shizuka provider).</summary>
-    public static readonly string[] ApiPaths = ["/api/sources", "/api/jobs"];
+    /// <summary>The REST paths for external clients that share the MCP key (the Shizuka provider, the relay of checks).</summary>
+    public static readonly string[] ApiPaths = ["/api/sources", "/api/jobs", "/api/captcha"];
 
     /// <summary>
     /// Maps <c>/mcp</c> behind the API key check, and puts the external REST paths (<see cref="ApiPaths"/>) behind the

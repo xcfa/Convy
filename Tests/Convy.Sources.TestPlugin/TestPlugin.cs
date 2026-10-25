@@ -123,6 +123,12 @@ public sealed class TestGallerySource(IPluginContext context) : IGallerySource, 
             return null;
         }
 
+        if (response.Headers.TryGetValues("X-Captcha", out var captcha))
+        {
+            // The site's own captcha (not a bot check the host sees): the plugin reports where a person passes it.
+            throw new SourceException(SourceErrorKind.Challenge, "The site asks for its captcha.") { ChallengeUrl = new Uri(captcha.First()) };
+        }
+
         if (response.StatusCode == System.Net.HttpStatusCode.Forbidden)
         {
             throw new SourceException(SourceErrorKind.AuthFailed, "The token was refused.");
