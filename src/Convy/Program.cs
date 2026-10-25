@@ -318,6 +318,12 @@ public class Program
 		builder.Services.AddOptions<CaptchaOptions>().Bind(builder.Configuration.GetSection(CaptchaOptions.SectionName));
 		builder.Services.AddSingleton<CaptchaService>();
 		builder.Services.AddSingleton<CaptchaRelay>();
+		// The UI's tab passes the checks of the plugins' domains (they load once, at the start).
+		builder.Services.AddSingleton(sp => new CaptchaWindowRelay(
+			sp.GetRequiredService<CaptchaRelay>(),
+			sp.GetRequiredService<IOptionsMonitor<CaptchaOptions>>(),
+			() => sp.GetRequiredService<PluginHost>().Plugins.SelectMany(p => p.Manifest.Domains),
+			sp.GetRequiredService<ILogger<CaptchaWindowRelay>>()));
 
 		// Plugins (/data/plugins): each package in its own load context; their sources join the others. Galleries from
 		// them are downloaded by Convy's own downloader into gallery.downloads_path, as CBZ.

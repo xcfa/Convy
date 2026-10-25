@@ -8,6 +8,7 @@ import { Webhooks } from "./pages/Webhooks";
 import { Rules } from "./pages/Rules";
 import { About } from "./pages/About";
 import { readRoute, tabs } from "./route";
+import { Challenges } from "./challenges/Challenges";
 
 export function App() {
   const [route, setRoute] = useState(readRoute);
@@ -68,6 +69,7 @@ export function App() {
         {route.tab === "rules" && <Rules />}
         {route.tab === "about" && <About />}
       </main>
+      <Challenges />
     </div>
   );
 }

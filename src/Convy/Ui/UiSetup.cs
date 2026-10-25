@@ -2,6 +2,7 @@ using System;
 using System.IO;
 using System.Linq;
 using System.Threading.Tasks;
+using Convy.Captcha;
 using Convy.Services.Ui;
 using Convy.Services.Webhooks;
 using Microsoft.AspNetCore.Authentication;
@@ -164,6 +165,7 @@ public static class UiSetup
 
         app.MapGet("/", (UiAssets assets) => assets.Index()).RequireAuthorization(Policy).ExcludeFromDescription();
         app.MapGet("/assets/{**path}", (string path, UiAssets assets) => assets.Asset(path)).RequireAuthorization(Policy).ExcludeFromDescription();
+        CaptchaWindowRelay.Map(app);
 
         if (state.Mode != UiMode.Oidc)
         {
