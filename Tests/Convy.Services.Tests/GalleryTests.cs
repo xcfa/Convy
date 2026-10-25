@@ -17,10 +17,11 @@ namespace Convy.Services.Tests;
 /// </summary>
 internal sealed class GalleryHarness : IDisposable
 {
-    public GalleryHarness()
+    /// <param name="captcha">The service of checks of the plugins and the REST service; none by default.</param>
+    public GalleryHarness(Convy.Services.Captcha.CaptchaService? captcha = null)
     {
         Downloads = Directory.CreateTempSubdirectory("convy-gallery-").FullName;
-        Host = Plugins.Host(Web, time: Time);
+        Host = Plugins.Host(Web, time: Time, captcha: captcha);
         Registry = new SourceRegistry([Host], Media.Health(), Time, NullLogger<SourceRegistry>.Instance);
         Registry.RefreshAsync(CancellationToken.None).GetAwaiter().GetResult();
         Store = new EfGalleryDownloadStore(Db);
@@ -37,7 +38,7 @@ internal sealed class GalleryHarness : IDisposable
         };
         Api = new GalleryApiService(
             Registry, Media.Catalog(categories), Jobs, JobStore, new DownloaderResolver([Downloader]),
-            new StaticOptions<GalleryOptions>(Options), new StaticOptions<SearchOptions>(new SearchOptions { SourceTimeoutSeconds = 5 }));
+            new StaticOptions<GalleryOptions>(Options), new StaticOptions<SearchOptions>(new SearchOptions { SourceTimeoutSeconds = 5 }), captcha);
     }
 
     public FakeSiteHandler Web { get; } = new();

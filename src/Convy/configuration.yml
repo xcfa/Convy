@@ -184,6 +184,17 @@ serilog:
 #   parallel_pages: 2
 #   page_timeout_sec: 120
 
+# ── Bot checks and captchas (captcha-solver) ───────────────────────────────
+# A plugin's site behind Cloudflare or DDoS-Guard (or asking for its own captcha) is
+# handed to the service of checks: its browser passes the check, or a person does in a
+# client's window (Shizuka) or from a notification. /api/captcha relays the service to
+# Convy's clients with this key. Read on every request. See README "Bot checks".
+# captcha:
+#   url: http://captcha-solver:8191/
+#   key: …                          # scopes solve and solver; a Docker secret: Captcha__key
+#   wait_sec: 25                    # how long a request waits for a check to be passed
+#   profile: convy                  # Convy's own browser profiles at the service: <host>#convy
+
 # ── Jobs ───────────────────────────────────────────────────────────────────
 # Downloads started by the agent (MCP `download` tool) become jobs with a unified
 # status. All values are optional; the defaults are shown.

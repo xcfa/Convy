@@ -570,14 +570,50 @@ through a small REST API behind the MCP key (`MCP__APIKEY`, as `X-Api-Key` or
 | `POST /api/jobs` `{ "sourceId", "contentId", "category"? }` | starts a download job (or returns the running one for the same release): `jobId` |
 | `GET /api/jobs/{id}` | `status`, `title`, `pagesDone`, `pagesTotal`, `sizeBytes`, `archiveReady`, `error` |
 | `GET /api/jobs/{id}/archive` | streams the CBZ once `archiveReady` is true (range requests supported) |
+| `/api/captcha/…` | the API of the service of checks, relayed with Convy's key (see [Bot checks](#bot-checks-and-captchas)) |
 
 Errors are `{ "error": "…" }` with `400` (a bad request: a missing parameter, a source that
 does not browse asked without `q`, an unknown category), `401` (the site refused the plugin's
-credentials), `403` (the site asks a human for a captcha: `challengeUrl` names the page), `404`
+credentials), `403` (the site asks to prove this is not a robot: `challengeUrl` names the page,
+and `challengeId` the check that waits for a person at the service of checks), `404`
 (unknown source, job or link), `409` (the same release is already being downloaded by a job
 Convy could not reuse), `502` (the site failed), `503` (downloads are off: no
 `gallery.downloads_path`) or `504` (the site timed out). A job started here is placed like any
 other: the rules see the category's client category as `Category` (`Provider == gallery`).
+
+#### Bot checks and captchas
+
+A site behind Cloudflare or DDoS-Guard answers a script with a check («Just a moment...») instead
+of its page; some sites ask for their own captcha. With a
+[captcha-solver](https://github.com/xcfa/captcha-solver) set up, Convy hands these to it:
+
+```yaml
+captcha:
+  url: http://captcha-solver:8191/
+  key: …            # a key with the solve and solver scopes; a Docker secret: Captcha__key
+  # wait_sec: 25    # how long a request waits for a check to be passed
+  # profile: convy  # Convy's own browser profiles there: <host>#convy
+```
+
+- **A plugin's request** that gets a check is handed to the service (`POST /solve`). Its browser,
+  on the same IP, usually passes it by itself; the request then goes again with the browser's
+  cookies and User-Agent, for every plugin from then on. A site that still shows the check to
+  those cookies (it looks at the TLS too) is asked through the service's browser (`POST /fetch`).
+  The plugin's own cookies (a sign-in) go along in Convy's own profile at the service and are
+  never shared with its other clients.
+- **A check that needs a person** waits at the service for `wait_sec`; then the request fails
+  with the check, which stays open there: a person passes it in a client's window (Shizuka's
+  banner) or from the service's notification, and the next request takes its cookies. A call of
+  the REST API waits only as long as its source's time allows and answers `403` with
+  `challengeId`. A site's own captcha a plugin reports is handed to the service the same way.
+- **Clients.** `/api/captcha` relays the service's API with Convy's key, behind the MCP key and
+  the IP allow-list: Shizuka set up with `http://convy:8080/api/captcha/` and Convy's MCP key
+  registers its tabs as solvers and shows the page of a check through Convy, while the cookies
+  stay with Convy, which is the one that talks to the sites. A reverse proxy in front of Convy
+  must pass WebSockets on `/api/captcha/`.
+
+Without `captcha.url` a check is reported as the source's error («asks to prove this is not a
+robot»), and a gallery download retries it like any other failure.
 
 #### Writing a plugin
 
@@ -962,7 +998,7 @@ downloads a JRE automatically the first time, so no separate Java installation i
 | --- | --- |
 | `Convy` | ASP.NET host: the polling worker, dependency injection, HTTP endpoints |
 | `frontend` | the web UI (React + Vite), built into `src/Convy/wwwroot` |
-| `Convy.Services` | downloaders (qBittorrent, OPDS, galleries behind `IDownloader`), plugin host, sync cycle, file linking, state tracker, webhook notifier |
+| `Convy.Services` | downloaders (qBittorrent, OPDS, galleries behind `IDownloader`), plugin host, the client of the service of checks (`Captcha/`), sync cycle, file linking, state tracker, webhook notifier |
 | `Convy.Sources.Abstractions` | the contract of sources and plugins (`IContentSource`, `IGallerySource`, `SourcePlugin`), a NuGet package for plugin authors |
 | `Convy.Sources` | search sources (Prowlarr), torrent metadata (.torrent parsing, magnet metadata from DHT) |
 | `Convy.Mcp` | MCP tool definitions, a thin layer over the services |
@@ -970,4 +1006,4 @@ downloads a JRE automatically the first time, so no separate Java installation i
 | `Convy.PathExpressions` | the rule language: ANTLR grammar, expression tree over item properties, mapping-file loader |
 | `Convy.Data` | EF Core (SQLite) entities and migrations |
 | `Convy.Infrastructure` | low-level helpers (the native hard-link wrapper) |
-| `Tests/*` | unit tests for the rule language and the state tracker; `Convy.Sources.TestPlugin` — a plugin over a fake site the plugin tests load |
+| `Tests/*` | unit tests for the rule language and the state tracker; `Convy.Sources.TestPlugin` — a plugin over a fake site the plugin tests load; `Convy.Tests` — the host's endpoints (the relay of checks) over a test server |

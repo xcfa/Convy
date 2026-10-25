@@ -50,14 +50,14 @@ internal static class Plugins
     public static byte[] TestPlugin => File.ReadAllBytes(TestPluginPath);
 
     /// <summary>A host over a temporary plugins folder holding the test plugin, with <paramref name="web"/> as its transport.</summary>
-    public static PluginHost Host(FakeSiteHandler web, PluginsOptions? options = null, FakeTime? time = null)
+    public static PluginHost Host(FakeSiteHandler web, PluginsOptions? options = null, FakeTime? time = null, Convy.Services.Captcha.CaptchaService? captcha = null)
     {
         var folder = Directory.CreateTempSubdirectory("convy-plugins-").FullName;
         File.Copy(TestPluginPath, Path.Combine(folder, "Convy.Sources.TestPlugin.dll"));
         options ??= new PluginsOptions();
         options.Path = folder;
         options.Settings.TryAdd("test-gallery", new PluginEntryOptions { Values = { ["token"] = "secret" } });
-        var host = new PluginHost(new StaticOptions<PluginsOptions>(options), time ?? new FakeTime(), NullLoggerFactory.Instance, _ => web);
+        var host = new PluginHost(new StaticOptions<PluginsOptions>(options), time ?? new FakeTime(), NullLoggerFactory.Instance, _ => web, captcha);
         host.LoadAll();
         return host;
     }

@@ -73,7 +73,13 @@ public sealed class ApiException : Exception
 
     /// <summary>For a <see cref="SourceErrorKind.Challenge"/> (403): the page a human opens to pass the site's challenge.</summary>
     public Uri? ChallengeUrl { get; init; }
+
+    /// <summary>For a challenge the service of checks waits on a person for: its id there (and at <c>/api/captcha</c>).</summary>
+    public Guid? ChallengeId { get; init; }
 }
 
-/// <summary>The body of an error answer: <c>{ "error": "…" }</c>, with <c>challengeUrl</c> for a challenge.</summary>
-public sealed record ApiErrorDto(string Error, string? ChallengeUrl = null);
+/// <summary>
+/// The body of an error answer: <c>{ "error": "…" }</c>, with <c>challengeUrl</c> for a challenge and <c>challengeId</c>
+/// when the service of checks waits on a person to pass it.
+/// </summary>
+public sealed record ApiErrorDto(string Error, string? ChallengeUrl = null, Guid? ChallengeId = null);

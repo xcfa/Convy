@@ -1,3 +1,4 @@
+using Convy.Services.Captcha;
 using Convy.Sources;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
@@ -12,12 +13,13 @@ public sealed class PluginContext : IPluginContext, IPluginSettings, IPluginLog,
     private readonly PluginHttp _http;
     private readonly ILogger _logger;
 
-    public PluginContext(PluginManifest manifest, IOptionsMonitor<PluginsOptions> options, HttpMessageHandler handler, TimeProvider timeProvider, ILogger logger)
+    public PluginContext(PluginManifest manifest, IOptionsMonitor<PluginsOptions> options, HttpMessageHandler handler, TimeProvider timeProvider, ILogger logger,
+        CaptchaService? captcha = null)
     {
         _pluginId = manifest.Id;
         _options = options;
         _logger = logger;
-        _http = new PluginHttp(manifest, handler, () => TimeSpan.FromSeconds(Math.Max(5, options.CurrentValue.For(manifest.Id).TimeoutSeconds)), timeProvider);
+        _http = new PluginHttp(manifest, handler, () => TimeSpan.FromSeconds(Math.Max(5, options.CurrentValue.For(manifest.Id).TimeoutSeconds)), timeProvider, captcha);
     }
 
     public IPluginHttp Http => _http;

@@ -1,9 +1,11 @@
+using Convy.Captcha;
 using Convy.Configuration;
 using Convy.Health;
 using Convy.Infrastructure.Helpers;
 using Convy.Mcp;
 using Convy.Middleware;
 using Convy.Services;
+using Convy.Services.Captcha;
 using Convy.Services.Downloaders.QBittorrent;
 using Convy.Services.Downloaders.Slskd;
 using Convy.Services.Downloads;
@@ -311,6 +313,12 @@ public class Program
 			builder.Services.AddHostedService<OpdsDownloadWorker>();
 		}
 
+		// The service of checks (captcha-solver): plugins' requests hand it the bot checks they run into, and
+		// /api/captcha relays its API to Convy's clients (Shizuka) with Convy's key.
+		builder.Services.AddOptions<CaptchaOptions>().Bind(builder.Configuration.GetSection(CaptchaOptions.SectionName));
+		builder.Services.AddSingleton<CaptchaService>();
+		builder.Services.AddSingleton<CaptchaRelay>();
+
 		// Plugins (/data/plugins): each package in its own load context; their sources join the others. Galleries from
 		// them are downloaded by Convy's own downloader into gallery.downloads_path, as CBZ.
 		builder.Services.AddOptions<PluginsOptions>().Bind(builder.Configuration.GetSection(PluginsOptions.SectionName));
@@ -431,8 +439,12 @@ public class Program
 			app.UseHttpsRedirection();
 		}
 
+		// The sockets of the relay of checks (a solver's registration, the page of a check).
+		app.UseWebSockets(new WebSocketOptions { KeepAliveInterval = TimeSpan.FromSeconds(30) });
+
 		app.MapControllers();
 		app.MapConvyUi();
+		CaptchaRelay.Map(app);
 
 		// MCP endpoint for the agent; behind the IP allow-list and MCP__APIKEY.
 		app.MapConvyMcp();

@@ -1,7 +1,9 @@
+using Convy.Services.Captcha;
 using Convy.Services.Downloaders.Gallery;
 using Convy.Services.Downloads;
 using Convy.Services.Jobs;
 using Convy.Services.Media;
+using Convy.Services.Plugins;
 using Convy.Sources;
 using Microsoft.Extensions.Options;
 
@@ -21,6 +23,10 @@ public sealed class GalleryApiService
     private readonly IDownloaderResolver _downloaders;
     private readonly IOptionsMonitor<GalleryOptions> _options;
     private readonly IOptionsMonitor<SearchOptions> _searchOptions;
+    private readonly CaptchaService? _captcha;
+
+    /// <summary>The part of a call's time kept for the answer: a check still waiting for a person is named in it.</summary>
+    private static readonly TimeSpan AnswerMargin = TimeSpan.FromSeconds(4);
 
     public GalleryApiService(
         ISourceRegistry registry,
@@ -29,8 +35,10 @@ public sealed class GalleryApiService
         IJobStore jobStore,
         IDownloaderResolver downloaders,
         IOptionsMonitor<GalleryOptions> options,
-        IOptionsMonitor<SearchOptions> searchOptions)
+        IOptionsMonitor<SearchOptions> searchOptions,
+        CaptchaService? captcha = null)
     {
+        _captcha = captcha;
         _registry = registry;
         _categories = categories;
         _jobs = jobs;
@@ -223,13 +231,34 @@ public sealed class GalleryApiService
         _downloaders.FindByProvider(DownloadProviders.Gallery) as GalleryDownloader
         ?? throw new ApiException(503, "Galleries cannot be downloaded: gallery.downloads_path is not set.");
 
+    /// <summary>
+    /// The source's call within its time. A bot check is waited for only as long as that time allows (the client still
+    /// hears about it): one waiting for a person is named by its <c>challengeId</c>, and a site's own captcha the plugin
+    /// reports is handed to the service of checks first (passed at once, the call goes again).
+    /// </summary>
     private async Task<T> RunAsync<T>(IGallerySource source, Func<CancellationToken, Task<T>> call, CancellationToken cancellationToken)
     {
         var timeout = source.Timeout ?? TimeSpan.FromSeconds(Math.Max(1, _searchOptions.CurrentValue.SourceTimeoutSeconds));
         using var deadline = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
         deadline.CancelAfter(timeout);
+        using var waits = CaptchaService.WaitWithin(timeout - AnswerMargin);
         try
         {
+            try
+            {
+                return await call(deadline.Token).ConfigureAwait(false);
+            }
+            catch (SourceException ex) when (ex is { Kind: SourceErrorKind.Challenge, ChallengeUrl: { } url } && _captcha is { IsSetUp: true }
+                                             && _captcha.WaitingFor(url.IdnHost) is null && !PluginHttp.Checked(ex))
+            {
+                // The site's own captcha, which only the plugin sees: the service passes it in a person's hands.
+                var check = await SiteCheckAsync(url, deadline.Token).ConfigureAwait(false);
+                if (check?.State != ChallengeState.Solved)
+                {
+                    throw;
+                }
+            }
+
             return await call(deadline.Token).ConfigureAwait(false);
         }
         catch (OperationCanceledException) when (!cancellationToken.IsCancellationRequested)
@@ -241,7 +270,21 @@ public sealed class GalleryApiService
             throw new ApiException(ex.Kind switch { SourceErrorKind.AuthFailed => 401, SourceErrorKind.Challenge => 403, _ => 502 }, $"{source.Name}: {ex.Message}", ex)
             {
                 ChallengeUrl = ex.Kind == SourceErrorKind.Challenge ? ex.ChallengeUrl : null,
+                ChallengeId = ex is { Kind: SourceErrorKind.Challenge, ChallengeUrl: { } at } ? _captcha?.WaitingFor(at.IdnHost)?.Id : null,
             };
+        }
+    }
+
+    /// <summary>The site's captcha at <paramref name="url"/> handed to the service; null — the service failed (logged by the caller's error).</summary>
+    private async Task<ChallengeOutcome?> SiteCheckAsync(Uri url, CancellationToken cancellationToken)
+    {
+        try
+        {
+            return await _captcha!.SolveAsync(url, [], afterTransplant: false, site: true, cancellationToken).ConfigureAwait(false);
+        }
+        catch (CaptchaServiceException)
+        {
+            return null;
         }
     }
 
