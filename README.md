@@ -603,8 +603,9 @@ captcha:
   sign-in) go along in the plugin's own profile at the service and reach no other plugin, no
   client of Convy and no other client of the service.
 - **A check that needs a person** waits at the service for `wait_sec`; then the request fails
-  with the check, which stays open there: a person passes it in a client's window (Shizuka's
-  banner) or from the service's notification, and the next request takes its cookies. A call of
+  with the check, which stays open there: a person passes it in Convy's web UI, in a client's
+  window (Shizuka's banner) or from the service's notification, and the next request takes its
+  cookies. A call of
   the REST API (and a search) waits only as long as its source's time allows and answers `403` with
   `challengeId`. A site's own captcha a plugin reports is handed to the service the same way.
 - **Clients.** `/api/captcha` relays the service's API with Convy's key, behind the MCP key and
@@ -613,6 +614,11 @@ captcha:
   stay with Convy, which is the one that talks to the sites. A client cannot name Convy's own
   profiles, and answers about Convy's checks come without their cookies. A reverse proxy in
   front of Convy must pass WebSockets on `/api/captcha/`.
+- **The web UI.** While it is open, its tab is a solver at the service for the plugins' domains:
+  a check that needs a person is a banner under the top bar, and «Pass» opens a window with the
+  page of the check in the service's browser (clicks, the wheel and keys go there). The tab's
+  sockets (`/api/ui/captcha/`) are behind the UI's sign-in and take only the window's messages;
+  a reverse proxy must pass WebSockets there too.
 
 Without `captcha.url` a check is reported as the source's error («asks to prove this is not a
 robot»), and a gallery download retries it like any other failure.

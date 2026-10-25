@@ -1120,3 +1120,103 @@ tr.unreachable td {
   overflow: hidden;
   margin-top: 2px;
 }
+
+/* Bot checks: the banner of offered checks under the top bar, the window with the service's page. */
+
+.banner.ok {
+  color: var(--ok);
+  background: var(--ok-bg);
+  border-color: color-mix(in srgb, var(--ok) 30%, transparent);
+}
+
+.challenge-banners {
+  position: fixed;
+  top: 60px;
+  right: 16px;
+  z-index: 9;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  width: min(440px, calc(100vw - 32px));
+}
+
+.challenge-banner {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  box-shadow: 0 4px 16px rgb(16 24 40 / 18%);
+}
+
+.challenge-banner > div:first-child {
+  flex: 1;
+  min-width: 0;
+}
+
+.challenge-actions {
+  display: flex;
+  gap: 6px;
+}
+
+.challenge-window {
+  width: min(1000px, 100%);
+  max-height: calc(100vh - 48px);
+  gap: 8px;
+}
+
+.challenge-url {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.challenge-hint {
+  margin: 0;
+}
+
+.challenge-screen {
+  position: relative;
+  display: grid;
+  place-items: center;
+  min-height: 120px;
+  background: var(--surface-2);
+  border-radius: 8px;
+}
+
+/* The page keeps its proportions inside the window; a finger drags nothing but the page. */
+.challenge-canvas {
+  display: block;
+  width: auto;
+  height: auto;
+  max-width: 100%;
+  max-height: calc(100vh - 240px);
+  touch-action: none;
+  cursor: default;
+}
+
+.challenge-screen[hidden],
+.challenge-canvas[hidden] {
+  display: none;
+}
+
+/* Takes the keys (and a phone's keyboard) for the page without being seen. */
+.challenge-keys {
+  position: absolute;
+  top: 0;
+  left: 0;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  border: 0;
+  opacity: 0;
+}
+
+.challenge-footer {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 8px;
+}
+
+.challenge-status {
+  margin-right: auto;
+}

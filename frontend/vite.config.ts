@@ -13,7 +13,8 @@ export default defineConfig({
   },
   server: {
     proxy: {
-      "/api": convy,
+      // ws: the sockets of the bot checks (/api/ui/captcha).
+      "/api": { target: convy, ws: true },
       "/auth": convy,
       "/signin-oidc": convy,
     },
