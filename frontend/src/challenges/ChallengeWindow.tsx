@@ -20,6 +20,8 @@ const MAX_RECONNECTS = 5;
 const SOLVED_CLOSE_MS = 2000;
 /** Pointer moves go up at most this often (ms). */
 const MOVE_EVERY_MS = 40;
+/** Keys that are no key of their own (a modifier alone, a key inside an IME's or a phone keyboard's composition). */
+const SILENT_KEYS = new Set(["Unidentified", "Process", "Dead", "Shift", "Control", "Alt", "AltGraph", "Meta", "CapsLock"]);
 
 type Phase = "connecting" | "waiting" | "live" | "lost" | "ended";
 
@@ -186,13 +188,20 @@ export function ChallengeWindow({ id, domain, onClose }: WindowProps) {
   }, [live, control]);
 
   const onKeyDown = (event: KeyboardEvent<HTMLInputElement>) => {
-    // Escape is left to the window; printable characters come as text (the phone's keyboard too).
-    if (event.key === "Escape") return;
-    if (event.key.length > 1 || event.ctrlKey || event.metaKey) {
+    // Escape is left to the window; printable characters come as text (the phone's keyboard too). A shortcut has no
+    // counterpart there and stays with the field: a paste comes up as its text, AltGr's characters too.
+    if (event.key === "Escape" || event.nativeEvent.isComposing || SILENT_KEYS.has(event.key) || event.ctrlKey || event.metaKey) return;
+    if (event.key.length > 1) {
       event.preventDefault();
       event.stopPropagation();
       input({ type: "key", key: event.key });
     }
+  };
+  // The field's text goes up once it is final: an IME's or a phone keyboard's word when the composition ends.
+  const flush = (field: HTMLInputElement) => {
+    if (!field.value) return;
+    input({ type: "text", text: field.value });
+    field.value = "";
   };
 
   const left = hello ? secondsLeft(hello.expiresAt, now) : null;
@@ -268,11 +277,9 @@ export function ChallengeWindow({ id, domain, onClose }: WindowProps) {
             autoCapitalize="off"
             onKeyDown={onKeyDown}
             onInput={(event) => {
-              const field = event.currentTarget;
-              if (!field.value) return;
-              input({ type: "text", text: field.value });
-              field.value = "";
+              if (!(event.nativeEvent as globalThis.InputEvent).isComposing) flush(event.currentTarget);
             }}
+            onCompositionEnd={(event) => flush(event.currentTarget)}
           />
         </div>
         {phase !== "ended" && (

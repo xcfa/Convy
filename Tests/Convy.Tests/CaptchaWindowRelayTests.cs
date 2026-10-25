@@ -143,6 +143,8 @@ public sealed class CaptchaWindowRelayTests : IAsyncLifetime
         Assert.Contains("hello", await ReceiveTextAsync(window));
         Assert.Equal(WebSocketMessageType.Binary, (await ReceiveAsync(window)).Type);
         await SendTextAsync(window, """{"type":"accept","challengeId":"1"}""");
+        // Parses, but cannot be written again: dropped, and the window goes on.
+        await SendTextAsync(window, """{"type":"take","x":"\ud800"}""");
         await SendTextAsync(window, """{"type":"input","event":{"type":"move","x":1,"y":2}}""");
         Assert.Equal("""{"type":"input","event":{"type":"move","x":1,"y":2}}""", await ReceiveTextAsync(window));
 

@@ -98,6 +98,10 @@ public sealed class CaptchaWindowRelay
                     ["domains"] = new JsonArray(Domains().Select(d => (JsonNode?)d).ToArray()),
                 }, http.RequestAborted).ConfigureAwait(false);
             }
+            catch (OperationCanceledException) when (http.RequestAborted.IsCancellationRequested)
+            {
+                return;
+            }
             catch (WebSocketException)
             {
                 // Closed at once (a service without solvers): the tab hears it as unavailable.
@@ -173,11 +177,16 @@ public sealed class CaptchaWindowRelay
         {
             return new Link(client, await _relay.ConnectWebSocket(url, key, ct).ConfigureAwait(false));
         }
+        catch (OperationCanceledException) when (ct.IsCancellationRequested)
+        {
+            // The tab left while the service's socket was opening.
+        }
         catch (CaptchaRelay.RefusedException ex) when (ex.Status == HttpStatusCode.NotFound)
         {
             await CloseAsync(client, notFound, "the service of checks does not know it").ConfigureAwait(false);
         }
-        catch (Exception ex) when (ex is CaptchaRelay.RefusedException or WebSocketException or HttpRequestException or IOException)
+        catch (Exception ex) when (ex is CaptchaRelay.RefusedException or WebSocketException or HttpRequestException or IOException
+            or InvalidOperationException)
         {
             _logger.LogWarning("The service of checks refused or did not answer the socket {Path}: {Message}", path, ex.Message);
             await CloseAsync(client, CloseUnavailable, "the service of checks is unavailable").ConfigureAwait(false);
@@ -236,6 +245,12 @@ public sealed class CaptchaWindowRelay
             if (down.IsFaulted)
             {
                 await CloseDownAsync((WebSocketCloseStatus)CloseUnavailable, "the service of checks is unavailable").ConfigureAwait(false);
+            }
+
+            // The browser's socket broke (a tab gone without a close): the service hears it now too.
+            if (up.IsFaulted)
+            {
+                await Quietly(CloseUpAsync(WebSocketCloseStatus.NormalClosure, null, CancellationToken.None)).ConfigureAwait(false);
             }
 
             // One side closed and its close went on: the other's answer to it ends the second copy. A cancelled
@@ -299,7 +314,8 @@ public sealed class CaptchaWindowRelay
 
                 if (result.MessageType == WebSocketMessageType.Close)
                 {
-                    await CloseUpAsync(client.CloseStatus ?? WebSocketCloseStatus.NormalClosure, client.CloseStatusDescription, ct).ConfigureAwait(false);
+                    // The browser's own code and reason stay here: the service hears a plain close.
+                    await CloseUpAsync(WebSocketCloseStatus.NormalClosure, null, ct).ConfigureAwait(false);
                     return;
                 }
 
@@ -359,13 +375,14 @@ public sealed class CaptchaWindowRelay
         /// The message as it goes up, written again from what was checked (the service reads JSON its own way, so the
         /// bytes it gets are the ones judged); null — not a JSON object with an allowed <c>type</c>, or a duplicate key.
         /// </summary>
-        private static JsonNode? Allowed(ReadOnlyMemory<byte> message, IReadOnlySet<string> allowed)
+        private static byte[]? Allowed(ReadOnlyMemory<byte> message, IReadOnlySet<string> allowed)
         {
             try
             {
+                // Written inside the check: a lone surrogate parses but does not write, and is dropped like the rest.
                 return JsonNode.Parse(message.Span) is JsonObject node
                     && node["type"] is JsonValue type && type.TryGetValue<string>(out var name) && allowed.Contains(name)
-                    ? node
+                    ? Encoding.UTF8.GetBytes(node.ToJsonString())
                     : null;
             }
             catch (Exception ex) when (ex is JsonException or ArgumentException or InvalidOperationException)
