@@ -592,25 +592,27 @@ captcha:
   url: http://captcha-solver:8191/
   key: …            # a key with the solve and solver scopes; a Docker secret: Captcha__key
   # wait_sec: 25    # how long a request waits for a check to be passed
-  # profile: convy  # Convy's own browser profiles there: <host>#convy
+  # profile: convy  # Convy's own browser profiles there: <domain>#convy.<plugin>
 ```
 
 - **A plugin's request** that gets a check is handed to the service (`POST /solve`). Its browser,
   on the same IP, usually passes it by itself; the request then goes again with the browser's
-  cookies and User-Agent, for every plugin from then on. A site that still shows the check to
-  those cookies (it looks at the TLS too) is asked through the service's browser (`POST /fetch`).
-  The plugin's own cookies (a sign-in) go along in Convy's own profile at the service and are
-  never shared with its other clients.
+  cookies and User-Agent, for every plugin from then on (only the check's own cookies, such as
+  `cf_clearance`, are taken). A site that still shows the check to those cookies (it looks at the
+  TLS too) is asked through the service's browser (`POST /fetch`). The plugin's own cookies (a
+  sign-in) go along in the plugin's own profile at the service and reach no other plugin, no
+  client of Convy and no other client of the service.
 - **A check that needs a person** waits at the service for `wait_sec`; then the request fails
   with the check, which stays open there: a person passes it in a client's window (Shizuka's
   banner) or from the service's notification, and the next request takes its cookies. A call of
-  the REST API waits only as long as its source's time allows and answers `403` with
+  the REST API (and a search) waits only as long as its source's time allows and answers `403` with
   `challengeId`. A site's own captcha a plugin reports is handed to the service the same way.
 - **Clients.** `/api/captcha` relays the service's API with Convy's key, behind the MCP key and
   the IP allow-list: Shizuka set up with `http://convy:8080/api/captcha/` and Convy's MCP key
   registers its tabs as solvers and shows the page of a check through Convy, while the cookies
-  stay with Convy, which is the one that talks to the sites. A reverse proxy in front of Convy
-  must pass WebSockets on `/api/captcha/`.
+  stay with Convy, which is the one that talks to the sites. A client cannot name Convy's own
+  profiles, and answers about Convy's checks come without their cookies. A reverse proxy in
+  front of Convy must pass WebSockets on `/api/captcha/`.
 
 Without `captcha.url` a check is reported as the source's error («asks to prove this is not a
 robot»), and a gallery download retries it like any other failure.

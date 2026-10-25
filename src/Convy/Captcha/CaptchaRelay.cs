@@ -4,6 +4,8 @@ using System.Net;
 using System.Net.Http;
 using System.Net.Http.Headers;
 using System.Net.WebSockets;
+using System.Text.Json;
+using System.Text.Json.Nodes;
 using System.Threading;
 using System.Threading.Tasks;
 using Convy.Services.Captcha;
@@ -19,7 +21,9 @@ namespace Convy.Captcha;
 /// calls (<c>/solve</c>, <c>/challenges</c>, <c>/fetch</c>) and WebSockets (<c>/solvers/connect</c>,
 /// <c>/challenges/{id}/screen</c>). A client cannot tell it from the service: Shizuka set up with Convy's address
 /// registers its tab as a solver and shows the page of a check through it, while the cookies stay with Convy, which goes
-/// to the sites. Behind the IP allow-list and the API key, like the rest of the external API.
+/// to the sites. Behind the IP allow-list and the API key, like the rest of the external API. Convy's own profiles at
+/// the service (its plugins' sign-ins) stay its own: a client cannot name them, and their cookies are left out of the
+/// answers about Convy's checks.
 /// </summary>
 public sealed class CaptchaRelay : IDisposable
 {
@@ -27,6 +31,9 @@ public sealed class CaptchaRelay : IDisposable
     public const string Prefix = "/api/captcha";
 
     private static readonly string[] Forwarded = ["content-type", "retry-after"];
+
+    /// <summary>The largest body of a call or an answer the relay reads to keep Convy's profiles to itself.</summary>
+    private const int MaxJsonBytes = 4 * 1024 * 1024;
 
     private readonly IOptionsMonitor<CaptchaOptions> _options;
     private readonly HttpClient _http;
@@ -73,9 +80,28 @@ public sealed class CaptchaRelay : IDisposable
 
         var (service, key) = upstream;
 
+        var options = _options.CurrentValue;
         using var request = new HttpRequestMessage(new HttpMethod(http.Request.Method), new Uri(service, path + http.Request.QueryString));
         request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", key);
-        if (HttpMethods.IsPost(http.Request.Method))
+        if (path is "solve" or "fetch")
+        {
+            // What goes up is the parsed call, so the service reads the same profile as this check did.
+            var call = await ReadJsonAsync(http.Request.Body, http.RequestAborted).ConfigureAwait(false);
+            if (call is not JsonObject body)
+            {
+                await ProblemAsync(http, StatusCodes.Status400BadRequest, "The body must be a JSON object.").ConfigureAwait(false);
+                return;
+            }
+
+            if (options.IsOwn(Text(body["profile"])))
+            {
+                await ProblemAsync(http, StatusCodes.Status403Forbidden, "Convy's own profiles at the service are not for its clients.").ConfigureAwait(false);
+                return;
+            }
+
+            request.Content = new StringContent(body.ToJsonString(), System.Text.Encoding.UTF8, "application/json");
+        }
+        else if (HttpMethods.IsPost(http.Request.Method))
         {
             request.Content = new StreamContent(http.Request.Body);
             if (http.Request.ContentType is { } type)
@@ -111,9 +137,63 @@ public sealed class CaptchaRelay : IDisposable
                 }
             }
 
-            await answer.Content.CopyToAsync(http.Response.Body, http.RequestAborted).ConfigureAwait(false);
+            if (path is "fetch" || !answer.IsSuccessStatusCode)
+            {
+                await answer.Content.CopyToAsync(http.Response.Body, http.RequestAborted).ConfigureAwait(false);
+                return;
+            }
+
+            // An answer about checks: those of Convy's own profiles go without their cookies.
+            var about = await ReadJsonAsync(await answer.Content.ReadAsStreamAsync(http.RequestAborted).ConfigureAwait(false), http.RequestAborted)
+                .ConfigureAwait(false);
+            foreach (var check in about switch { JsonArray list => list.OfType<JsonObject>(), JsonObject one => [one], _ => [] })
+            {
+                if (options.IsOwn(Text(check["profile"])))
+                {
+                    check.Remove("cookies");
+                }
+            }
+
+            http.Response.Headers.ContentLength = null;
+            await http.Response.WriteAsync(about?.ToJsonString() ?? "null", http.RequestAborted).ConfigureAwait(false);
         }
     }
+
+    /// <summary>A JSON body of at most <see cref="MaxJsonBytes"/>; null — not JSON, too large, or with a key twice.</summary>
+    private static async Task<JsonNode?> ReadJsonAsync(System.IO.Stream body, CancellationToken ct)
+    {
+        using var buffer = new System.IO.MemoryStream();
+        var chunk = new byte[81920];
+        int read;
+        while ((read = await body.ReadAsync(chunk, ct).ConfigureAwait(false)) > 0)
+        {
+            if (buffer.Length + read > MaxJsonBytes)
+            {
+                return null;
+            }
+
+            buffer.Write(chunk, 0, read);
+        }
+
+        try
+        {
+            var node = JsonNode.Parse(buffer.ToArray());
+            // A repeated key would let two parsers read two profiles: building the object's properties refuses it.
+            if (node is JsonObject call)
+            {
+                _ = call.Count;
+            }
+
+            return node;
+        }
+        catch (Exception ex) when (ex is JsonException or ArgumentException or InvalidOperationException)
+        {
+            return null;
+        }
+    }
+
+    private static string? Text(JsonNode? node) =>
+        node is JsonValue value && value.TryGetValue<string>(out var text) ? text : null;
 
     private async Task PipeAsync(HttpContext http, string path)
     {

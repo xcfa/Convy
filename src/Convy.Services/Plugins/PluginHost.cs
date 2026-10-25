@@ -59,6 +59,10 @@ public sealed class PluginHost : ISourceProvider, IDisposable
 
     public IReadOnlyList<PluginProblem> Problems => _problems;
 
+    /// <summary>The manifest of the plugin <paramref name="source"/> comes from; null — not a plugin's.</summary>
+    public PluginManifest? PluginOf(IContentSource source) =>
+        _loaded.FirstOrDefault(l => l.Plugin.Sources.Contains(source)).Plugin?.Manifest;
+
     /// <summary>The folder's packages (<c>*.dll</c>, <c>*.zip</c>), by name. A missing folder is simply empty.</summary>
     public void LoadAll()
     {

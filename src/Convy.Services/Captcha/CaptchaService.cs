@@ -32,6 +32,12 @@ public enum ChallengeState
 /// <param name="Message">Why it failed.</param>
 public sealed record ChallengeOutcome(Guid Id, ChallengeState State, Uri Url, DateTimeOffset? ExpiresAt, string? Message);
 
+/// <summary>Where a check or a browser request works at the service: the site's domain and the plugin it is for.</summary>
+/// <param name="Domain">The domain of the plugin's manifest that covers the host: the check's cookies are for it.</param>
+/// <param name="Owner">The plugin: its own profile at the service (<c>&lt;domain&gt;#convy.&lt;plugin&gt;</c>) keeps its cookies from the others'.</param>
+/// <param name="Own">The plugin's cookies for the site (a sign-in): they go along in its own profile.</param>
+public sealed record ChallengePlace(string Domain, string Owner, IReadOnlyList<Cookie> Own);
+
 /// <summary>A request made by the service's browser (<c>POST /fetch</c>): a domain whose cookies alone do not get past its check.</summary>
 public sealed record BrowserRequest(Uri Url, string Method, IReadOnlyDictionary<string, string> Headers, byte[]? Body, TimeSpan Timeout);
 
@@ -61,7 +67,13 @@ public sealed class CaptchaService : IDisposable
     /// <summary>A waiting check is asked about at most this often: the pages of a gallery go in parallel.</summary>
     private static readonly TimeSpan RefreshEvery = TimeSpan.FromSeconds(5);
 
-    /// <summary>The time a call of the REST API leaves for the waits of its checks (see <see cref="WaitWithin"/>): from when, how long.</summary>
+    /// <summary>The part of a call's time kept for its answer: a check still waiting for a person is named in it.</summary>
+    private static readonly TimeSpan AnswerMargin = TimeSpan.FromSeconds(4);
+
+    /// <summary>The time a call to the service may take beyond the flow's budget (see <see cref="WaitWithin"/>).</summary>
+    private static readonly TimeSpan CallMargin = TimeSpan.FromSeconds(3);
+
+    /// <summary>The time an interactive call leaves for the waits of its checks (see <see cref="WaitWithin"/>): from when, how long.</summary>
     private static readonly AsyncLocal<(long Start, TimeSpan Budget)?> Deadline = new();
 
     private readonly IOptionsMonitor<CaptchaOptions> _options;
@@ -92,15 +104,24 @@ public sealed class CaptchaService : IDisposable
     public bool IsSetUp => _options.CurrentValue.Upstream is not null;
 
     /// <summary>
-    /// For <paramref name="budget"/> from now (and not longer) the checks of this async flow are waited for: a call of the
-    /// REST API must answer its client in time, with the check that waits for a person if there is one. Dispose to end it.
+    /// The checks of this async flow are waited for only within <paramref name="callTime"/> from now, less a margin for
+    /// the answer: an interactive call (the REST API, a search) must answer in time, naming the check that waits for a
+    /// person if there is one. Without it (a download in the background) a check is waited for <c>wait_sec</c>. Dispose
+    /// to end it.
     /// </summary>
-    public static IDisposable WaitWithin(TimeSpan budget)
+    public static IDisposable WaitWithin(TimeSpan callTime)
     {
         var previous = Deadline.Value;
-        Deadline.Value = (Stopwatch.GetTimestamp(), budget);
+        Deadline.Value = (Stopwatch.GetTimestamp(), callTime - AnswerMargin);
         return new Restore(previous);
     }
+
+    /// <summary>What is left of the flow's budget; null — no budget.</summary>
+    private static TimeSpan? Left() => Deadline.Value is { } call ? call.Budget - Stopwatch.GetElapsedTime(call.Start) : null;
+
+    /// <summary><paramref name="timeout"/> of a call to the service, cut to what the flow's budget leaves.</summary>
+    private static TimeSpan Within(TimeSpan timeout) =>
+        Left() is { } left && left + CallMargin < timeout ? (left > TimeSpan.Zero ? left : TimeSpan.Zero) + CallMargin : timeout;
 
     /// <summary>The User-Agent of the browser that passed the check of <paramref name="host"/>; null — none passed.</summary>
     public string? UserAgentFor(string host) => StateOf(host)?.UserAgent;
@@ -113,40 +134,40 @@ public sealed class CaptchaService : IDisposable
 
     /// <summary>
     /// Starts the check at <paramref name="url"/> (or joins the one going on) and waits for it as long as the options and
-    /// the flow's <see cref="WaitWithin"/> allow. Passed — its cookies go into <see cref="Jar"/>, the domain's User-Agent
-    /// and mode are remembered; not yet — it is remembered as waiting for a person. <paramref name="own"/> are the
-    /// plugin's cookies for the site (a sign-in): they go with the check in Convy's own profile and stay the plugin's.
+    /// the flow's <see cref="WaitWithin"/> allow. Passed — the check's own cookies (cf_clearance, __ddg*, never the site's)
+    /// go into <see cref="Jar"/>, the domain's User-Agent and mode are remembered; not yet — it is remembered as waiting
+    /// for a person. The plugin's cookies of <paramref name="place"/> go with it in the plugin's own profile.
     /// </summary>
     /// <param name="afterTransplant">The site showed the check again to the cookies of a passed one: the service switches
     /// the domain to its browser.</param>
     /// <param name="site">A captcha of the site itself, which the plugin reported: only a person tells it is passed.</param>
-    public async Task<ChallengeOutcome> SolveAsync(Uri url, IReadOnlyList<Cookie> own, bool afterTransplant, bool site, CancellationToken ct)
+    public async Task<ChallengeOutcome> SolveAsync(Uri url, ChallengePlace place, bool afterTransplant, bool site, CancellationToken ct)
     {
         var options = _options.CurrentValue;
         var wait = TimeSpan.FromSeconds(Math.Clamp(options.WaitSeconds, 0, 60));
-        if (Deadline.Value is { } call)
+        if (Left() is { } left && left < wait)
         {
-            var left = call.Budget - Stopwatch.GetElapsedTime(call.Start);
-            wait = left < wait ? left : wait;
+            wait = left;
         }
 
         var body = new SolveBody(url.AbsoluteUri)
         {
-            Profile = ProfileOf(url, options),
-            Cookies = own.Count > 0 ? own.Select(c => WireCookie.Of(c, url)).ToList() : null,
+            Domain = place.Domain,
+            Profile = ProfileOf(place, options),
+            Cookies = place.Own.Count > 0 ? place.Own.Select(c => WireCookie.Of(c, place.Domain)).ToList() : null,
             Kind = site ? "site" : null,
             Wait = (int)Math.Clamp(Math.Floor(wait.TotalSeconds), 0, 60),
             AfterTransplant = afterTransplant,
         };
-        var info = (await SendAsync<ChallengeBody>(HttpMethod.Post, "solve", body, TimeSpan.FromSeconds(body.Wait) + ServiceSlack, ct, missing: false)
+        var info = (await SendAsync<ChallengeBody>(HttpMethod.Post, "solve", body, Within(TimeSpan.FromSeconds(body.Wait) + ServiceSlack), ct, missing: false)
             .ConfigureAwait(false))!;
         var check = Outcome(info, url);
-        var domain = info.Domain ?? url.IdnHost;
-        var sent = own.Select(c => c.Name).ToHashSet(StringComparer.Ordinal);
+        var domain = info.Domain ?? place.Domain;
+        var sent = place.Own.Select(c => c.Name).ToHashSet(StringComparer.Ordinal);
         switch (check.State)
         {
             case ChallengeState.Solved:
-                Remember(info, url, sent);
+                Remember(info, domain, sent);
                 _waiting.TryRemove(domain, out _);
                 break;
             case ChallengeState.Pending:
@@ -176,17 +197,24 @@ public sealed class CaptchaService : IDisposable
 
         var (domain, waiting) = found;
         var now = _time.GetUtcNow();
-        if (now - waiting.AskedAt < RefreshEvery)
+        // Not more often than every few seconds, and not when the flow has no time left for it.
+        if (now - waiting.AskedAt < RefreshEvery || Left() is { } left && left < CallMargin)
         {
             return;
         }
 
         var check = waiting.Check;
-        _waiting[domain] = waiting with { AskedAt = now };
+        var asked = waiting with { AskedAt = now };
+        if (!_waiting.TryUpdate(domain, asked, waiting))
+        {
+            // Another request asked or started a newer check meanwhile.
+            return;
+        }
+
         ChallengeBody? info;
         try
         {
-            info = await SendAsync<ChallengeBody>(HttpMethod.Get, "challenges/" + check.Id, null, ServiceSlack, ct, missing: true).ConfigureAwait(false);
+            info = await SendAsync<ChallengeBody>(HttpMethod.Get, "challenges/" + check.Id, null, Within(ServiceSlack), ct, missing: true).ConfigureAwait(false);
         }
         catch (CaptchaServiceException ex)
         {
@@ -200,27 +228,31 @@ public sealed class CaptchaService : IDisposable
             return;
         }
 
-        _waiting.TryRemove(domain, out _);
+        // Only this check stops waiting: a newer one a parallel request started stays.
+        _waiting.TryRemove(KeyValuePair.Create(domain, asked));
         if (state == ChallengeState.Solved)
         {
             _logger.LogInformation("The check {Id} of {Domain} is passed.", check.Id, domain);
-            Remember(info!, check.Url, waiting.Sent);
+            Remember(info!, domain, waiting.Sent);
         }
     }
 
-    /// <summary>The request made by the service's browser, with the plugin's own cookies of <paramref name="own"/>.</summary>
-    public async Task<BrowserAnswer> FetchAsync(BrowserRequest request, IReadOnlyList<Cookie> own, CancellationToken ct)
+    /// <summary>The request made by the service's browser in the plugin's own profile, with its own cookies of <paramref name="place"/>.</summary>
+    public async Task<BrowserAnswer> FetchAsync(BrowserRequest request, ChallengePlace place, CancellationToken ct)
     {
         var options = _options.CurrentValue;
+        // The service takes 1 to 300 s.
+        var timeout = TimeSpan.FromSeconds(Math.Clamp(Math.Ceiling(request.Timeout.TotalSeconds), 1, 300));
         var answer = (await SendAsync<FetchAnswer>(HttpMethod.Post, "fetch", new FetchBody(request.Url.AbsoluteUri)
         {
             Method = request.Method,
             Headers = request.Headers,
             Body = request.Body is { Length: > 0 } bytes ? Convert.ToBase64String(bytes) : null,
-            Profile = ProfileOf(request.Url, options),
-            Cookies = own.Count > 0 ? own.Select(c => WireCookie.Of(c, request.Url)).ToList() : null,
-            Timeout = (int)Math.Ceiling(request.Timeout.TotalSeconds),
-        }, request.Timeout + ServiceSlack, ct, missing: false).ConfigureAwait(false))!;
+            Domain = place.Domain,
+            Profile = ProfileOf(place, options),
+            Cookies = place.Own.Count > 0 ? place.Own.Select(c => WireCookie.Of(c, place.Domain)).ToList() : null,
+            Timeout = (int)timeout.TotalSeconds,
+        }, timeout + ServiceSlack, ct, missing: false).ConfigureAwait(false))!;
         try
         {
             return new BrowserAnswer(answer.Status, answer.Url ?? request.Url, answer.Headers ?? new Dictionary<string, string>(),
@@ -232,9 +264,9 @@ public sealed class CaptchaService : IDisposable
         }
     }
 
-    /// <summary>Convy's own profile for the host: the service keeps a plugin's cookies only there.</summary>
-    private static string ProfileOf(Uri url, CaptchaOptions options) =>
-        $"{url.IdnHost.ToLowerInvariant()}#{(string.IsNullOrWhiteSpace(options.Profile) ? "convy" : options.Profile.Trim())}";
+    /// <summary>The plugin's own profile for the domain: the service keeps its cookies there, apart from other plugins and clients.</summary>
+    private static string ProfileOf(ChallengePlace place, CaptchaOptions options) =>
+        $"{place.Domain.ToLowerInvariant()}#{options.ProfileFor(place.Owner)}";
 
     private static ChallengeOutcome Outcome(ChallengeBody info, Uri url) =>
         new(info.Id, info.State switch
@@ -245,13 +277,13 @@ public sealed class CaptchaService : IDisposable
         }, info.Url ?? url, info.ExpiresAt, info.Message);
 
     /// <summary>
-    /// The cookies of a solved check go into the jar as the site would have set them; the domain's User-Agent and mode
-    /// are remembered. The service answers with every cookie of the profile: those the plugin sent (<paramref name="sent"/>)
-    /// stay the plugin's.
+    /// The cookies of the check itself (Cloudflare's, DDoS-Guard's) go into the jar as the site would have set them; the
+    /// domain's User-Agent and mode are remembered. The service answers with every cookie of the profile: the site's own
+    /// ones (a sign-in, those the plugin sent: <paramref name="sent"/>) are never taken, so they reach no other plugin.
     /// </summary>
-    private void Remember(ChallengeBody info, Uri url, HashSet<string> sent)
+    private void Remember(ChallengeBody info, string domain, HashSet<string> sent)
     {
-        var state = _domains.GetOrAdd(info.Domain ?? url.IdnHost, _ => new DomainState());
+        var state = _domains.GetOrAdd(domain, _ => new DomainState());
         if (info.UserAgent is { Length: > 0 } agent)
         {
             state.UserAgent = agent;
@@ -260,12 +292,11 @@ public sealed class CaptchaService : IDisposable
         state.Browser = info.Mode == "browser";
         foreach (var c in info.Cookies ?? [])
         {
-            if (sent.Contains(c.Name) || string.IsNullOrEmpty(c.Name))
+            if (sent.Contains(c.Name) || !IsCheckCookie(c.Name))
             {
                 continue;
             }
 
-            state.Given[c.Name] = 0;
             try
             {
                 var cookie = new Cookie(c.Name, c.Value, string.IsNullOrEmpty(c.Path) ? "/" : c.Path, c.Domain)
@@ -287,13 +318,28 @@ public sealed class CaptchaService : IDisposable
         }
     }
 
+    /// <summary>A cookie a bot check sets: Cloudflare's clearance and bot management, DDoS-Guard's marks.</summary>
+    public static bool IsCheckCookie(string name) =>
+        name == "cf_clearance"
+        || name.StartsWith("__cf", StringComparison.Ordinal)
+        || name.StartsWith("cf_chl", StringComparison.Ordinal)
+        || name.StartsWith("__ddg", StringComparison.Ordinal)
+        || name.StartsWith("ddg_", StringComparison.Ordinal);
+
     private (string Domain, Waiting Waiting)? FindWaiting(string host)
     {
+        var now = _time.GetUtcNow();
         for (var domain = host; domain.Length > 0;)
         {
             if (_waiting.TryGetValue(domain, out var waiting))
             {
-                return (domain, waiting);
+                if (waiting.Check.ExpiresAt is not { } expires || expires > now)
+                {
+                    return (domain, waiting);
+                }
+
+                // The service gave up on it by now, whether or not it could say so.
+                _waiting.TryRemove(KeyValuePair.Create(domain, waiting));
             }
 
             var dot = domain.IndexOf('.', StringComparison.Ordinal);
@@ -403,9 +449,6 @@ public sealed class CaptchaService : IDisposable
         public string? UserAgent { get; set; }
 
         public bool Browser { get; set; }
-
-        /// <summary>The cookies of the checks (cf_clearance, __ddg*): not the site's own, so never sent back as them.</summary>
-        public ConcurrentDictionary<string, byte> Given { get; } = new(StringComparer.Ordinal);
     }
 
     private sealed record WireCookie(string Name, string Value, string Domain, string Path = "/")
@@ -416,13 +459,15 @@ public sealed class CaptchaService : IDisposable
 
         public bool Secure { get; init; }
 
-        public static WireCookie Of(Cookie cookie, Uri url) =>
-            new(cookie.Name, cookie.Value, cookie.Domain.TrimStart('.') is { Length: > 0 } domain ? domain : url.IdnHost,
+        public static WireCookie Of(Cookie cookie, string domain) =>
+            new(cookie.Name, cookie.Value, cookie.Domain.TrimStart('.') is { Length: > 0 } own ? own : domain,
                 string.IsNullOrEmpty(cookie.Path) ? "/" : cookie.Path);
     }
 
     private sealed record SolveBody(string Url)
     {
+        public string? Domain { get; init; }
+
         public string? Profile { get; init; }
 
         public List<WireCookie>? Cookies { get; init; }
@@ -460,6 +505,8 @@ public sealed class CaptchaService : IDisposable
         public string Method { get; init; } = "GET";
 
         public IReadOnlyDictionary<string, string>? Headers { get; init; }
+
+        public string? Domain { get; init; }
 
         public string? Profile { get; init; }
 

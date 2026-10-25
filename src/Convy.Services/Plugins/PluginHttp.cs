@@ -109,7 +109,7 @@ public sealed class PluginHttp : IPluginHttp, IDisposable
 
         var at = Final(response, uri);
         response.Dispose();
-        await PassAsync(captcha, request, at, afterTransplant: false, cancellationToken).ConfigureAwait(false);
+        await PassAsync(captcha, request, uri, at, afterTransplant: false, cancellationToken).ConfigureAwait(false);
         if (!captcha.UsesBrowser(at.IdnHost))
         {
             response = await SendDirectAsync(Copy(request, uri, body), uri, streaming, captcha, cancellationToken).ConfigureAwait(false);
@@ -122,7 +122,7 @@ public sealed class PluginHttp : IPluginHttp, IDisposable
             // service's browser makes the requests to it from now on.
             at = Final(response, uri);
             response.Dispose();
-            await PassAsync(captcha, request, at, afterTransplant: true, cancellationToken).ConfigureAwait(false);
+            await PassAsync(captcha, request, uri, at, afterTransplant: true, cancellationToken).ConfigureAwait(false);
         }
 
         return await ThroughBrowserAsync(captcha, request, uri, body, cancellationToken).ConfigureAwait(false);
@@ -192,7 +192,12 @@ public sealed class PluginHttp : IPluginHttp, IDisposable
         }
 
         message.Headers.Remove("Cookie");
-        var cookie = string.Join("; ", new[] { captcha.Jar.GetCookieHeader(url), own }.Where(c => !string.IsNullOrEmpty(c)));
+        // The plugin's own cookie wins over a check's cookie of the same name.
+        var mine = (own ?? "").Split(';', StringSplitOptions.TrimEntries | StringSplitOptions.RemoveEmptyEntries)
+            .Select(pair => pair.Split('=', 2)[0])
+            .ToHashSet(StringComparer.Ordinal);
+        var checks = string.Join("; ", captcha.Jar.GetCookies(url).Where(c => !mine.Contains(c.Name)).Select(c => $"{c.Name}={c.Value}"));
+        var cookie = string.Join("; ", new[] { checks, own }.Where(c => !string.IsNullOrEmpty(c)));
         if (cookie.Length > 0)
         {
             message.Headers.TryAddWithoutValidation("Cookie", cookie);
@@ -227,15 +232,15 @@ public sealed class PluginHttp : IPluginHttp, IDisposable
     }
 
     /// <summary>
-    /// Asks the service to pass the check at <paramref name="at"/>: returns once it is passed; still waiting for a person,
-    /// failed, or the service failing is the request's <see cref="SourceErrorKind.Challenge"/>.
+    /// Asks the service to pass the check at <paramref name="at"/> (where <paramref name="uri"/> led): returns once it is
+    /// passed; still waiting for a person, failed, or the service failing is the request's <see cref="SourceErrorKind.Challenge"/>.
     /// </summary>
-    private static async Task PassAsync(CaptchaService captcha, HttpRequestMessage request, Uri at, bool afterTransplant, CancellationToken cancellationToken)
+    private async Task PassAsync(CaptchaService captcha, HttpRequestMessage request, Uri uri, Uri at, bool afterTransplant, CancellationToken cancellationToken)
     {
         ChallengeOutcome check;
         try
         {
-            check = await captcha.SolveAsync(at, OwnCookies(request, at), afterTransplant, site: false, cancellationToken).ConfigureAwait(false);
+            check = await captcha.SolveAsync(at, Place(request, uri, at), afterTransplant, site: false, cancellationToken).ConfigureAwait(false);
         }
         catch (CaptchaServiceException ex)
         {
@@ -264,7 +269,7 @@ public sealed class PluginHttp : IPluginHttp, IDisposable
 
         var at = Final(answer.Response, uri);
         answer.Response.Dispose();
-        await PassAsync(captcha, request, at, afterTransplant: false, cancellationToken).ConfigureAwait(false);
+        await PassAsync(captcha, request, uri, at, afterTransplant: false, cancellationToken).ConfigureAwait(false);
         answer = await BrowserAsync(captcha, request, uri, body, cancellationToken).ConfigureAwait(false);
         if (!answer.Challenge)
         {
@@ -300,7 +305,7 @@ public sealed class PluginHttp : IPluginHttp, IDisposable
         BrowserAnswer answer;
         try
         {
-            answer = await captcha.FetchAsync(new BrowserRequest(uri, request.Method.Method, headers, body, _timeout()), OwnCookies(request, uri), cancellationToken)
+            answer = await captcha.FetchAsync(new BrowserRequest(uri, request.Method.Method, headers, body, _timeout()), Place(request, uri, uri), cancellationToken)
                 .ConfigureAwait(false);
         }
         catch (CaptchaServiceException ex)
@@ -336,7 +341,21 @@ public sealed class PluginHttp : IPluginHttp, IDisposable
         return (response, answer.Challenge);
     }
 
-    /// <summary>The plugin's own cookies of its request (a sign-in), for the service's profile of the site.</summary>
+    /// <summary>
+    /// Where at the service a check at <paramref name="at"/> works: the manifest's domain that covers it, the plugin's own
+    /// profile, and the plugin's cookies — only when <paramref name="at"/> is the host the plugin sent them to.
+    /// </summary>
+    private ChallengePlace Place(HttpRequestMessage request, Uri uri, Uri at) =>
+        new(CoveringDomain(_manifest.Domains, at.IdnHost), _manifest.Id,
+            string.Equals(at.Host, uri.Host, StringComparison.OrdinalIgnoreCase) ? OwnCookies(request, at) : []);
+
+    /// <summary>The domain of <paramref name="domains"/> that covers <paramref name="host"/> (the longest); the host itself when none does.</summary>
+    public static string CoveringDomain(IReadOnlyList<string> domains, string host) =>
+        domains.Where(d => string.Equals(host, d, StringComparison.OrdinalIgnoreCase) || host.EndsWith("." + d, StringComparison.OrdinalIgnoreCase))
+            .OrderByDescending(d => d.Length)
+            .FirstOrDefault()?.ToLowerInvariant() ?? host.ToLowerInvariant();
+
+    /// <summary>The plugin's own cookies of its request (a sign-in), for its profile of the site.</summary>
     private static List<Cookie> OwnCookies(HttpRequestMessage request, Uri url)
     {
         var cookies = new List<Cookie>();
@@ -377,6 +396,12 @@ public sealed class PluginHttp : IPluginHttp, IDisposable
         if (response.IsSuccessStatusCode || !ChallengeDetector.MayBe((int)response.StatusCode, header))
         {
             return false;
+        }
+
+        if (response.Content.Headers.ContentLength > MaxCheckBytes)
+        {
+            // Larger than any check page: the site's own answer, left unread for the plugin.
+            return ChallengeDetector.IsChallenge((int)response.StatusCode, header, null);
         }
 
         try

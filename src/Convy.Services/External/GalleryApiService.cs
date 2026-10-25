@@ -24,9 +24,7 @@ public sealed class GalleryApiService
     private readonly IOptionsMonitor<GalleryOptions> _options;
     private readonly IOptionsMonitor<SearchOptions> _searchOptions;
     private readonly CaptchaService? _captcha;
-
-    /// <summary>The part of a call's time kept for the answer: a check still waiting for a person is named in it.</summary>
-    private static readonly TimeSpan AnswerMargin = TimeSpan.FromSeconds(4);
+    private readonly PluginHost? _plugins;
 
     public GalleryApiService(
         ISourceRegistry registry,
@@ -36,9 +34,11 @@ public sealed class GalleryApiService
         IDownloaderResolver downloaders,
         IOptionsMonitor<GalleryOptions> options,
         IOptionsMonitor<SearchOptions> searchOptions,
-        CaptchaService? captcha = null)
+        CaptchaService? captcha = null,
+        PluginHost? plugins = null)
     {
         _captcha = captcha;
+        _plugins = plugins;
         _registry = registry;
         _categories = categories;
         _jobs = jobs;
@@ -241,7 +241,7 @@ public sealed class GalleryApiService
         var timeout = source.Timeout ?? TimeSpan.FromSeconds(Math.Max(1, _searchOptions.CurrentValue.SourceTimeoutSeconds));
         using var deadline = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
         deadline.CancelAfter(timeout);
-        using var waits = CaptchaService.WaitWithin(timeout - AnswerMargin);
+        using var waits = CaptchaService.WaitWithin(timeout);
         try
         {
             try
@@ -252,7 +252,7 @@ public sealed class GalleryApiService
                                              && _captcha.WaitingFor(url.IdnHost) is null && !PluginHttp.Checked(ex))
             {
                 // The site's own captcha, which only the plugin sees: the service passes it in a person's hands.
-                var check = await SiteCheckAsync(url, deadline.Token).ConfigureAwait(false);
+                var check = await SiteCheckAsync(source, url, deadline.Token).ConfigureAwait(false);
                 if (check?.State != ChallengeState.Solved)
                 {
                     throw;
@@ -276,11 +276,14 @@ public sealed class GalleryApiService
     }
 
     /// <summary>The site's captcha at <paramref name="url"/> handed to the service; null — the service failed (logged by the caller's error).</summary>
-    private async Task<ChallengeOutcome?> SiteCheckAsync(Uri url, CancellationToken cancellationToken)
+    private async Task<ChallengeOutcome?> SiteCheckAsync(IGallerySource source, Uri url, CancellationToken cancellationToken)
     {
+        // In the plugin's own profile at the service, where its earlier checks went with its sign-in.
+        var plugin = _plugins?.PluginOf(source);
+        var place = new ChallengePlace(PluginHttp.CoveringDomain(plugin?.Domains ?? source.Manifest.Domains, url.IdnHost), plugin?.Id ?? source.Id, []);
         try
         {
-            return await _captcha!.SolveAsync(url, [], afterTransplant: false, site: true, cancellationToken).ConfigureAwait(false);
+            return await _captcha!.SolveAsync(url, place, afterTransplant: false, site: true, cancellationToken).ConfigureAwait(false);
         }
         catch (CaptchaServiceException)
         {

@@ -100,7 +100,8 @@ public class CaptchaTests
                 : CloudflarePage();
         });
         var fake = new FakeCaptchaService();
-        fake.Solves.Enqueue(FakeCaptchaService.Check("solved", cookies: [("cf_clearance", "ok"), ("sid", "from-the-browser")]));
+        // The service answers with every cookie of the profile: only the check's own is taken.
+        fake.Solves.Enqueue(FakeCaptchaService.Check("solved", cookies: [("cf_clearance", "ok"), ("sid", "from-the-browser"), ("member", "another-plugin")]));
         using var captcha = Service(fake, new FakeTime());
         using var http = new PluginHttp(Manifest, site, () => TimeSpan.FromSeconds(30), new FakeTime(), captcha);
 
@@ -109,8 +110,9 @@ public class CaptchaTests
         Assert.Equal(HttpStatusCode.OK, response.StatusCode);
         var solve = Assert.Single(fake.Bodies("solve"));
         Assert.Equal("https://gallery.test/api/g/g1", (string?)solve["url"]);
-        // Convy's own profile, with the plugin's own cookie (a sign-in) along: it never reaches the shared one.
-        Assert.Equal("gallery.test#convy", (string?)solve["profile"]);
+        // The plugin's own profile, with its own cookie (a sign-in) along: it never reaches the shared one or other plugins.
+        Assert.Equal("gallery.test#convy.test", (string?)solve["profile"]);
+        Assert.Equal("gallery.test", (string?)solve["domain"]);
         Assert.Equal("sid", (string?)solve["cookies"]![0]!["name"]);
         Assert.Equal(25, (int)solve["wait"]!);
         Assert.Equal("convy-key", fake.Calls[0].Key);
@@ -154,7 +156,7 @@ public class CaptchaTests
         Assert.Empty(response.Content.Headers.ContentEncoding);
         Assert.Equal([false, true], fake.Bodies("solve").Select(b => (bool)b["afterTransplant"]!));
         var fetch = Assert.Single(fake.Bodies("fetch"));
-        Assert.Equal("gallery.test#convy", (string?)fetch["profile"]);
+        Assert.Equal("gallery.test#convy.test", (string?)fetch["profile"]);
         Assert.Equal("sid", (string?)fetch["cookies"]![0]!["name"]);
         Assert.Null(fetch["headers"]!["Cookie"]);
 
@@ -194,6 +196,26 @@ public class CaptchaTests
         Assert.Equal(HttpStatusCode.OK, response.StatusCode);
         Assert.Null(captcha.WaitingFor("gallery.test"));
         Assert.Single(fake.Bodies("solve"));
+    }
+
+    [Fact]
+    public async Task APluginsCookiesGoToTheServiceOnlyForTheHostTheyWereSentTo()
+    {
+        var site = new FakeSiteHandler();
+        site.Answer("https://www.gallery.test/r", _ => new HttpResponseMessage(HttpStatusCode.Found) { Headers = { Location = new Uri("https://img.gallery.test/x") } });
+        site.Answer("https://img.gallery.test/x", _ => CloudflarePage());
+        var fake = new FakeCaptchaService();
+        fake.Solves.Enqueue(FakeCaptchaService.Check("pending"));
+        using var captcha = Service(fake, new FakeTime());
+        using var http = new PluginHttp(Manifest, site, () => TimeSpan.FromSeconds(30), new FakeTime(), captcha);
+
+        await Assert.ThrowsAsync<SourceException>(() => http.SendAsync(Get("https://www.gallery.test/r", "sid=mine"), false, CancellationToken.None));
+
+        var solve = Assert.Single(fake.Bodies("solve"));
+        Assert.Equal("https://img.gallery.test/x", (string?)solve["url"]);
+        // The check's cookies are for the manifest's domain, and the sign-in for www stays off img.
+        Assert.Equal("gallery.test", (string?)solve["domain"]);
+        Assert.Null(solve["cookies"]);
     }
 
     [Fact]

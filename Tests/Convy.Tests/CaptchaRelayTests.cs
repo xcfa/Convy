@@ -37,13 +37,20 @@ public sealed class CaptchaRelayTests : IAsyncLifetime
         _service.UseWebSockets();
         _service.MapPost("/solve", async (HttpContext http) =>
         {
-            Record(http, await new StreamReader(http.Request.Body).ReadToEndAsync());
-            return Results.Json(new { id = Guid.Empty, state = "pending" }, statusCode: 200);
+            var body = await new StreamReader(http.Request.Body).ReadToEndAsync();
+            Record(http, body);
+            var profile = (string?)JsonNode.Parse(body)!["profile"] ?? "gallery.test";
+            return Results.Json(new { id = Guid.Empty, state = "solved", profile, cookies = new[] { new { name = "cf_clearance", value = "ok" } } });
         });
         _service.MapGet("/challenges", (HttpContext http) =>
         {
             Record(http, null);
-            return Results.Json(Array.Empty<object>());
+            // Convy's own check (a plugin's sign-in in its cookies) next to a client's.
+            return Results.Json(new object[]
+            {
+                new { id = Guid.NewGuid(), state = "solved", profile = "gallery.test#convy.e-hentai", cookies = new[] { new { name = "ipb_pass_hash", value = "secret" } } },
+                new { id = Guid.NewGuid(), state = "solved", profile = "gallery.test#shizuka", cookies = new[] { new { name = "cf_clearance", value = "ok" } } },
+            });
         });
         _service.MapGet("/challenges/{id:guid}", (HttpContext http) =>
         {
@@ -111,13 +118,34 @@ public sealed class CaptchaRelayTests : IAsyncLifetime
         var unknown = await client.GetAsync($"/api/captcha/challenges/{Guid.NewGuid()}");
 
         Assert.Equal(HttpStatusCode.OK, solved.StatusCode);
-        Assert.Equal("pending", (string?)JsonNode.Parse(await solved.Content.ReadAsStringAsync())!["state"]);
+        Assert.Equal("ok", (string?)JsonNode.Parse(await solved.Content.ReadAsStringAsync())!["cookies"]![0]!["value"]);
         Assert.Equal(HttpStatusCode.OK, listed.StatusCode);
+        var checks = JsonNode.Parse(await listed.Content.ReadAsStringAsync())!.AsArray();
+        Assert.Null(checks[0]!["cookies"]);
+        Assert.NotNull(checks[1]!["cookies"]);
         Assert.Equal(HttpStatusCode.NotFound, unknown.StatusCode);
         Assert.Equal("application/json; charset=utf-8", unknown.Content.Headers.ContentType?.ToString());
         Assert.Equal(("/solve", "Bearer convy-key"), (_calls[0].Path, _calls[0].Authorization));
         Assert.Contains("\"url\":\"https://gallery.test/\"", _calls[0].Body);
         Assert.Equal("/challenges?state=pending&domain=gallery.test", _calls[1].Path);
+    }
+
+    [Fact]
+    public async Task AClientCannotWorkInConvysOwnProfiles()
+    {
+        _options.Url = _serviceUrl.AbsoluteUri;
+        using var client = Convy.CreateClient();
+
+        var own = await client.PostAsJsonAsync("/api/captcha/solve", new { url = "https://exhentai.org/", profile = "exhentai.org#Convy.e-hentai" });
+        var fetch = await client.PostAsJsonAsync("/api/captcha/fetch", new { url = "https://exhentai.org/", profile = "exhentai.org#convy" });
+        // A repeated key could read as another profile at the service: refused rather than guessed.
+        var twice = await client.PostAsync("/api/captcha/solve", new StringContent(
+            """{"url":"https://exhentai.org/","profile":"exhentai.org#shizuka","profile":"exhentai.org#convy.e-hentai"}""", Encoding.UTF8, "application/json"));
+
+        Assert.Equal(HttpStatusCode.Forbidden, own.StatusCode);
+        Assert.Equal(HttpStatusCode.Forbidden, fetch.StatusCode);
+        Assert.Equal(HttpStatusCode.BadRequest, twice.StatusCode);
+        Assert.Empty(_calls);
     }
 
     [Fact]
