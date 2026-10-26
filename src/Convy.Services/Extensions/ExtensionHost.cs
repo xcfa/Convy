@@ -184,6 +184,7 @@ public sealed class ExtensionHost : ISourceProvider, ISourceProviderGroup, IDisp
             return;
         }
 
+        RecoverInstalls(path);
         var files = Directory.EnumerateFiles(path)
             .Where(f => f.EndsWith(".zip", StringComparison.OrdinalIgnoreCase) || f.EndsWith(".dll", StringComparison.OrdinalIgnoreCase))
             .OrderBy(f => f, StringComparer.Ordinal)
@@ -196,6 +197,46 @@ public sealed class ExtensionHost : ISourceProvider, ISourceProviderGroup, IDisp
         var loaded = Extensions;
         _logger.LogInformation("{Count} extension(s) loaded from {Path}: {Extensions}.", loaded.Count, path,
             string.Join(", ", loaded.Select(e => $"{e.Package.Package} {e.Package.VersionText} ({string.Join(", ", e.Ids)})")));
+    }
+
+    /// <summary>
+    /// What an install cut short (Convy stopped mid-way) left behind: a version set aside (<c>.old</c>) whose package file
+    /// is missing comes back; a staged one (<c>.new</c>) is dropped.
+    /// </summary>
+    private void RecoverInstalls(string path)
+    {
+        foreach (var kept in Directory.EnumerateFiles(path, "*.old"))
+        {
+            var file = kept[..^".old".Length];
+            try
+            {
+                if (File.Exists(file))
+                {
+                    File.Delete(kept);
+                }
+                else
+                {
+                    File.Move(kept, file);
+                    _logger.LogWarning("Restored {File}, set aside by an install that did not finish.", Path.GetFileName(file));
+                }
+            }
+            catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+            {
+                _logger.LogWarning("Could not restore {File}: {Message}", Path.GetFileName(file), ex.Message);
+            }
+        }
+
+        foreach (var staged in Directory.EnumerateFiles(path, "*.new"))
+        {
+            try
+            {
+                File.Delete(staged);
+            }
+            catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+            {
+                _logger.LogWarning("Could not remove {File}: {Message}", Path.GetFileName(staged), ex.Message);
+            }
+        }
     }
 
     /// <summary>Loads one package file; a failure is an <see cref="ExtensionProblem"/>, never an exception.</summary>
@@ -298,7 +339,17 @@ public sealed class ExtensionHost : ISourceProvider, ISourceProviderGroup, IDisp
         }
 
         var sources = await provider.ListAsync(taken, cancellationToken).ConfigureAwait(false);
-        _listed[provider.Id] = sources;
+        lock (_loaded)
+        {
+            // Unloaded while it listed: its sources go with it, not into the list.
+            if (!_loaded.Any(l => l.Extension.Providers.Contains(provider)))
+            {
+                return [];
+            }
+
+            _listed[provider.Id] = sources;
+        }
+
         var enabled = sources.Where(s => options.For(s.Id).Enabled).ToList();
         await Task.WhenAll(enabled.Select(s => s.CheckAsync(cancellationToken))).ConfigureAwait(false);
         return enabled;
@@ -362,9 +413,8 @@ public sealed class ExtensionHost : ISourceProvider, ISourceProviderGroup, IDisp
 
             if (galleries.Count + sources.Count + providers.Count == 0)
             {
-                context.Unload();
-                _logger.LogInformation("Extension {File} has nothing Convy runs; not kept.", Path.GetFileName(file));
-                return;
+                // A problem rather than silence: the page shows the file and can remove it.
+                throw new ExtensionLoadException($"{package.Package} has nothing Convy runs: no source that downloads releases.");
             }
 
             var extension = new LoadedExtension(file, package, galleries, sources, providers);

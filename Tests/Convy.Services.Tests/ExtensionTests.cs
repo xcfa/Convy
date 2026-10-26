@@ -246,6 +246,24 @@ public class ExtensionHostTests
     }
 
     [Fact]
+    public void AnInstallCutShortIsUndoneAtTheNextStart()
+    {
+        var folder = Directory.CreateTempSubdirectory("convy-extensions-").FullName;
+        // Set aside for an update that never finished, and the staged update itself.
+        File.Copy(Extensions.TestExtensionPath, Path.Combine(folder, "Convy.Tests.TestExtension.dll.old"));
+        File.WriteAllText(Path.Combine(folder, "Convy.Tests.TestExtension.zip.new"), "half written");
+        using var host = new ExtensionHost(
+            new StaticOptions<ExtensionsOptions>(new ExtensionsOptions { Path = folder }), new StaticOptions<CaptchaOptions>(new CaptchaOptions()),
+            new FakeTime(), NullLoggerFactory.Instance, _ => new FakeSiteHandler(), new FakeCaptchaService());
+
+        host.LoadAll();
+
+        Assert.Equal(["Convy.Tests.TestExtension"], host.Extensions.Select(e => e.Package.Package));
+        Assert.Equal(["Convy.Tests.TestExtension.dll"], Directory.GetFiles(folder).Select(Path.GetFileName));
+        Assert.Empty(host.Problems);
+    }
+
+    [Fact]
     public void NoFolderIsNoExtensions()
     {
         using var host = new ExtensionHost(

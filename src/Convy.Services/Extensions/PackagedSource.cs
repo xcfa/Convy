@@ -145,8 +145,10 @@ public sealed class PackagedSource : ExtensionUnit, IFileSource
             case Content.SoulseekRelease folder:
                 return new SoulseekPayload(folder.Username, folder.Directory, folder.Files.Select(f => new SoulseekFile(f.Path, f.Size)).ToList());
             case Content.FilesRelease files:
-                return new OpdsPayload(Id, KeyOf(contentId), files.Folder,
-                    files.Files.Select(f => new OpdsFile(f.Name, f.Url.AbsoluteUri, f.Size, f.Unzip, f.Preference)).ToList());
+                // The names become paths under the downloads folder: one plain segment each, whatever the package says.
+                return new OpdsPayload(Id, KeyOf(contentId), Segment(files.Folder),
+                    files.Files.Select(f => new OpdsFile(Segment(f.Name), f.Url.AbsoluteUri, f.Size, f.Unzip, f.Preference))
+                        .DistinctBy(f => f.Name, StringComparer.OrdinalIgnoreCase).ToList());
             default:
                 throw Unknown();
         }
@@ -224,8 +226,10 @@ public sealed class PackagedSource : ExtensionUnit, IFileSource
     }
 
     /// <summary>
-    /// GET a .torrent with the source's proxy, cookies and <see cref="Content.ContentSource.FetchHeaders"/>, following
-    /// redirects on the source's hosts only: a redirect to a <c>magnet:</c> link, or a body that is one, is that link.
+    /// GET a .torrent with the source's proxy, cookies and <see cref="Content.ContentSource.FetchHeaders"/>: the address
+    /// must be on the source's hosts; a redirect elsewhere (an indexer in Prowlarr's redirect mode sends the tracker's
+    /// own link) is followed without the headers and cookies, which stay with the address's own host. A redirect to a
+    /// <c>magnet:</c> link, or a body that is one, is that link.
     /// </summary>
     private async Task<(byte[]? Torrent, string? Magnet)> FetchTorrentAsync(Uri url, CancellationToken cancellationToken)
     {
@@ -235,22 +239,30 @@ public sealed class PackagedSource : ExtensionUnit, IFileSource
         using var deadline = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
         deadline.CancelAfter(Timeout ?? timeout);
         var current = url;
+        if (!covers(url))
+        {
+            throw new SourceException(SourceErrorKind.Error, $"{Name} may not fetch {url.Scheme}://{url.Host}: it is not among its hosts.");
+        }
+
         for (var hop = 0; hop <= MaxRedirects; hop++)
         {
-            if (!covers(current))
+            if (current.Scheme != Uri.UriSchemeHttp && current.Scheme != Uri.UriSchemeHttps)
             {
-                throw new SourceException(SourceErrorKind.Error, $"{Name} may not fetch {current.Scheme}://{current.Host}: it is not among its hosts.");
+                throw new SourceException(SourceErrorKind.Error, $"The .torrent address redirects to an unsupported '{current.Scheme}:' address.");
             }
 
             using var request = new HttpRequestMessage(HttpMethod.Get, current);
-            foreach (var (name, value) in headers)
+            if (Uri.Compare(current, url, UriComponents.SchemeAndServer, UriFormat.Unescaped, StringComparison.OrdinalIgnoreCase) == 0)
             {
-                request.Headers.TryAddWithoutValidation(name, value);
-            }
+                foreach (var (name, value) in headers)
+                {
+                    request.Headers.TryAddWithoutValidation(name, value);
+                }
 
-            if (cookies.GetCookieHeader(current) is { Length: > 0 } cookie)
-            {
-                request.Headers.TryAddWithoutValidation("Cookie", cookie);
+                if (cookies.GetCookieHeader(current) is { Length: > 0 } cookie)
+                {
+                    request.Headers.TryAddWithoutValidation("Cookie", cookie);
+                }
             }
 
             HttpResponseMessage response;
@@ -339,6 +351,22 @@ public sealed class PackagedSource : ExtensionUnit, IFileSource
     }
 
     /// <summary>A file-system safe key of a release: its content id hashed.</summary>
+    /// <summary>
+    /// A name a release gave as one file or folder name: separators and characters a file name cannot hold become '_',
+    /// and nothing that names the folder itself or the one above (<c>.</c>, <c>..</c>, empty) is left.
+    /// </summary>
+    public static string Segment(string name)
+    {
+        var invalid = Path.GetInvalidFileNameChars();
+        var clean = new string(name.Select(c => c is '/' or '\\' || char.IsControl(c) || invalid.Contains(c) ? '_' : c).ToArray()).Trim();
+        if (clean.Length > 200)
+        {
+            clean = clean[..200].TrimEnd();
+        }
+
+        return clean.Trim('.').Length == 0 ? "_" + clean : clean;
+    }
+
     private static string KeyOf(string contentId) =>
         Convert.ToHexStringLower(SHA256.HashData(Encoding.UTF8.GetBytes(contentId)))[..24];
 }

@@ -111,8 +111,15 @@ public sealed class OpdsDownloadRunner
     private async Task<long> DownloadFileAsync(IFileSource source, OpdsDownload download, OpdsDownloadFile file, CancellationToken cancellationToken)
     {
         var folder = Path.Combine(download.SavePath, download.Folder);
-        Directory.CreateDirectory(folder);
         var target = Path.Combine(folder, file.Name);
+        // The names come from a source's package: never a path outside the download's own folder.
+        var root = Path.GetFullPath(download.SavePath).TrimEnd(Path.DirectorySeparatorChar) + Path.DirectorySeparatorChar;
+        if (!Path.GetFullPath(target).StartsWith(root, StringComparison.Ordinal))
+        {
+            throw new UnauthorizedAccessException($"The file {file.Name} of {download.Folder} would land outside {download.SavePath}.");
+        }
+
+        Directory.CreateDirectory(folder);
         var part = target + ".part";
 
         // A file may take a while (a large PDF, a slow catalog), but not forever.

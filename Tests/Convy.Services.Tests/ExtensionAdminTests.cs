@@ -217,6 +217,32 @@ public sealed class ExtensionAdminTests : IDisposable
     }
 
     [Fact]
+    public async Task AProxysPasswordIsNotShownAndSavingItAsShownKeepsIt()
+    {
+        await _admin.UploadAsync(_package, CancellationToken.None);
+        await _admin.SaveSettingsAsync("test-books", new SourceSettingsInput(null, "socks5://me:pw@tor:9050", null, null), CancellationToken.None);
+
+        var shown = _admin.Get().Extensions.Single().Units.Single(u => u.Id == "test-books").Proxy;
+        Assert.Equal("socks5://me:••••••@tor:9050", shown);
+        await _admin.SaveSettingsAsync("test-books", new SourceSettingsInput(null, shown, null, null), CancellationToken.None);
+
+        Assert.Equal("socks5://me:pw@tor:9050", _settings.Saved["Extensions:settings:test-books:proxy"]);
+    }
+
+    [Fact]
+    public async Task AnInstallDoesNotTakeTheFileOfAnotherPackage()
+    {
+        File.Copy(Extensions.TestExtensionPath, Path.Combine(_options.Path, "Convy.Tests.ContentExtension.dll"));
+        _host.Load(Path.Combine(_options.Path, "Convy.Tests.ContentExtension.dll"));
+
+        var refused = await Assert.ThrowsAsync<ConvyRequestException>(() => _admin.UploadAsync(_package, CancellationToken.None));
+
+        Assert.Equal("Convy.Tests.ContentExtension.dll holds Convy.Tests.TestExtension; rename it or remove that package first.", refused.Message);
+        Assert.Equal(["Convy.Tests.TestExtension"], _host.Extensions.Select(e => e.Package.Package));
+        Assert.Equal(["Convy.Tests.ContentExtension.dll"], Directory.GetFiles(_options.Path).Select(Path.GetFileName));
+    }
+
+    [Fact]
     public async Task AProvidersSourceIsOnlySwitchedOnOrOff()
     {
         await _admin.UploadAsync(_package, CancellationToken.None);

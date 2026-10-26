@@ -137,11 +137,12 @@ public class ContentSourceTests
     }
 
     [Fact]
-    public async Task ATorrentFileIsReadAndARedirectOffTheSourcesHostsIsRefused()
+    public async Task ATorrentFileIsReadARedirectOffTheSourcesHostsGoesWithoutItsKeyAndAnAddressOffThemIsRefused()
     {
         var web = Indexers();
         web.Bytes("http://indexers.test/dl/8", Encoding.ASCII.GetBytes("torrent:" + Hash), "application/x-bittorrent");
-        web.Answer("http://indexers.test/dl/9", _ => new HttpResponseMessage(HttpStatusCode.Found) { Headers = { Location = new Uri("http://elsewhere.test/t") } });
+        web.Answer("http://indexers.test/dl/9", _ => new HttpResponseMessage(HttpStatusCode.Found) { Headers = { Location = new Uri("http://tracker.test/t") } });
+        web.Bytes("http://tracker.test/t", Encoding.ASCII.GetBytes("torrent:" + Hash), "application/x-bittorrent");
         using var host = Extensions.ContentHost(web, torrents: new FakeTorrents());
         var indexer = (await AllAsync(host)).Single(s => s.Id == "test-indexers-1");
 
@@ -152,7 +153,12 @@ public class ContentSourceTests
         Assert.Equal(["Release/01.mkv"], listing.Files.Select(f => f.Path));
         Assert.NotNull(listing.TorrentFile);
 
-        var refused = await Assert.ThrowsAsync<SourceException>(() => indexer.ResolveAsync("http://indexers.test/dl/9", CancellationToken.None));
+        var redirected = Assert.IsType<TorrentPayload>(await indexer.ResolveAsync("http://indexers.test/dl/9", CancellationToken.None));
+        Assert.Equal(Hash, redirected.InfoHash);
+        Assert.Equal("indexer-key", FakeSiteHandler.Header(web.Requests.Last(r => r.RequestUri!.AbsolutePath == "/dl/9"), "X-Api-Key"));
+        Assert.Null(FakeSiteHandler.Header(web.Requests.Single(r => r.RequestUri!.Host == "tracker.test"), "X-Api-Key"));
+
+        var refused = await Assert.ThrowsAsync<SourceException>(() => indexer.ResolveAsync("http://elsewhere.test/t", CancellationToken.None));
         Assert.Contains("may not fetch http://elsewhere.test", refused.Message);
         Assert.DoesNotContain(web.Requested, u => u.Contains("elsewhere", StringComparison.Ordinal));
     }
@@ -193,4 +199,15 @@ public class ContentSourceTests
         Assert.Equal(("test-books", "Автор - Книга", 24), (payload.CatalogId, payload.Folder, payload.BookKey.Length));
         Assert.Equal(new OpdsFile("Автор - Книга.fb2", "https://books.test/b/5/fb2", 2048, true, 1), payload.Files[1]);
     }
+
+    [Theory]
+    [InlineData("Автор - Книга.epub", "Автор - Книга.epub")]
+    [InlineData("../../../data/convy.db", ".._.._.._data_convy.db")]
+    [InlineData("/config", "_config")]
+    [InlineData("..", "_..")]
+    [InlineData(".", "_.")]
+    [InlineData("", "_")]
+    [InlineData("AC/DC\\Back in Black", "AC_DC_Back in Black")]
+    public void ANameAReleaseGivesIsOneFileNameUnderItsFolder(string name, string segment) =>
+        Assert.Equal(segment, PackagedSource.Segment(name));
 }

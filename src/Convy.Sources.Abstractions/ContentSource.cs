@@ -88,7 +88,7 @@ public sealed record ContentQuery
     public string? Category { get; init; }
 
     /// <summary>
-    /// The category's options for this source, from <c>categories.&lt;id&gt;.sources.&lt;source or provider id&gt;</c> of
+    /// The category's options for this source, from <c>categories.&lt;id&gt;.options.&lt;source or provider id&gt;</c> of
     /// Convy's configuration: lists of values by key (Prowlarr's <c>categories</c>, Soulseek's <c>extensions</c>). Empty
     /// — none.
     /// </summary>

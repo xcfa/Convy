@@ -17,6 +17,8 @@ public class ConfigurationMaskingTests
     [InlineData("Mcp:ApiKey", "abc123")]
     [InlineData("Ui:Oidc:ClientSecret", "s3cr3t")]
     [InlineData("Extensions:ui_indexes:0:password", "pw")]
+    [InlineData("Extensions:ui_indexes:0:username", "share-token")]
+    [InlineData("Extensions:indexes:1:username", "share-token")]
     [InlineData("Extensions:settings:e-hentai:values:cookies", "ipb_member_id=1")]
     [InlineData("Extensions:settings:my-site:values:hash", "a value only the manifest knows is secret")]
     [InlineData("Serilog:WriteTo:1:Args:apiKey", "seq-key")]

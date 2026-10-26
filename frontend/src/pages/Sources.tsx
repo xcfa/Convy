@@ -34,7 +34,8 @@ export function Sources() {
   const [editing, setEditing] = useState<SourceUnit>();
   const upload = useRef<HTMLInputElement>(null);
 
-  async function act(label: string, action: () => Promise<unknown>, done?: string) {
+  /** Runs an action of the page; true when it succeeded (its error is shown otherwise). */
+  async function act(label: string, action: () => Promise<unknown>, done?: string): Promise<boolean> {
     setBusy(label);
     setError(undefined);
     setNote(undefined);
@@ -42,8 +43,10 @@ export function Sources() {
       await action();
       if (done) setNote(done);
       view.reload();
+      return true;
     } catch (e) {
       setError(errorText(e));
+      return false;
     } finally {
       setBusy(undefined);
     }
@@ -314,7 +317,7 @@ function AvailableCard({
 }: {
   busy: string | undefined;
   hasIndexes: boolean;
-  onInstall: (extension: AvailableExtension) => Promise<void>;
+  onInstall: (extension: AvailableExtension) => Promise<unknown>;
 }) {
   const [fresh, setFresh] = useState(0);
   const available = usePolling(() => api.availableSources(fresh > 0), 0, [fresh, busy === undefined]);
@@ -396,7 +399,7 @@ function IndexesCard({
 }: {
   view: SourcesView;
   busy: string | undefined;
-  act: (label: string, action: () => Promise<unknown>, done?: string) => Promise<void>;
+  act: (label: string, action: () => Promise<unknown>, done?: string) => Promise<boolean>;
 }) {
   const [url, setUrl] = useState("");
   const [auth, setAuth] = useState<"none" | "basic" | "bearer">("none");
@@ -404,7 +407,7 @@ function IndexesCard({
   const [secret, setSecret] = useState("");
 
   async function add() {
-    await act(
+    const added = await act(
       "index:add",
       () =>
         api.addSourceIndex({
@@ -415,6 +418,8 @@ function IndexesCard({
         }),
       "Index added.",
     );
+    // A refused index keeps what was typed, the token or password included.
+    if (!added) return;
     setUrl("");
     setUsername("");
     setSecret("");
@@ -642,7 +647,8 @@ function SettingField({ setting, value, onChange }: { setting: SourceSetting; va
         <input
           type={secret ? "password" : setting.kind === "url" ? "url" : "text"}
           value={current}
-          onChange={(e) => onChange(e.target.value)}
+          // An erased secret keeps the saved one: only "clear" clears it.
+          onChange={(e) => onChange(secret && e.target.value === "" ? undefined : e.target.value)}
           placeholder={secret ? (setting.set ? "saved: type to replace" : "not set") : (setting.default ?? "")}
           autoComplete={secret ? "new-password" : "off"}
         />

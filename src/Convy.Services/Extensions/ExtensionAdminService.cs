@@ -3,6 +3,7 @@ using System.Text;
 using System.Text.Json.Serialization;
 using Convy.Services.Media;
 using Convy.Services.Settings;
+using Convy.Services.Ui;
 using Convy.Sources;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
@@ -64,7 +65,7 @@ public sealed class ExtensionAdminService
                     : (entry.Enabled ? (kind == "provider" ? "ok" : "unknown") : "disabled", (string?)null);
             var manifest = unit.Extension;
             return new UnitDto(
-                unit.Id, manifest.Name, kind, entry.Enabled, entry.Enabled ? status : "disabled", message, entry.Proxy,
+                unit.Id, manifest.Name, kind, entry.Enabled, entry.Enabled ? status : "disabled", message, MaskedProxy(entry.Proxy),
                 entry.TimeoutSeconds, manifest.Domains, manifest.Nsfw,
                 manifest.Settings.Select(s => Setting(s, entry.Values)).ToList(),
                 manifest.Login is { } login ? new LoginDto(login.Description, login.Fields.Select(f => Setting(f, null)).ToList()) : null,
@@ -184,7 +185,8 @@ public sealed class ExtensionAdminService
             throw new ConvyRequestException($"The package {entry.File} does not match the index: its SHA-256 is {hash}, the index says {entry.Sha256}.");
         }
 
-        return await InstallPackageAsync(content, cancellationToken).ConfigureAwait(false);
+        // An index proves only that the file is the one it names: its packages are always audited.
+        return await InstallPackageAsync(content, trusted: false, cancellationToken).ConfigureAwait(false);
     }
 
     /// <summary>Installs a package file someone uploaded (one built by hand).</summary>
@@ -195,7 +197,7 @@ public sealed class ExtensionAdminService
             throw new ConvyRequestException("The file is empty.");
         }
 
-        return InstallPackageAsync(content, cancellationToken);
+        return InstallPackageAsync(content, _options.CurrentValue.Trusted, cancellationToken);
     }
 
     /// <summary>Unloads a package and deletes its file; its sources' settings stay.</summary>
@@ -219,12 +221,19 @@ public sealed class ExtensionAdminService
     }
 
     /// <summary>Deletes a package file that could not be loaded.</summary>
-    public Task RemoveBrokenAsync(string file, CancellationToken cancellationToken)
+    public async Task RemoveBrokenAsync(string file, CancellationToken cancellationToken)
     {
-        var problem = _host.Problems.FirstOrDefault(p => p.File == file) ?? throw new ConvyRequestException($"{file} is not a package that failed.");
-        File.Delete(Path.Combine(_options.CurrentValue.Path, Path.GetFileName(problem.File)));
-        _host.ForgetProblem(problem.File);
-        return Task.CompletedTask;
+        await _gate.WaitAsync(cancellationToken).ConfigureAwait(false);
+        try
+        {
+            var problem = _host.Problems.FirstOrDefault(p => p.File == file) ?? throw new ConvyRequestException($"{file} is not a package that failed.");
+            File.Delete(Path.Combine(_options.CurrentValue.Path, Path.GetFileName(problem.File)));
+            _host.ForgetProblem(problem.File);
+        }
+        finally
+        {
+            _gate.Release();
+        }
     }
 
     /// <summary>
@@ -251,7 +260,8 @@ public sealed class ExtensionAdminService
         }
         else
         {
-            if (input.Proxy is { } proxy)
+            // The page shows the proxy with its password hidden and sends it back as shown: that keeps it.
+            if (input.Proxy is { } proxy && !(proxy.Length > 0 && proxy == MaskedProxy(_options.CurrentValue.For(unit.Id).Proxy)))
             {
                 if (proxy.Trim().Length > 0 && !(Uri.TryCreate(proxy.Trim(), UriKind.Absolute, out var proxyUrl) && proxyUrl.Scheme is "http" or "https" or "socks4" or "socks4a" or "socks5"))
                 {
@@ -374,13 +384,13 @@ public sealed class ExtensionAdminService
         _indexes.Invalidate();
     }
 
-    private async Task<InstalledExtensionDto> InstallPackageAsync(byte[] content, CancellationToken cancellationToken)
+    private async Task<InstalledExtensionDto> InstallPackageAsync(byte[] content, bool trusted, CancellationToken cancellationToken)
     {
         var options = _options.CurrentValue;
         ExtensionPackage package;
         try
         {
-            package = ExtensionPackage.Read(content, options.Trusted, [Content.ConvySourcesApi.AssemblyName]);
+            package = ExtensionPackage.Read(content, trusted, [Content.ConvySourcesApi.AssemblyName]);
         }
         catch (ExtensionPackageException ex)
         {
@@ -392,12 +402,37 @@ public sealed class ExtensionAdminService
         {
             Directory.CreateDirectory(options.Path);
             var file = Path.Combine(options.Path, package.Package + (content.AsSpan().StartsWith("PK"u8) ? ".zip" : ".dll"));
+            var old = _host.Extensions.FirstOrDefault(e => string.Equals(e.Package.Package, package.Package, StringComparison.OrdinalIgnoreCase));
+            if (_host.Extensions.FirstOrDefault(e => e != old && string.Equals(Path.GetFullPath(e.File), Path.GetFullPath(file), StringComparison.Ordinal)) is { } other)
+            {
+                throw new ConvyRequestException($"{Path.GetFileName(file)} holds {other.Package.Package}; rename it or remove that package first.");
+            }
+
             var staged = file + ".new";
             await File.WriteAllBytesAsync(staged, content, cancellationToken).ConfigureAwait(false);
+            Swap(file, staged, old);
+            _logger.LogInformation("Installed extension {Package} {Version}.", package.Package, package.VersionText);
+        }
+        finally
+        {
+            _gate.Release();
+        }
 
-            // The version installed stays aside until the new one loads, and comes back if it does not.
-            string? kept = null;
-            var old = _host.Extensions.FirstOrDefault(e => string.Equals(e.Package.Package, package.Package, StringComparison.OrdinalIgnoreCase));
+        await _registry.RefreshNowAsync(CancellationToken.None).ConfigureAwait(false);
+        return Get().Extensions.FirstOrDefault(e => string.Equals(e.Package, package.Package, StringComparison.OrdinalIgnoreCase))
+               ?? throw new ConvyRequestException($"{package.Package} was installed but is not loaded; see the problems.");
+    }
+
+    /// <summary>
+    /// Puts the staged package in place: the version installed stays aside (<c>.old</c>) until the new one loads, and
+    /// comes back if it does not or anything on the way fails (a restart half-way brings it back too, see the host).
+    /// </summary>
+    private void Swap(string file, string staged, LoadedExtension? old)
+    {
+        string? kept = null;
+        var placed = false;
+        try
+        {
             if (old is not null)
             {
                 _host.Unload(old.Package.Package);
@@ -406,35 +441,55 @@ public sealed class ExtensionAdminService
             }
 
             File.Move(staged, file, overwrite: true);
+            placed = true;
             _host.Load(file);
             if (_host.Problems.FirstOrDefault(p => p.File == Path.GetFileName(file)) is { } problem)
             {
-                File.Delete(file);
                 _host.ForgetProblem(problem.File);
-                if (old is not null)
-                {
-                    File.Move(kept!, old.File, overwrite: true);
-                    _host.Load(old.File);
-                }
-
                 throw new ConvyRequestException(problem.Message);
             }
-
-            if (kept is not null)
+        }
+        catch
+        {
+            if (placed)
             {
-                File.Delete(kept);
+                TryDelete(file);
             }
 
-            _logger.LogInformation("Installed extension {Package} {Version}.", package.Package, package.VersionText);
-        }
-        finally
-        {
-            _gate.Release();
+            TryDelete(staged);
+            if (old is not null && kept is not null && File.Exists(kept))
+            {
+                File.Move(kept, old.File, overwrite: true);
+                _host.Load(old.File);
+            }
+            else if (old is not null && File.Exists(old.File))
+            {
+                _host.Load(old.File);
+            }
+
+            throw;
         }
 
-        await _registry.RefreshNowAsync(cancellationToken).ConfigureAwait(false);
-        return Get().Extensions.First(e => string.Equals(e.Package, package.Package, StringComparison.OrdinalIgnoreCase));
+        if (kept is not null)
+        {
+            TryDelete(kept);
+        }
     }
+
+    private void TryDelete(string file)
+    {
+        try
+        {
+            File.Delete(file);
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+        {
+            _logger.LogWarning("Could not delete {File}: {Message}", Path.GetFileName(file), ex.Message);
+        }
+    }
+
+    /// <summary>A source's proxy as the page shows it: a password in it hidden.</summary>
+    private static string? MaskedProxy(string? proxy) => ConfigurationMasking.Mask("proxy", proxy, out _);
 
     /// <summary>Why Convy cannot run what an index lists; <c>null</c> — it can.</summary>
     private static string? Incompatible(IndexEntry entry)

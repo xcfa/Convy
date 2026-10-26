@@ -434,8 +434,8 @@ opaque `result_id`s; the agent never sees URLs, magnet links or credentials.
 ### File lists and file selection
 
 `list_files` reads the file list without starting a download (a source may list the files
-itself); a `.torrent` is fetched from the source, with its key, only from the source's own hosts
-(a redirect to a magnet is that magnet) and parsed; for magnet-only releases the metadata is fetched from the swarm
+itself); a `.torrent` is fetched from the source's own hosts with its key (a redirect to another host,
+such as a tracker's own link, is followed without it; a redirect to a magnet is that magnet) and parsed; for magnet-only releases the metadata is fetched from the swarm
 (DHT and the magnet's trackers) by an embedded client — nothing is added to qBittorrent. If the
 list does not arrive within `files.metadata_timeout_sec`, the answer is `timeout` and nothing
 keeps loading in the background.
