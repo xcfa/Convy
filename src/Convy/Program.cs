@@ -21,7 +21,7 @@ using Convy.Sources.Opds;
 using Convy.Services.Downloaders.Opds;
 using Convy.Services.Downloaders.Gallery;
 using Convy.Services.External;
-using Convy.Services.Plugins;
+using Convy.Services.Extensions;
 using System.Linq;
 using Convy.Services.Linking;
 using Convy.Services.Sync;
@@ -313,24 +313,24 @@ public class Program
 			builder.Services.AddHostedService<OpdsDownloadWorker>();
 		}
 
-		// The service of checks (captcha-solver): plugins' requests hand it the bot checks they run into, and
+		// The service of checks (captcha-solver): the extensions' requests hand it the bot checks they run into, and
 		// /api/captcha relays its API to Convy's clients (Shizuka) with Convy's key.
 		builder.Services.AddOptions<CaptchaOptions>().Bind(builder.Configuration.GetSection(CaptchaOptions.SectionName));
-		builder.Services.AddSingleton<CaptchaService>();
 		builder.Services.AddSingleton<CaptchaRelay>();
-		// The UI's tab passes the checks of the plugins' domains (they load once, at the start).
+		// The UI's tab passes the checks of the extensions' domains (they load once, at the start).
 		builder.Services.AddSingleton(sp => new CaptchaWindowRelay(
 			sp.GetRequiredService<CaptchaRelay>(),
 			sp.GetRequiredService<IOptionsMonitor<CaptchaOptions>>(),
-			() => sp.GetRequiredService<PluginHost>().Plugins.SelectMany(p => p.Manifest.Domains),
+			() => sp.GetRequiredService<ExtensionHost>().Domains,
 			sp.GetRequiredService<ILogger<CaptchaWindowRelay>>()));
 
-		// Plugins (/data/plugins): each package in its own load context; their sources join the others. Galleries from
-		// them are downloaded by Convy's own downloader into gallery.downloads_path, as CBZ.
-		builder.Services.AddOptions<PluginsOptions>().Bind(builder.Configuration.GetSection(PluginsOptions.SectionName));
+		// Source extensions (/data/extensions): Shizuka's packages, each in its own load context; their sources that
+		// download join the others. Galleries from them are downloaded by Convy's own downloader into
+		// gallery.downloads_path, as CBZ.
+		builder.Services.AddOptions<ExtensionsOptions>().Bind(builder.Configuration.GetSection(ExtensionsOptions.SectionName));
 		builder.Services.AddOptions<GalleryOptions>().Bind(builder.Configuration.GetSection(GalleryOptions.SectionName));
-		builder.Services.AddSingleton<PluginHost>();
-		builder.Services.AddSingleton<ISourceProvider>(sp => sp.GetRequiredService<PluginHost>());
+		builder.Services.AddSingleton<ExtensionHost>();
+		builder.Services.AddSingleton<ISourceProvider>(sp => sp.GetRequiredService<ExtensionHost>());
 		var galleryOptions = builder.Configuration.GetSection(GalleryOptions.SectionName).Get<GalleryOptions>() ?? new GalleryOptions();
 		var galleryDownloadsPath = string.IsNullOrWhiteSpace(galleryOptions.DownloadsPath) ? null : galleryOptions.DownloadsPath.Trim();
 		if (galleryDownloadsPath is not null)
@@ -398,10 +398,10 @@ public class Program
 			app.Logger.LogWarning("opds.downloads_path is not set: books can be found but not downloaded.");
 		}
 
-		// Plugins load once, before the sources are first listed; a broken package is logged and skipped.
-		var plugins = app.Services.GetRequiredService<PluginHost>();
-		plugins.LoadAll();
-		if (plugins.Plugins.Count > 0 && galleryDownloadsPath is null)
+		// Extensions load once, before the sources are first listed; a broken package is logged and skipped.
+		var extensions = app.Services.GetRequiredService<ExtensionHost>();
+		extensions.LoadAll();
+		if (extensions.Extensions.Count > 0 && galleryDownloadsPath is null)
 		{
 			app.Logger.LogWarning("gallery.downloads_path is not set: galleries can be found but not downloaded.");
 		}

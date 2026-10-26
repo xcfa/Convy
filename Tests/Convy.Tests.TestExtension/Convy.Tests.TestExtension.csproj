@@ -1,7 +1,7 @@
 <Project Sdk="Microsoft.NET.Sdk">
 
-  <!-- A plugin as a third party would build one: against the API only, nothing of Convy itself. The tests load its
-       DLL from the plugins folder of their output like a user would. -->
+  <!-- A source extension as a third party builds one for Shizuka: against Shizuka.Sources.Abstractions only, which
+       the host provides. The tests load its DLL from the extensions folder of their output like a user would. -->
   <PropertyGroup>
     <TargetFramework>net10.0</TargetFramework>
     <ImplicitUsings>enable</ImplicitUsings>
@@ -12,7 +12,7 @@
   </PropertyGroup>
 
   <ItemGroup>
-    <ProjectReference Include="..\..\src\Convy.Sources.Abstractions\Convy.Sources.Abstractions.csproj" Private="false" />
+    <PackageReference Include="Shizuka.Sources.Abstractions" Version="1.6.0" ExcludeAssets="runtime" />
   </ItemGroup>
 
 </Project>

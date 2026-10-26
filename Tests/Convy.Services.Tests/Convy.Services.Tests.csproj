@@ -20,15 +20,15 @@
 
   <ItemGroup>
     <ProjectReference Include="..\..\src\Convy.Services\Convy.Services.csproj" />
-    <!-- Built, never referenced: the plugin tests load its DLL from plugins/ of the output like a user would. -->
-    <ProjectReference Include="..\Convy.Sources.TestPlugin\Convy.Sources.TestPlugin.csproj" ReferenceOutputAssembly="false" />
+    <!-- Built, never referenced: the extension tests load its DLL from extensions/ of the output like a user would. -->
+    <ProjectReference Include="..\Convy.Tests.TestExtension\Convy.Tests.TestExtension.csproj" ReferenceOutputAssembly="false" />
   </ItemGroup>
 
-  <Target Name="CopyTestPlugin" AfterTargets="Build">
-    <MSBuild Projects="..\Convy.Sources.TestPlugin\Convy.Sources.TestPlugin.csproj" Targets="GetTargetPath" Properties="Configuration=$(Configuration)">
-      <Output TaskParameter="TargetOutputs" ItemName="TestPlugin" />
+  <Target Name="CopyTestExtension" AfterTargets="Build">
+    <MSBuild Projects="..\Convy.Tests.TestExtension\Convy.Tests.TestExtension.csproj" Targets="GetTargetPath" Properties="Configuration=$(Configuration)">
+      <Output TaskParameter="TargetOutputs" ItemName="TestExtension" />
     </MSBuild>
-    <Copy SourceFiles="@(TestPlugin)" DestinationFolder="$(OutDir)plugins" SkipUnchangedFiles="true" />
+    <Copy SourceFiles="@(TestExtension)" DestinationFolder="$(OutDir)extensions" SkipUnchangedFiles="true" />
   </Target>
 
 </Project>

@@ -16,7 +16,7 @@
     <Project Path="Tests/Convy.PathExpressions.Tests/Convy.PathExpressions.Tests.csproj" />
     <Project Path="Tests/Convy.Services.Tests/Convy.Services.Tests.csproj" />
     <Project Path="Tests/Convy.Tests/Convy.Tests.csproj" />
-    <Project Path="Tests/Convy.Sources.TestPlugin/Convy.Sources.TestPlugin.csproj" />
+    <Project Path="Tests/Convy.Tests.TestExtension/Convy.Tests.TestExtension.csproj" />
   </Folder>
   <Project Path="docker-compose.dcproj">
     <Build />

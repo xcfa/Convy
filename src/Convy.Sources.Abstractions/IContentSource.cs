@@ -163,6 +163,9 @@ public sealed class SourceException : Exception
     /// <summary>For <see cref="SourceErrorKind.Challenge"/>: the page a human opens to pass the challenge; else <c>null</c>.</summary>
     public Uri? ChallengeUrl { get; init; }
 
+    /// <summary>For <see cref="SourceErrorKind.Challenge"/>: the check at the service of checks that waits for a person to pass it; else <c>null</c>.</summary>
+    public string? ChallengeId { get; init; }
+
     /// <summary>
     /// "<paramref name="what"/> is unreachable: …" with the causes of <paramref name="failure"/>
     /// spelled out: .NET's own message often only says "see inner exception", which hides

@@ -1,29 +1,14 @@
 <Project Sdk="Microsoft.NET.Sdk">
 
-  <!-- The contract of Convy's sources and plugins: BCL only, published to GitHub Packages on a tag
-       sources-api-v<Version>. Within a major version only additions (virtual members with defaults, init properties);
-       AssemblyVersion and Version move together (see SourcesApi.Version). -->
+  <!-- The contract of Convy's sources: content sources, download payloads, the Gallery protocol. BCL only. Gallery
+       sources from outside are Shizuka source extensions (Convy.Services/Extensions), not built against this. -->
   <PropertyGroup>
     <TargetFramework>net10.0</TargetFramework>
     <ImplicitUsings>enable</ImplicitUsings>
     <Nullable>enable</Nullable>
     <RootNamespace>Convy.Sources</RootNamespace>
-    <Version>1.0.0</Version>
-    <AssemblyVersion>1.0.0.0</AssemblyVersion>
-    <FileVersion>1.0.0.0</FileVersion>
     <GenerateDocumentationFile>true</GenerateDocumentationFile>
     <NoWarn>$(NoWarn);CS1591</NoWarn>
-    <IsPackable>true</IsPackable>
-    <PackageId>Convy.Sources.Abstractions</PackageId>
-    <Authors>xcfa</Authors>
-    <Description>The API of Convy source plugins: content sources, download payloads, the Gallery protocol and the plugin host context.</Description>
-    <RepositoryUrl>https://github.com/xcfa/convy</RepositoryUrl>
-    <PackageLicenseExpression>MIT</PackageLicenseExpression>
-    <PackageReadmeFile>README.md</PackageReadmeFile>
   </PropertyGroup>
-
-  <ItemGroup>
-    <None Include="README.md" Pack="true" PackagePath="/" />
-  </ItemGroup>
 
 </Project>
