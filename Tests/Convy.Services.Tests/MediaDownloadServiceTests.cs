@@ -283,18 +283,27 @@ public class CategoryCatalogTests
     }
 
     [Fact]
-    public void ExposesProviderSettingsAndClientCategory()
+    public void ExposesTheSourcesOptionsAndClientCategory()
     {
-        var categories = Media.Categories("soulseek");
-        categories["music"].Prowlarr = new ProwlarrCategoryOptions { Categories = [3000] };
-        categories["music"].Soulseek = new SoulseekCategoryOptions { Extensions = [".FLAC", "mp3"] };
+        var categories = Media.Categories("slskd");
+        categories["music"].Options = new(StringComparer.OrdinalIgnoreCase)
+        {
+            ["prowlarr"] = new(StringComparer.OrdinalIgnoreCase) { ["categories"] = ["3000"], ["limit"] = ["50"] },
+            ["prowlarr-15"] = new(StringComparer.OrdinalIgnoreCase) { ["categories"] = [" 3010 ", ""] },
+            ["slskd"] = new(StringComparer.OrdinalIgnoreCase) { ["extensions"] = ["flac", "mp3"] },
+        };
 
         var music = Media.Catalog(categories).Get("MUSIC");
 
         Assert.Equal("Music", music.ClientCategory);
-        Assert.Equal([3000], music.SearchSettings.ProwlarrCategories);
-        Assert.Equal(["flac", "mp3"], music.SearchSettings.SoulseekExtensions);
-        Assert.Equal(["soulseek"], music.Sources);
+        Assert.Equal(["slskd"], music.Sources);
+        Assert.Equal(["flac", "mp3"], music.SearchSettings.For("slskd")["extensions"]);
+        // A source's own options over its provider's, key by key; values trimmed, blanks dropped.
+        var indexer = music.SearchSettings.For("prowlarr-15", "prowlarr");
+        Assert.Equal(["3010"], indexer["categories"]);
+        Assert.Equal(["50"], indexer["limit"]);
+        Assert.Equal(["3000"], music.SearchSettings.For("prowlarr-7", "prowlarr")["categories"]);
+        Assert.Empty(music.SearchSettings.For("other-source"));
     }
 
     private sealed class MutableOptions<T> : Microsoft.Extensions.Options.IOptionsMonitor<T>

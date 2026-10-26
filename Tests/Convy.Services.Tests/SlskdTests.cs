@@ -109,7 +109,7 @@ internal sealed class FakeSlskd : HttpMessageHandler
 
     public static SlskdClient Client(FakeSlskd handler, string? downloadsPath = "/data/slskd") =>
         new(new HttpClient(handler) { BaseAddress = new Uri("http://slskd:5030/api/v0/") },
-            new SlskdOptions { Url = "http://slskd:5030", ApiKey = "k", DownloadsPath = downloadsPath, SearchMaxSeconds = 5 });
+            new SlskdOptions { Url = "http://slskd:5030", ApiKey = "k", DownloadsPath = downloadsPath });
 
     public static string Escape(string value) => JsonSerializer.Serialize(value)[1..^1];
 }
@@ -305,113 +305,5 @@ public class SlskdDownloaderTests
         await downloader.GetItemsAsync(CancellationToken.None);
 
         Assert.Single(http.Requests, r => r.Path.Contains("/batches/"));
-    }
-}
-
-public class SoulseekSourceTests
-{
-    private static readonly CategorySearchSettings Music = new("music", [], ["flac"]);
-
-    private static FakeSlskd Search(string responses) => new()
-    {
-        Respond = (method, path, _) => (method, path) switch
-        {
-            ("POST", "/api/v0/searches") => FakeSlskd.Json("""{"id":"11111111-1111-1111-1111-111111111111","state":"InProgress","isComplete":false}"""),
-            ("GET", var p) when p.EndsWith("/responses") => FakeSlskd.Json(responses),
-            ("GET", _) => FakeSlskd.Json("""{"id":"11111111-1111-1111-1111-111111111111","state":"Completed, TimedOut","isComplete":true}"""),
-            _ => new HttpResponseMessage(HttpStatusCode.NoContent),
-        },
-    };
-
-    private static async Task<List<ContentInfo>> Run(FakeSlskd http, string query = "evanescence fallen")
-    {
-        var source = new SoulseekSource(FakeSlskd.Client(http), SourceStatus.Ok, null, NullLogger<SoulseekSource>.Instance);
-        var results = new List<ContentInfo>();
-        await foreach (var c in source.SearchAsync(new SearchRequest(query, Music), CancellationToken.None))
-            results.Add(c);
-        return results;
-    }
-
-    [Fact]
-    public async Task SearchGroupsHitsByUserFolderAndFiltersExtensions()
-    {
-        var http = Search("""
-            [{"username":"bob","hasFreeUploadSlot":true,"queueLength":0,"uploadSpeed":1048576,"files":[
-                {"filename":"@@abcde\\Music\\Evanescence\\2003 - Fallen\\01.flac","size":30},
-                {"filename":"@@abcde\\Music\\Evanescence\\2003 - Fallen\\02.flac","size":40},
-                {"filename":"@@abcde\\Music\\Evanescence\\2003 - Fallen\\cover.jpg","size":1}]},
-             {"username":"eve","hasFreeUploadSlot":false,"queueLength":12,"uploadSpeed":10,"files":[
-                {"filename":"@@zzzzz\\mp3\\Fallen\\01.mp3","size":5}]}]
-            """);
-
-        var album = Assert.Single(await Run(http));
-
-        Assert.Equal("Evanescence / 2003 - Fallen [flac] — bob", album.Title);
-        Assert.Equal(2, album.FileCount);
-        Assert.Equal(70, album.SizeBytes);
-        Assert.True(album.Availability.FreeUploadSlot);
-        Assert.StartsWith("slsk:bob", album.DedupKey);
-        Assert.Contains(http.Requests, r => r.Method == "DELETE" && r.Path.StartsWith("/api/v0/searches/"));
-
-        var searchBody = JsonDocument.Parse(http.Requests.First(r => r.Method == "POST").Body!).RootElement;
-        Assert.Equal("evanescence fallen", searchBody.GetProperty("searchText").GetString());
-        Assert.Equal(8000, searchBody.GetProperty("searchTimeout").GetInt32()); // milliseconds
-    }
-
-    [Fact]
-    public async Task DiscFoldersFormOneRelease()
-    {
-        var http = Search("""
-            [{"username":"bob","hasFreeUploadSlot":true,"queueLength":0,"uploadSpeed":1,"files":[
-                {"filename":"@@abcde\\Music\\Album\\CD1\\01.flac","size":30},
-                {"filename":"@@abcde\\Music\\Album\\CD2\\01.flac","size":40}]}]
-            """);
-
-        var album = Assert.Single(await Run(http));
-
-        Assert.Equal(2, album.FileCount);
-        Assert.Equal(@"slsk:bob" + "\n" + @"@@abcde\Music\Album", album.DedupKey);
-    }
-
-    [Fact]
-    public async Task ListsTheFolderWithSubfoldersAndSearchHits()
-    {
-        const string dir = @"@@abcde\Music\Album";
-        var contentId = SoulseekContentRef.Serialize(new SoulseekContentRef("bob", dir,
-            [new SlskdEnqueueFile(dir + @"\01.flac", 3), new SlskdEnqueueFile(dir + @"\CD2\01.flac", 4)]));
-        var browseFails = false;
-        var http = new FakeSlskd
-        {
-            Respond = (_, _, _) => browseFails
-                ? new HttpResponseMessage(HttpStatusCode.NotFound) { Content = new StringContent("User bob is offline") }
-                : FakeSlskd.Json("""
-                    [{"name":"@@abcde\\Music\\Album","files":[{"filename":"01.flac","size":3},{"filename":"cover.jpg","size":1}]},
-                     {"name":"@@abcde\\Music\\Album\\Scans","files":[{"filename":"back.png","size":2}]},
-                     {"name":"@@abcde\\Music\\Album (Live)","files":[{"filename":"x.flac","size":2}]}]
-                    """),
-        };
-        var source = new SoulseekSource(FakeSlskd.Client(http), SourceStatus.Ok, null, NullLogger<SoulseekSource>.Instance);
-
-        var listing = await source.ListFilesAsync(contentId, CancellationToken.None);
-        // The browsed folder, its subfolders, and search hits the browse did not return (CD2).
-        Assert.Equal(["01.flac", "CD2/01.flac", "Scans/back.png", "cover.jpg"], listing.Files.Select(f => f.Path).Order(StringComparer.Ordinal));
-
-        var payload = Assert.IsType<SoulseekPayload>(await source.ResolveAsync(contentId, CancellationToken.None));
-        Assert.Contains(payload.Files, f => f.Filename == dir + @"\Scans\back.png");
-
-        browseFails = true;
-        Assert.Equal(["01.flac", "CD2/01.flac"], (await source.ListFilesAsync(contentId, CancellationToken.None)).Files.Select(f => f.Path));
-    }
-
-    [Fact]
-    public async Task ProviderReportsWhenSlskdIsNotLoggedIn()
-    {
-        var http = new FakeSlskd { Respond = (_, _, _) => FakeSlskd.Json("""{"state":"Disconnected","isLoggedIn":false}""") };
-        var provider = new SoulseekSourceProvider(FakeSlskd.Client(http), NullLogger<SoulseekSource>.Instance);
-
-        var source = Assert.Single(await provider.GetSourcesAsync(CancellationToken.None));
-
-        Assert.Equal("soulseek", source.Id);
-        Assert.Equal(SourceStatus.Error, source.Status);
     }
 }

@@ -105,27 +105,30 @@ serilog:
 # files go is decided by rules.yaml (a job's qbittorrent_category is visible to the
 # rules as Category, for every protocol). The `other` category is mandatory: a
 # version without it is not applied. Order in `sources` is the priority; without
-# `sources` every active source is used, by name. Ids: get_sources (MCP) or
-# prowlarr:<indexer id> / soulseek. The prowlarr/soulseek blocks are read only by
-# that provider. This file is reloaded on change; a broken edit keeps the previous
-# version in effect.
+# `sources` every active source is used, by name. Ids: get_sources (MCP) or the
+# Sources page (prowlarr-<indexer id>, slskd, flibusta, …). `options` tell the
+# sources of a category what their extension documents, by the id of the source or
+# of its provider (prowlarr: every indexer). This file is reloaded on change; a
+# broken edit keeps the previous version in effect.
 # categories:
 #   movies:
 #     description: Movies for Jellyfin
 #     path_hint: Title (Year)
 #     qbittorrent_category: Movies
-#     sources: [prowlarr:12, prowlarr:20, prowlarr:7]
-#     prowlarr:
-#       categories: [2000]        # Newznab ids: 2000 movies, 3000 audio, 5000 TV
+#     sources: [prowlarr-12, prowlarr-20, prowlarr-7]
+#     options:
+#       prowlarr:
+#         categories: [2000]      # Newznab ids: 2000 movies, 3000 audio, 5000 TV
 #   music:
 #     description: Music for Navidrome
 #     path_hint: Artist/Year - Album
 #     qbittorrent_category: Music
-#     sources: [soulseek, prowlarr:15]
-#     prowlarr:
-#       categories: [3000]
-#     soulseek:
-#       extensions: [flac, mp3, m4a]
+#     sources: [slskd, prowlarr-15]
+#     options:
+#       prowlarr:
+#         categories: [3000]
+#       slskd:
+#         extensions: [flac, mp3, m4a]
 #   other:
 #     description: Anything that fits no other category
 #     qbittorrent_category: Other
@@ -141,51 +144,49 @@ serilog:
 #   metadata_timeout_sec: 15   # list_files gives up after this (magnet metadata, peers)
 #   max_entries: 100           # lines per list_files page
 
-# ── OPDS catalogs (books) ──────────────────────────────────────────────────
-# E-book catalogs such as Flibusta, as sources opds:<id>. Convy downloads their
-# books itself into downloads_path (same filesystem as the rule paths). See README
-# "OPDS catalogs". Read at startup; changes need a restart.
-# opds:
-#   downloads_path: /data/downloads/opds
-#   catalogs:
-#     - id: flibusta
-#       type: flibusta              # Flibusta search and author pages preset
-#       url: https://flibusta.site/opds
-#       formats: [epub, fb2]        # first available is downloaded by default
-#       unzip_fb2: true
-#       timeout_sec: 120
-#       author_pages: 3
-#       # proxy: socks5://tor:9050
-# A books category for them (add it under categories:):
-#   books:
-#     description: Books for the e-reader
-#     path_hint: Author/Title
-#     qbittorrent_category: Books   # the rules see it as Category
-#     sources: [opds:flibusta]
-
-# ── Gallery plugins (manga and comics sites) ───────────────────────────────
-# Plugins (DLL or zip) in plugins.path are loaded at startup; their sources join the
-# others. Galleries are downloaded by Convy itself into gallery.downloads_path as CBZ
-# (same filesystem as the rule paths). See README "Gallery plugins". The settings
-# of a plugin are hot-reloaded; path, trusted and a proxy need a restart.
-# plugins:
-#   path: /data/plugins
-#   trusted: false                  # true skips the package audit (own plugins only)
+# ── Sources (extensions) ───────────────────────────────────────────────────
+# Every source is an extension package in extensions.path, installed from the Sources
+# page (an index of packages) or put there by hand: sites (manga and comics; the same
+# packages as Shizuka's), torrent indexers of Prowlarr, Soulseek through slskd, OPDS
+# catalogs (Flibusta). See README "Sources". The Sources page saves each source's
+# settings here (in the settings database); they apply without a restart, a proxy
+# needs one.
+# extensions:
+#   path: /data/extensions
+#   trusted: false                  # true skips the package audit (own packages only)
+#   indexes:                        # where the Sources page finds packages
+#     - https://example.org/convy/index.json
 #   settings:
-#     e-hentai:                     # the plugin's id
+#     prowlarr:                     # a source's or a provider's id
+#       values:                     # its own settings, as its manifest lists them
+#         url: http://prowlarr:9696
+#         api_key: …                # or a Docker secret: Extensions__settings__prowlarr__values__api_key
+#     e-hentai:
 #       enabled: true
 #       proxy: socks5://tor:9050
 #       timeout_sec: 60
-#       values:                     # its own settings, as the manifest lists them
-#         cookies: ipb_member_id=…  # or a Docker secret: Plugins__settings__e-hentai__values__cookies
+#       values:
+#         cookies: ipb_member_id=…
+#
+# Galleries (the sites' releases) are downloaded by Convy itself into
+# gallery.downloads_path as CBZ, books (OPDS) into opds.downloads_path; both on the
+# same filesystem as the rule paths.
 # gallery:
 #   downloads_path: /data/downloads/gallery
 #   category: other                 # for jobs started through the REST API without a category
 #   parallel_pages: 2
 #   page_timeout_sec: 120
+# opds:
+#   downloads_path: /data/downloads/opds
+# A books category for them (add it under categories:):
+#   books:
+#     description: Books for the e-reader
+#     path_hint: Author/Title
+#     qbittorrent_category: Books   # the rules see it as Category
+#     sources: [flibusta]
 
 # ── Bot checks and captchas (captcha-solver) ───────────────────────────────
-# A plugin's site behind Cloudflare or DDoS-Guard (or asking for its own captcha) is
+# An extension's site behind Cloudflare or DDoS-Guard (or asking for its own captcha) is
 # handed to the service of checks: its browser passes the check, or a person does in a
 # client's window (Shizuka) or from a notification. /api/captcha relays the service to
 # Convy's clients with this key. Read on every request. See README "Bot checks".
@@ -193,7 +194,7 @@ serilog:
 #   url: http://captcha-solver:8191/
 #   key: …                          # scopes solve and solver; a Docker secret: Captcha__key
 #   wait_sec: 25                    # how long a request waits for a check to be passed
-#   profile: convy                  # Convy's own browser profiles at the service: <domain>#convy.<plugin>
+#   profile: convy                  # Convy's own browser profiles at the service: <domain>#convy.<source>
 
 # ── Jobs ───────────────────────────────────────────────────────────────────
 # Downloads started by the agent (MCP `download` tool) become jobs with a unified

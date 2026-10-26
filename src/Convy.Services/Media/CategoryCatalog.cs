@@ -63,10 +63,13 @@ public sealed class CategoryCatalog : IDisposable
                 value.PathHint,
                 value.QbittorrentCategory,
                 value.Sources?.Where(s => !string.IsNullOrWhiteSpace(s)).Select(s => s.Trim()).ToList(),
-                new CategorySearchSettings(
-                    id,
-                    value.Prowlarr?.Categories ?? [],
-                    value.Soulseek?.Extensions?.Select(e => e.TrimStart('.').ToLowerInvariant()).ToList() ?? []));
+                new CategorySearchSettings(id, value.Options.ToDictionary(
+                    o => o.Key,
+                    o => (IReadOnlyDictionary<string, IReadOnlyList<string>>)o.Value.ToDictionary(
+                        v => v.Key,
+                        v => (IReadOnlyList<string>)v.Value.Where(x => !string.IsNullOrWhiteSpace(x)).Select(x => x.Trim()).ToList(),
+                        StringComparer.OrdinalIgnoreCase),
+                    StringComparer.OrdinalIgnoreCase)));
         }
 
         if (categories.Count == 0 && _current.Count == 0)

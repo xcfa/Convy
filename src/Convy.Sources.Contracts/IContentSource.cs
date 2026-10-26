@@ -14,14 +14,22 @@ public enum SourceStatus
 }
 
 /// <summary>
-/// Returns the sources a backend offers: Prowlarr offers one per indexer, slskd a single one.
+/// Returns the sources a backend offers: an extension's own, or those a provider of one lists (an indexer of Prowlarr each).
 /// </summary>
 public interface ISourceProvider
 {
-    /// <summary>Name of the provider, for logs (<c>prowlarr</c>, <c>slskd</c>).</summary>
+    /// <summary>Name of the provider, for logs (<c>extensions</c>, <c>prowlarr</c>).</summary>
     string Name { get; }
 
     Task<IReadOnlyList<IContentSource>> GetSourcesAsync(CancellationToken cancellationToken);
+}
+
+/// <summary>
+/// Providers that come and go (the extensions installed): the registry asks for them each time it lists the sources.
+/// </summary>
+public interface ISourceProviderGroup
+{
+    IReadOnlyList<ISourceProvider> Providers { get; }
 }
 
 /// <summary>
@@ -31,7 +39,7 @@ public interface ISourceProvider
 /// </summary>
 public interface IContentSource
 {
-    /// <summary>Stable id, e.g. <c>prowlarr:12</c> or <c>soulseek</c>.</summary>
+    /// <summary>Stable id, e.g. <c>prowlarr-12</c> or <c>slskd</c>.</summary>
     string Id { get; }
 
     string Name { get; }
@@ -62,6 +70,19 @@ public interface IContentSource
     Task<DownloadPayload> ResolveAsync(string contentId, CancellationToken cancellationToken);
 }
 
+/// <summary>
+/// A source whose releases are files Convy fetches itself (<see cref="OpdsPayload"/>): it fetches them with its own
+/// rules (its hosts, cookies, proxy, sign-in).
+/// </summary>
+public interface IFileSource : IContentSource
+{
+    /// <summary>
+    /// GET <paramref name="url"/> into <paramref name="destination"/>, at most <paramref name="maxBytes"/> (else
+    /// <c>Fits</c> is false). A status other than 2xx throws <see cref="SourceException"/>.
+    /// </summary>
+    Task<(bool Fits, long Bytes, string? ContentType)> FetchFileAsync(Uri url, Stream destination, long maxBytes, CancellationToken cancellationToken);
+}
+
 /// <summary>One query variant within a category.</summary>
 /// <param name="Query">The query text as the agent wrote it.</param>
 /// <param name="Category">Category settings for the providers.</param>
@@ -72,15 +93,38 @@ public sealed record SearchRequest(string Query, CategorySearchSettings Category
 }
 
 /// <summary>
-/// The provider-specific part of a category. Each provider reads only its own fields.
+/// What a category tells the sources: by a source's or its provider's id, lists of values by key.
 /// </summary>
 /// <param name="Id">Category id (<c>movies</c>, <c>music</c>, …).</param>
-/// <param name="ProwlarrCategories">Newznab category ids passed to Prowlarr.</param>
-/// <param name="SoulseekExtensions">File extensions (without dot) kept from Soulseek results.</param>
+/// <param name="Options">The category's <c>options</c>, by source or provider id.</param>
 public sealed record CategorySearchSettings(
     string Id,
-    IReadOnlyList<int> ProwlarrCategories,
-    IReadOnlyList<string> SoulseekExtensions);
+    IReadOnlyDictionary<string, IReadOnlyDictionary<string, IReadOnlyList<string>>> Options)
+{
+    /// <summary>A category that tells the sources nothing.</summary>
+    public CategorySearchSettings(string id)
+        : this(id, new Dictionary<string, IReadOnlyDictionary<string, IReadOnlyList<string>>>())
+    {
+    }
+
+    /// <summary>The options for a source: its own over those of its provider (<paramref name="ids"/> from the most specific).</summary>
+    public IReadOnlyDictionary<string, IReadOnlyList<string>> For(params string[] ids)
+    {
+        var merged = new Dictionary<string, IReadOnlyList<string>>(StringComparer.OrdinalIgnoreCase);
+        foreach (var id in ids.Reverse())
+        {
+            if (Options.TryGetValue(id, out var options))
+            {
+                foreach (var (key, values) in options)
+                {
+                    merged[key] = values;
+                }
+            }
+        }
+
+        return merged;
+    }
+}
 
 /// <summary>One found unit: a torrent release, or a Soulseek user's folder.</summary>
 public sealed record ContentInfo

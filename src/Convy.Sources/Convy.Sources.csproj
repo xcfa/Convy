@@ -7,7 +7,7 @@
   </PropertyGroup>
 
   <ItemGroup>
-    <ProjectReference Include="..\Convy.Sources.Abstractions\Convy.Sources.Abstractions.csproj" />
+    <ProjectReference Include="..\Convy.Sources.Contracts\Convy.Sources.Contracts.csproj" />
   </ItemGroup>
 
   <ItemGroup>

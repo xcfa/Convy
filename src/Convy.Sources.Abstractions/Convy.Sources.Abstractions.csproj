@@ -1,14 +1,33 @@
 <Project Sdk="Microsoft.NET.Sdk">
 
-  <!-- The contract of Convy's sources: content sources, download payloads, the Gallery protocol. BCL only. Gallery
-       sources from outside are Shizuka source extensions (Convy.Services/Extensions), not built against this. -->
+  <!-- The API of Convy's own source extensions (Slskd, Prowlarr, OPDS: sources that are not sites), built on the shared
+       Shizuka.Sources.Abstractions: the manifest, the settings and the call context (HTTP on the source's domains and
+       its Url settings' hosts) are that API's. A site is an extension of the shared API alone, which Convy loads as it
+       is. Published to GitHub Packages on a tag sources-api-v<Version>. Within a major version only additions (virtual
+       members with defaults, init properties); AssemblyVersion and Version move together (ConvySourcesApi.Version). -->
   <PropertyGroup>
     <TargetFramework>net10.0</TargetFramework>
     <ImplicitUsings>enable</ImplicitUsings>
     <Nullable>enable</Nullable>
-    <RootNamespace>Convy.Sources</RootNamespace>
+    <Version>2.0.0</Version>
+    <AssemblyVersion>2.0.0.0</AssemblyVersion>
+    <FileVersion>2.0.0.0</FileVersion>
     <GenerateDocumentationFile>true</GenerateDocumentationFile>
     <NoWarn>$(NoWarn);CS1591</NoWarn>
+    <IsPackable>true</IsPackable>
+    <PackageId>Convy.Sources.Abstractions</PackageId>
+    <Authors>xcfa</Authors>
+    <Description>The API of Convy source extensions that are not sites (Soulseek, torrent indexers, OPDS catalogs), on top of Shizuka.Sources.Abstractions.</Description>
+    <RepositoryUrl>https://github.com/xcfa/convy</RepositoryUrl>
+    <PackageLicenseExpression>MIT</PackageLicenseExpression>
+    <PackageReadmeFile>README.md</PackageReadmeFile>
   </PropertyGroup>
+
+  <ItemGroup>
+    <!-- The host provides both APIs: an extension references this package with ExcludeAssets="runtime", and so the
+         shared one it brings (PrivateAssets keeps nothing from flowing further). -->
+    <PackageReference Include="Shizuka.Sources.Abstractions" Version="1.6.0" />
+    <None Include="README.md" Pack="true" PackagePath="/" />
+  </ItemGroup>
 
 </Project>

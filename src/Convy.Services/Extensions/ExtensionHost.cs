@@ -4,28 +4,47 @@ using System.Net.Http.Headers;
 using System.Runtime.CompilerServices;
 using Convy.Services.Captcha;
 using Convy.Sources;
+using Convy.Sources.Torrents;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
 using Shizuka.Sources.Hosting;
 using Api = Shizuka.Sources.Abstractions;
+using Content = Convy.Sources.Abstractions;
 
 namespace Convy.Services.Extensions;
 
-/// <summary>An extension package that is loaded: its file, the package as read and its sources that Convy runs.</summary>
-public sealed record LoadedExtension(string File, ExtensionPackage Package, IReadOnlyList<ExtensionSource> Sources);
+/// <summary>
+/// An extension package that is loaded: its file, the package as read and what Convy runs of it: the sites' sources
+/// that download (<paramref name="Galleries"/>), the sources and providers of Convy's own API.
+/// </summary>
+public sealed record LoadedExtension(
+    string File,
+    ExtensionPackage Package,
+    IReadOnlyList<ExtensionSource> Galleries,
+    IReadOnlyList<PackagedSource> Sources,
+    IReadOnlyList<PackagedProvider> Providers)
+{
+    /// <summary>The ids of its sources and providers.</summary>
+    public IEnumerable<string> Ids => Galleries.Select(g => g.Id).Concat(Sources.Select(s => s.Id)).Concat(Providers.Select(p => p.Id));
+
+    /// <summary>Every unit of it: galleries, sources, providers.</summary>
+    public IEnumerable<ExtensionUnit> Units => Galleries.Cast<ExtensionUnit>().Concat(Sources).Concat(Providers);
+}
 
 /// <summary>A package in the extensions folder that could not be loaded.</summary>
 public sealed record ExtensionProblem(string File, string Message);
 
 /// <summary>
-/// Loads the Shizuka source extensions of the extensions folder at startup the way Shizuka does (the package audit, the
-/// API range, a collectible load context each, the manifests checked) and serves the sources that download
-/// (<see cref="Api.SourceCapabilities.Download"/>) as gallery sources. Sources that only know metadata, and providers,
-/// are Shizuka's business and are left out. A package that cannot be loaded, or whose source ids are taken, is reported
-/// (<see cref="Problems"/>, the log) and skipped; the others run. A disabled source
+/// Loads the source extensions of the extensions folder the way Shizuka does (the package audit, the API range, a
+/// collectible load context each, the manifests checked). A site's package (the shared
+/// <c>Shizuka.Sources.Abstractions</c>) gives its sources that download (<see cref="Api.SourceCapabilities.Download"/>)
+/// as gallery sources; sources that only know metadata, and providers of sites, are Shizuka's business and are left
+/// out. A package of Convy's own API (<c>Convy.Sources.Abstractions</c>) gives its <see cref="Content.ContentSource"/>s
+/// and <see cref="Content.ContentSourceProvider"/>s. A package that cannot be loaded, or whose ids are taken, is
+/// reported (<see cref="Problems"/>, the log) and skipped; the others run. A disabled source or provider
 /// (<c>extensions.settings.&lt;id&gt;.enabled: false</c>) is not listed.
 /// </summary>
-public sealed class ExtensionHost : ISourceProvider, IDisposable
+public sealed class ExtensionHost : ISourceProvider, ISourceProviderGroup, IDisposable
 {
     public const string ProviderName = "extensions";
 
@@ -36,19 +55,33 @@ public sealed class ExtensionHost : ISourceProvider, IDisposable
     private readonly ConcurrentDictionary<string, SourceTransport> _transports = new(StringComparer.Ordinal);
     private readonly List<(LoadedExtension Extension, ExtensionLoadContext Context)> _loaded = [];
     private readonly List<ExtensionProblem> _problems = [];
+    private readonly ConcurrentDictionary<string, IReadOnlyList<PackagedSource>> _listed = new(StringComparer.OrdinalIgnoreCase);
 
-    public ExtensionHost(IOptionsMonitor<ExtensionsOptions> options, IOptionsMonitor<CaptchaOptions> captcha, TimeProvider time, ILoggerFactory loggers)
-        : this(options, captcha, time, loggers, CreateHandler, new SocketsHttpHandler { PooledConnectionLifetime = TimeSpan.FromMinutes(5) })
+    /// <summary>The API of Convy's own sources, as the extensions reference it: the versions this server runs.</summary>
+    public static SourceApiRange ContentApiRange { get; } = new(new Version(2, 0), Content.ConvySourcesApi.Version);
+
+    /// <summary>The kinds of source Convy's own API defines.</summary>
+    private static readonly IReadOnlyList<HostSourceType> ContentTypes =
+    [
+        new(typeof(Content.ContentSource), o => ((Content.ContentSource)o).Manifest),
+        new(typeof(Content.ContentSourceProvider), o => ((Content.ContentSourceProvider)o).Manifest, IsProvider: true),
+    ];
+
+    public ExtensionHost(IOptionsMonitor<ExtensionsOptions> options, IOptionsMonitor<CaptchaOptions> captcha, ITorrentMetadataService torrents,
+        TimeProvider time, ILoggerFactory loggers)
+        : this(options, captcha, time, loggers, CreateHandler, new SocketsHttpHandler { PooledConnectionLifetime = TimeSpan.FromMinutes(5) }, torrents)
     {
     }
 
     /// <param name="handlers">The transport for a source's proxy setting; tests pass a fake site.</param>
     /// <param name="captchaHandler">The transport to the service of checks; tests pass a fake service.</param>
+    /// <param name="torrents">Reads the torrents of the sources; none — a torrent's files cannot be listed.</param>
     public ExtensionHost(IOptionsMonitor<ExtensionsOptions> options, IOptionsMonitor<CaptchaOptions> captcha, TimeProvider time, ILoggerFactory loggers,
-        Func<string?, HttpMessageHandler> handlers, HttpMessageHandler captchaHandler)
+        Func<string?, HttpMessageHandler> handlers, HttpMessageHandler captchaHandler, ITorrentMetadataService? torrents = null)
     {
         _options = options;
         Captcha = captcha;
+        Torrents = torrents ?? new NoTorrents();
         Time = time;
         _loggers = loggers;
         _logger = loggers.CreateLogger<ExtensionHost>();
@@ -58,12 +91,41 @@ public sealed class ExtensionHost : ISourceProvider, IDisposable
 
     public string Name => ProviderName;
 
-    public IReadOnlyList<LoadedExtension> Extensions => _loaded.Select(l => l.Extension).ToList();
+    public IReadOnlyList<LoadedExtension> Extensions
+    {
+        get
+        {
+            lock (_loaded)
+            {
+                return _loaded.Select(l => l.Extension).ToList();
+            }
+        }
+    }
 
-    public IReadOnlyList<ExtensionProblem> Problems => _problems;
+    public IReadOnlyList<ExtensionProblem> Problems
+    {
+        get
+        {
+            lock (_loaded)
+            {
+                return _problems.ToList();
+            }
+        }
+    }
 
-    /// <summary>The domains of every loaded source: the UI's tab passes their checks.</summary>
-    public IEnumerable<string> Domains => _loaded.SelectMany(l => l.Extension.Sources).SelectMany(s => s.Extension.Domains);
+    /// <summary>This host's own sources, then each provider of an extension: the registry lists them one by one.</summary>
+    public IReadOnlyList<ISourceProvider> Providers => [this, ..Extensions.SelectMany(e => e.Providers)];
+
+    /// <summary>The domains of every loaded site: the UI's tab passes their checks.</summary>
+    public IEnumerable<string> Domains => Extensions.SelectMany(e => e.Galleries).SelectMany(s => s.Extension.Domains);
+
+    /// <summary>A source of Convy's own API by id, as last listed (a provider's) or loaded.</summary>
+    public PackagedSource? FindSource(string id) =>
+        Extensions.SelectMany(e => e.Sources).Concat(_listed.Values.SelectMany(l => l))
+            .FirstOrDefault(s => string.Equals(s.Id, id, StringComparison.OrdinalIgnoreCase));
+
+    /// <summary>Reads the torrents of the sources.</summary>
+    internal ITorrentMetadataService Torrents { get; }
 
     internal ExtensionsOptions Options => _options.CurrentValue;
 
@@ -128,8 +190,9 @@ public sealed class ExtensionHost : ISourceProvider, IDisposable
             Load(file);
         }
 
-        _logger.LogInformation("{Count} extension(s) loaded from {Path}: {Extensions}.", _loaded.Count, path,
-            string.Join(", ", _loaded.Select(l => $"{l.Extension.Package.Package} {l.Extension.Package.VersionText} ({string.Join(", ", l.Extension.Sources.Select(s => s.Id))})")));
+        var loaded = Extensions;
+        _logger.LogInformation("{Count} extension(s) loaded from {Path}: {Extensions}.", loaded.Count, path,
+            string.Join(", ", loaded.Select(e => $"{e.Package.Package} {e.Package.VersionText} ({string.Join(", ", e.Ids)})")));
     }
 
     /// <summary>Loads one package file; a failure is an <see cref="ExtensionProblem"/>, never an exception.</summary>
@@ -137,47 +200,134 @@ public sealed class ExtensionHost : ISourceProvider, IDisposable
     {
         try
         {
-            var package = ExtensionPackage.Read(File.ReadAllBytes(file), Options.Trusted);
+            var package = ExtensionPackage.Read(File.ReadAllBytes(file), Options.Trusted, [Content.ConvySourcesApi.AssemblyName]);
             if (!SourceApiRange.Default.Supports(package.ApiVersion))
             {
                 throw new ExtensionLoadException(SourceApiRange.Default.IncompatibleMessage(package.ApiVersion));
             }
 
-            if (_loaded.Any(l => string.Equals(l.Extension.Package.Package, package.Package, StringComparison.OrdinalIgnoreCase)))
+            if (package.HostApis.TryGetValue(Content.ConvySourcesApi.AssemblyName, out var convyApi) && !ContentApiRange.Supports(convyApi))
             {
-                throw new ExtensionLoadException($"{package.Package} is already loaded from another file.");
+                throw new ExtensionLoadException($"{Content.ConvySourcesApi.AssemblyName}: {ContentApiRange.IncompatibleMessage(convyApi)}");
             }
 
-            Activate(package, file);
+            lock (_loaded)
+            {
+                if (_loaded.Any(l => string.Equals(l.Extension.Package.Package, package.Package, StringComparison.OrdinalIgnoreCase)))
+                {
+                    throw new ExtensionLoadException($"{package.Package} is already loaded from another file.");
+                }
+
+                Activate(package, file);
+            }
         }
         catch (Exception ex) when (ex is ExtensionPackageException or ExtensionLoadException or IOException or UnauthorizedAccessException)
         {
-            _problems.Add(new ExtensionProblem(Path.GetFileName(file), ex.Message));
+            lock (_loaded)
+            {
+                _problems.RemoveAll(p => p.File == Path.GetFileName(file));
+                _problems.Add(new ExtensionProblem(Path.GetFileName(file), ex.Message));
+            }
+
             _logger.LogError(ex, "Extension {File} was not loaded: {Message}", Path.GetFileName(file), ex.Message);
         }
     }
 
-    public Task<IReadOnlyList<IContentSource>> GetSourcesAsync(CancellationToken cancellationToken)
+    /// <summary>Unloads the package of <paramref name="package"/>'s name: its sources go with it. False — none such is loaded.</summary>
+    public bool Unload(string package)
+    {
+        lock (_loaded)
+        {
+            var index = _loaded.FindIndex(l => string.Equals(l.Extension.Package.Package, package, StringComparison.OrdinalIgnoreCase));
+            if (index < 0)
+            {
+                return false;
+            }
+
+            var (extension, context) = _loaded[index];
+            _loaded.RemoveAt(index);
+            foreach (var provider in extension.Providers)
+            {
+                _listed.TryRemove(provider.Id, out _);
+            }
+
+            context.Unload();
+            _logger.LogInformation("Unloaded extension {Package}.", extension.Package.Package);
+            return true;
+        }
+    }
+
+    /// <summary>Forgets the problem of a file that is no longer there.</summary>
+    public void ForgetProblem(string file)
+    {
+        lock (_loaded)
+        {
+            _problems.RemoveAll(p => p.File == file);
+        }
+    }
+
+    /// <summary>The galleries and Convy's own sources of the extensions (a provider's are its own listing): those enabled, each asked whether it can be used.</summary>
+    public async Task<IReadOnlyList<IContentSource>> GetSourcesAsync(CancellationToken cancellationToken)
     {
         var options = Options;
-        var sources = _loaded.SelectMany(l => l.Extension.Sources).Where(s => options.For(s.Id).Enabled).ToList<IContentSource>();
-        return Task.FromResult<IReadOnlyList<IContentSource>>(sources);
+        var extensions = Extensions;
+        var sources = extensions.SelectMany(e => e.Sources).Where(s => options.For(s.Id).Enabled).ToList();
+        await Task.WhenAll(sources.Select(s => s.CheckAsync(cancellationToken))).ConfigureAwait(false);
+        return extensions.SelectMany(e => e.Galleries).Where(s => options.For(s.Id).Enabled)
+            .Concat<IContentSource>(sources)
+            .ToList();
+    }
+
+    /// <summary>The sources a provider lists now: those enabled, each asked whether it can be used.</summary>
+    internal async Task<IReadOnlyList<IContentSource>> ListAsync(PackagedProvider provider, CancellationToken cancellationToken)
+    {
+        var options = Options;
+        if (!options.For(provider.Id).Enabled)
+        {
+            _listed.TryRemove(provider.Id, out _);
+            return [];
+        }
+
+        var taken = Extensions.SelectMany(e => e.Ids).ToHashSet(StringComparer.OrdinalIgnoreCase);
+        foreach (var (id, listed) in _listed.Where(l => !string.Equals(l.Key, provider.Id, StringComparison.OrdinalIgnoreCase)))
+        {
+            taken.UnionWith(listed.Select(s => s.Id));
+        }
+
+        var sources = await provider.ListAsync(taken, cancellationToken).ConfigureAwait(false);
+        _listed[provider.Id] = sources;
+        var enabled = sources.Where(s => options.For(s.Id).Enabled).ToList();
+        await Task.WhenAll(enabled.Select(s => s.CheckAsync(cancellationToken))).ConfigureAwait(false);
+        return enabled;
     }
 
     [MethodImpl(MethodImplOptions.NoInlining)]
     private void Activate(ExtensionPackage package, string file)
     {
-        var context = new ExtensionLoadContext(package);
+        var context = new ExtensionLoadContext(package, [typeof(Content.ContentSource).Assembly]);
         try
         {
-            var types = ExtensionTypes.Create(context.LoadMain(), package.Package);
+            var types = ExtensionTypes.Create(context.LoadMain(), package.Package, ContentTypes);
             foreach (var provider in types.Providers)
             {
-                _logger.LogInformation("{Package}: {Provider} is a provider of sources for Shizuka; Convy leaves it out.", package.Package, provider.Manifest.Id);
+                _logger.LogInformation("{Package}: {Provider} is a provider of sites for Shizuka; Convy leaves it out.", package.Package, provider.Manifest.Id);
             }
 
-            var taken = _loaded.SelectMany(l => l.Extension.Sources).Select(s => s.Id).ToHashSet(StringComparer.OrdinalIgnoreCase);
-            var sources = new List<ExtensionSource>();
+            var taken = _loaded.SelectMany(l => l.Extension.Ids).ToHashSet(StringComparer.OrdinalIgnoreCase);
+            foreach (var listed in _listed.Values)
+            {
+                taken.UnionWith(listed.Select(s => s.Id));
+            }
+
+            void Take(string id)
+            {
+                if (!taken.Add(id))
+                {
+                    throw new ExtensionLoadException($"{package.Package}: the source id '{id}' is already taken.");
+                }
+            }
+
+            var galleries = new List<ExtensionSource>();
             foreach (var source in types.Sources)
             {
                 var manifest = source.Manifest;
@@ -187,23 +337,37 @@ public sealed class ExtensionHost : ISourceProvider, IDisposable
                     continue;
                 }
 
-                if (!taken.Add(manifest.Id))
-                {
-                    throw new ExtensionLoadException($"{package.Package}: the source id '{manifest.Id}' is already taken.");
-                }
-
-                sources.Add(new ExtensionSource(source, package.Package, this, _loggers.CreateLogger($"Convy.Extensions.{manifest.Id}")));
+                Take(manifest.Id);
+                galleries.Add(new ExtensionSource(source, package.Package, this, _loggers.CreateLogger($"Convy.Extensions.{manifest.Id}")));
             }
 
-            if (sources.Count == 0)
+            var sources = new List<PackagedSource>();
+            var providers = new List<PackagedProvider>();
+            foreach (var hosted in types.Hosted)
+            {
+                Take(hosted.Manifest.Id);
+                switch (hosted.Instance)
+                {
+                    case Content.ContentSource source:
+                        sources.Add(new PackagedSource(source, package.Package, this, _loggers.CreateLogger($"Convy.Extensions.{hosted.Manifest.Id}")));
+                        break;
+                    case Content.ContentSourceProvider provider:
+                        providers.Add(new PackagedProvider(provider, package.Package, this, _loggers));
+                        break;
+                }
+            }
+
+            if (galleries.Count + sources.Count + providers.Count == 0)
             {
                 context.Unload();
-                _logger.LogInformation("Extension {File} has no source that downloads; not kept.", Path.GetFileName(file));
+                _logger.LogInformation("Extension {File} has nothing Convy runs; not kept.", Path.GetFileName(file));
                 return;
             }
 
-            _loaded.Add((new LoadedExtension(file, package, sources), context));
-            _logger.LogInformation("Loaded extension {File}: {Sources}.", Path.GetFileName(file), string.Join(", ", sources.Select(s => s.Id)));
+            var extension = new LoadedExtension(file, package, galleries, sources, providers);
+            _loaded.Add((extension, context));
+            _problems.RemoveAll(p => p.File == Path.GetFileName(file));
+            _logger.LogInformation("Loaded extension {File}: {Sources}.", Path.GetFileName(file), string.Join(", ", extension.Ids));
         }
         catch (Exception ex) when (ex is not ExtensionLoadException)
         {
@@ -217,14 +381,28 @@ public sealed class ExtensionHost : ISourceProvider, IDisposable
         }
     }
 
+    /// <summary>No reader of torrents: a host without one cannot list a torrent's files.</summary>
+    private sealed class NoTorrents : ITorrentMetadataService
+    {
+        public TorrentMetadata Parse(byte[] torrentFile) => throw new InvalidDataException("Torrents cannot be read here.");
+
+        public Task<TorrentMetadata> FetchAsync(string magnet, CancellationToken cancellationToken) =>
+            throw new SourceException(SourceErrorKind.Error, "Torrents cannot be read here.");
+    }
+
     public void Dispose()
     {
-        foreach (var (_, context) in _loaded)
+        lock (_loaded)
         {
-            context.Unload();
+            foreach (var (_, context) in _loaded)
+            {
+                context.Unload();
+            }
+
+            _loaded.Clear();
+            _listed.Clear();
         }
 
-        _loaded.Clear();
         foreach (var transport in _transports.Values)
         {
             transport.Dispose();

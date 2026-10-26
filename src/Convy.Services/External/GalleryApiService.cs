@@ -82,7 +82,7 @@ public sealed class GalleryApiService
             }
 
             var items = new List<ApiContentDto>();
-            var request = new SearchRequest(text, new CategorySearchSettings(_options.CurrentValue.Category, [], [])) { Gallery = search };
+            var request = new SearchRequest(text, new CategorySearchSettings(_options.CurrentValue.Category)) { Gallery = search };
             await foreach (var content in source.SearchAsync(request, ct).ConfigureAwait(false))
             {
                 items.Add(ApiContentDto.From(content));

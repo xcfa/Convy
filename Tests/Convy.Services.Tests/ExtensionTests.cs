@@ -132,6 +132,28 @@ internal static class Extensions
         return host;
     }
 
+    public static string ContentExtensionPath => Path.Combine(AppContext.BaseDirectory, "extensions", "Convy.Tests.ContentExtension.dll");
+
+    /// <summary>
+    /// A host over a temporary extensions folder holding the test extension of Convy's own API (a book catalog, a
+    /// service of indexers at <c>http://indexers.test</c>, peers), with <paramref name="web"/> as its sites.
+    /// </summary>
+    public static ExtensionHost ContentHost(FakeSiteHandler web, ExtensionsOptions? options = null, Convy.Sources.Torrents.ITorrentMetadataService? torrents = null)
+    {
+        var folder = Directory.CreateTempSubdirectory("convy-extensions-").FullName;
+        File.Copy(ContentExtensionPath, Path.Combine(folder, "Convy.Tests.ContentExtension.dll"));
+        options ??= new ExtensionsOptions();
+        options.Path = folder;
+        options.Settings.TryAdd("test-books", new ExtensionEntryOptions { Values = { ["token"] = "secret" } });
+        options.Settings.TryAdd("test-indexers", new ExtensionEntryOptions { Values = { ["url"] = "http://indexers.test", ["key"] = "indexer-key" } });
+        options.Settings.TryAdd("test-peers", new ExtensionEntryOptions { Values = { ["url"] = "http://peers.test" } });
+        var host = new ExtensionHost(
+            new StaticOptions<ExtensionsOptions>(options), new StaticOptions<CaptchaOptions>(new CaptchaOptions()), new FakeTime(), NullLoggerFactory.Instance,
+            _ => web, new FakeCaptchaService(), torrents);
+        host.LoadAll();
+        return host;
+    }
+
     public static async Task<ExtensionSource> GallerySource(ExtensionHost host) =>
         Assert.IsType<ExtensionSource>(Assert.Single(await host.GetSourcesAsync(CancellationToken.None)));
 }
@@ -152,7 +174,8 @@ public class ExtensionHostTests
         Assert.Equal(["gallery.test"], source.Manifest.Domains);
         Assert.Equal((true, 18, true), (source.Manifest.Nsfw, source.Manifest.DefaultAgeRating, source.Manifest.CanSearch));
         var filter = Assert.Single(source.Manifest.Filters);
-        Assert.Equal(("category", ["manga", "doujinshi"]), (filter.Key, filter.Options.Select(o => o.Value).ToArray()));
+        Assert.Equal("category", filter.Key);
+        Assert.Equal(["manga", "doujinshi"], filter.Options.Select(o => o.Value));
         Assert.Equal(["gallery.test"], host.Domains);
     }
 
@@ -209,7 +232,7 @@ public class ExtensionHostTests
         var folder = Directory.CreateTempSubdirectory("convy-extensions-").FullName;
         File.Copy(Extensions.TestExtensionPath, Path.Combine(folder, "good.dll"));
         File.WriteAllText(Path.Combine(folder, "broken.dll"), "not a dll");
-        File.Copy(typeof(Convy.Sources.Prowlarr.ProwlarrSource).Assembly.Location, Path.Combine(folder, "not-an-extension.dll"));
+        File.Copy(typeof(Convy.Sources.Torrents.MagnetUri).Assembly.Location, Path.Combine(folder, "not-an-extension.dll"));
         File.WriteAllText(Path.Combine(folder, "notes.txt"), "not a package either, and not looked at");
         using var host = new ExtensionHost(
             new StaticOptions<ExtensionsOptions>(new ExtensionsOptions { Path = folder }), new StaticOptions<CaptchaOptions>(new CaptchaOptions()),
@@ -340,6 +363,7 @@ public class ExtensionSourceTests
     {
         var metadata = new Shizuka.Sources.Abstractions.SourceMetadata
         {
+            ExternalId = "1",
             Url = new Uri("https://gallery.test/g/1"),
             Title = title,
             Volume = volume,

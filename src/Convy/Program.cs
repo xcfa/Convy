@@ -14,10 +14,8 @@ using Convy.Services.Jobs;
 using Convy.Services.Media;
 using Convy.Services.Storage;
 using Convy.Sources;
-using Convy.Sources.Prowlarr;
 using Convy.Sources.Slskd;
 using Convy.Sources.Torrents;
-using Convy.Sources.Opds;
 using Convy.Services.Downloaders.Opds;
 using Convy.Services.Downloaders.Gallery;
 using Convy.Services.External;
@@ -237,7 +235,7 @@ public class Program
 		builder.Services.AddSingleton<IDownloader, QBittorrentDownloader>();
 		builder.Services.AddSingleton<IDownloaderResolver, DownloaderResolver>();
 
-		// slskd is both a source (Soulseek search) and a downloader; both use one client.
+		// slskd downloads what the slskd source extension finds; its connection is set here, for the downloader.
 		var slskdOptions = builder.Configuration.GetSection(SlskdOptions.SectionName).Get<SlskdOptions>()
 		                   ?? new SlskdOptions();
 		builder.Services.AddSingleton(_ => new SlskdClient(
@@ -246,7 +244,6 @@ public class Program
 				BaseAddress = slskdOptions.IsConfigured ? new Uri(slskdOptions.Url!.TrimEnd('/') + "/api/v0/") : null,
 			},
 			slskdOptions));
-		builder.Services.AddSingleton<ISourceProvider, SoulseekSourceProvider>();
 		if (slskdOptions.IsConfigured)
 		{
 			builder.Services.AddSingleton<IDownloader, SlskdDownloader>();
@@ -274,32 +271,11 @@ public class Program
 		                              ?? new TorrentMetadataOptions());
 		builder.Services.AddSingleton<ITorrentMetadataService, TorrentMetadataService>();
 
-		// Prowlarr: one source per indexer. Its own HttpClient never follows redirects, because
-		// download links redirect to magnet: URIs (and must not leak the key to other hosts).
-		var prowlarrOptions = builder.Configuration.GetSection(ProwlarrOptions.SectionName).Get<ProwlarrOptions>()
-		                      ?? new ProwlarrOptions();
-		builder.Services.AddSingleton(prowlarrOptions);
-		builder.Services.AddSingleton(_ => new ProwlarrClient(
-			new HttpClient(new SocketsHttpHandler
-			{
-				AllowAutoRedirect = false,
-				PooledConnectionLifetime = TimeSpan.FromMinutes(5),
-			})
-			{
-				BaseAddress = prowlarrOptions.IsConfigured ? new Uri(prowlarrOptions.Url!.TrimEnd('/') + "/") : null,
-			},
-			prowlarrOptions));
-		builder.Services.AddSingleton<ISourceProvider, ProwlarrSourceProvider>();
-
-		// OPDS catalogs (Flibusta, …): one source per catalog, and Convy's own downloader for
-		// their books, which needs downloads_path on the same filesystem as the rule paths.
+		// Books of the sources that have Convy fetch their files (the OPDS extension's catalogs): Convy's own
+		// downloader, which needs downloads_path on the same filesystem as the rule paths.
 		var opdsOptions = builder.Configuration.GetSection(OpdsOptions.SectionName).Get<OpdsOptions>() ?? new OpdsOptions();
-		var opdsCatalogs = opdsOptions.Resolve(out var opdsProblems);
-		builder.Services.AddSingleton(new OpdsCatalogs(
-			opdsCatalogs.Select(c => new OpdsClient(c.Catalog, OpdsHttp.Create(c.Options))).ToList()));
-		builder.Services.AddSingleton<ISourceProvider, OpdsSourceProvider>();
 		var opdsDownloadsPath = string.IsNullOrWhiteSpace(opdsOptions.DownloadsPath) ? null : opdsOptions.DownloadsPath.Trim();
-		if (opdsCatalogs.Count > 0 && opdsDownloadsPath is not null)
+		if (opdsDownloadsPath is not null)
 		{
 			builder.Services.AddSingleton<IOpdsDownloadStore, EfOpdsDownloadStore>();
 			builder.Services.AddSingleton<OpdsDownloadQueue>();
@@ -387,16 +363,6 @@ public class Program
 		}
 
 		await app.Services.GetRequiredService<WebhookCatalog>().ReloadAsync(CancellationToken.None);
-
-		foreach (var problem in opdsProblems)
-		{
-			app.Logger.LogWarning("{Problem} The catalog is not used.", problem);
-		}
-
-		if (opdsCatalogs.Count > 0 && opdsDownloadsPath is null)
-		{
-			app.Logger.LogWarning("opds.downloads_path is not set: books can be found but not downloaded.");
-		}
 
 		// Extensions load once, before the sources are first listed; a broken package is logged and skipped.
 		var extensions = app.Services.GetRequiredService<ExtensionHost>();

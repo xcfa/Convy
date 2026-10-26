@@ -41,8 +41,8 @@ public sealed record SourceProviderError(string Provider, string Message, int Kn
 /// <remarks>
 /// Asks every <see cref="ISourceProvider"/> (all at once) and keeps the combined list. A
 /// listing older than five minutes is still served while <see cref="RunAsync"/> makes a new
-/// one in the background: listing asks Prowlarr, slskd and every OPDS catalog, which can take
-/// long (Flibusta), and neither a page of the UI nor a search should wait for it.
+/// one in the background: listing asks every source whether it can be used (Prowlarr, slskd, an
+/// OPDS catalog), which can take long (Flibusta), and neither a page of the UI nor a search should wait for it.
 /// A provider that fails keeps its last known sources, so a short outage does not make
 /// categories lose their sources; the failure itself surfaces when such a source is searched.
 /// </remarks>
@@ -151,7 +151,8 @@ public sealed class SourceRegistry : ISourceRegistry, IDisposable
                 return current;
             }
 
-            var listings = await Task.WhenAll(_providers.Select(p => ListAsync(p, cancellationToken))).ConfigureAwait(false);
+            var providers = _providers.SelectMany(p => p is ISourceProviderGroup group ? group.Providers : [p]).ToList();
+            var listings = await Task.WhenAll(providers.Select(p => ListAsync(p, cancellationToken))).ConfigureAwait(false);
 
             var sources = new List<IContentSource>();
             var errors = new List<SourceProviderError>();

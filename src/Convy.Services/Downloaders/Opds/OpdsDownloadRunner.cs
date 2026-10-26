@@ -1,6 +1,6 @@
 using System.IO.Compression;
+using Convy.Services.Media;
 using Convy.Sources;
-using Convy.Sources.Opds;
 using Microsoft.Extensions.Logging;
 
 namespace Convy.Services.Downloaders.Opds;
@@ -15,19 +15,22 @@ public sealed class OpdsDownloadRunner
 {
     public const int MaxAttempts = 3;
 
+    /// <summary>The largest file of a book.</summary>
+    private const long MaxFileBytes = 2L * 1024 * 1024 * 1024;
+
     private static readonly TimeSpan[] RetryDelays = [TimeSpan.FromMinutes(1), TimeSpan.FromMinutes(5)];
 
     private readonly IOpdsDownloadStore _store;
-    private readonly OpdsCatalogs _catalogs;
+    private readonly ISourceRegistry _sources;
     private readonly OpdsDownloadQueue _queue;
     private readonly TimeProvider _timeProvider;
     private readonly ILogger<OpdsDownloadRunner> _logger;
 
     public OpdsDownloadRunner(
-        IOpdsDownloadStore store, OpdsCatalogs catalogs, OpdsDownloadQueue queue, TimeProvider timeProvider, ILogger<OpdsDownloadRunner> logger)
+        IOpdsDownloadStore store, ISourceRegistry sources, OpdsDownloadQueue queue, TimeProvider timeProvider, ILogger<OpdsDownloadRunner> logger)
     {
         _store = store;
-        _catalogs = catalogs;
+        _sources = sources;
         _queue = queue;
         _timeProvider = timeProvider;
         _logger = logger;
@@ -48,10 +51,10 @@ public sealed class OpdsDownloadRunner
             return;
         }
 
-        if (_catalogs.Find(download.CatalogId) is not { } client)
+        if (await _sources.FindAsync(download.CatalogId, cancellationToken).ConfigureAwait(false) is not IFileSource source)
         {
             await UpdateAsync(
-                    download with { State = OpdsDownloadState.Failed, Error = $"The OPDS catalog '{download.CatalogId}' is not configured." },
+                    download with { State = OpdsDownloadState.Failed, Error = $"The source '{download.CatalogId}' is not installed or not enabled." },
                     download.State)
                 .ConfigureAwait(false);
             return;
@@ -72,7 +75,7 @@ public sealed class OpdsDownloadRunner
             long bytes;
             try
             {
-                bytes = await DownloadFileAsync(client, download, file, cancellationToken).ConfigureAwait(false);
+                bytes = await DownloadFileAsync(source, download, file, cancellationToken).ConfigureAwait(false);
             }
             catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
             {
@@ -102,10 +105,10 @@ public sealed class OpdsDownloadRunner
 
         _logger.LogInformation(
             "Downloaded {Files} from {Catalog} into {Directory}.",
-            string.Join(", ", download.WantedFiles.Select(f => f.Name)), client.Catalog.Name, Path.Combine(download.SavePath, download.Folder));
+            string.Join(", ", download.WantedFiles.Select(f => f.Name)), source.Name, Path.Combine(download.SavePath, download.Folder));
     }
 
-    private async Task<long> DownloadFileAsync(OpdsClient client, OpdsDownload download, OpdsDownloadFile file, CancellationToken cancellationToken)
+    private async Task<long> DownloadFileAsync(IFileSource source, OpdsDownload download, OpdsDownloadFile file, CancellationToken cancellationToken)
     {
         var folder = Path.Combine(download.SavePath, download.Folder);
         Directory.CreateDirectory(folder);
@@ -114,29 +117,24 @@ public sealed class OpdsDownloadRunner
 
         // A file may take a while (a large PDF, a slow catalog), but not forever.
         using var deadline = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
-        deadline.CancelAfter(client.Catalog.Timeout * 3);
+        deadline.CancelAfter((source.Timeout ?? TimeSpan.FromMinutes(1)) * 3);
 
         try
         {
-            using (var response = await client.GetFileAsync(new Uri(file.Url), deadline.Token).ConfigureAwait(false))
+            await using (var output = new ProgressStream(
+                             new FileStream(part, FileMode.Create, FileAccess.Write, FileShare.None, 81920, useAsync: true),
+                             total => _queue.ReportProgress(download.ItemRef, total)))
             {
-                var mediaType = response.Content.Headers.ContentType?.MediaType;
+                var (fits, _, mediaType) = await source.FetchFileAsync(new Uri(file.Url), output, MaxFileBytes, deadline.Token).ConfigureAwait(false);
+                if (!fits)
+                {
+                    throw new IOException($"{file.Name} is larger than {MaxFileBytes / (1024 * 1024)} MB.");
+                }
+
                 if (mediaType is "text/html" or "application/xhtml+xml")
                 {
                     throw new SourceException(SourceErrorKind.Error,
-                        $"{client.Catalog.Name} sent a web page instead of {file.Name} (it may still be converting the book, or the book was removed).");
-                }
-
-                await using var body = await response.Content.ReadAsStreamAsync(deadline.Token).ConfigureAwait(false);
-                await using var output = new FileStream(part, FileMode.Create, FileAccess.Write, FileShare.None, 81920, useAsync: true);
-                var buffer = new byte[81920];
-                long total = 0;
-                int read;
-                while ((read = await body.ReadAsync(buffer, deadline.Token).ConfigureAwait(false)) > 0)
-                {
-                    await output.WriteAsync(buffer.AsMemory(0, read), deadline.Token).ConfigureAwait(false);
-                    total += read;
-                    _queue.ReportProgress(download.ItemRef, total);
+                        $"{source.Name} sent a web page instead of {file.Name} (it may still be converting the book, or the book was removed).");
                 }
             }
 
@@ -255,6 +253,61 @@ public sealed class OpdsDownloadRunner
         catch (IOException)
         {
             // Left behind; overwritten by the next attempt.
+        }
+    }
+
+    /// <summary>A stream that tells how much was written so far.</summary>
+    private sealed class ProgressStream(Stream inner, Action<long> report) : Stream
+    {
+        private long _written;
+
+        public override bool CanRead => false;
+        public override bool CanSeek => false;
+        public override bool CanWrite => true;
+        public override long Length => _written;
+        public override long Position { get => _written; set => throw new NotSupportedException(); }
+
+        public override void Write(byte[] buffer, int offset, int count)
+        {
+            inner.Write(buffer, offset, count);
+            Advance(count);
+        }
+
+        public override async ValueTask WriteAsync(ReadOnlyMemory<byte> buffer, CancellationToken cancellationToken = default)
+        {
+            await inner.WriteAsync(buffer, cancellationToken).ConfigureAwait(false);
+            Advance(buffer.Length);
+        }
+
+        public override Task WriteAsync(byte[] buffer, int offset, int count, CancellationToken cancellationToken) =>
+            WriteAsync(buffer.AsMemory(offset, count), cancellationToken).AsTask();
+
+        public override void Flush() => inner.Flush();
+        public override Task FlushAsync(CancellationToken cancellationToken) => inner.FlushAsync(cancellationToken);
+        public override int Read(byte[] buffer, int offset, int count) => throw new NotSupportedException();
+        public override long Seek(long offset, SeekOrigin origin) => throw new NotSupportedException();
+        public override void SetLength(long value) => throw new NotSupportedException();
+
+        protected override void Dispose(bool disposing)
+        {
+            if (disposing)
+            {
+                inner.Dispose();
+            }
+
+            base.Dispose(disposing);
+        }
+
+        public override async ValueTask DisposeAsync()
+        {
+            await inner.DisposeAsync().ConfigureAwait(false);
+            await base.DisposeAsync().ConfigureAwait(false);
+        }
+
+        private void Advance(int count)
+        {
+            _written += count;
+            report(_written);
         }
     }
 }
