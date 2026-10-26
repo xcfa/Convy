@@ -154,8 +154,10 @@ serilog:
 # extensions:
 #   path: /data/extensions
 #   trusted: false                  # true skips the package audit (own packages only)
-#   indexes:                        # where the Sources page finds packages
-#     - https://example.org/convy/index.json
+#   indexes:                        # where the Sources page finds packages (read-only there)
+#     - url: https://example.org/convy/index.json
+#       # username: …  password: …    # basic authentication, or
+#       # token: …                    # a bearer token (only to the index's own host)
 #   settings:
 #     prowlarr:                     # a source's or a provider's id
 #       values:                     # its own settings, as its manifest lists them

@@ -8,7 +8,7 @@ using Microsoft.Extensions.Logging;
 namespace Convy.Services.Downloaders.Gallery;
 
 /// <summary>
-/// Convy's own downloader for galleries from plugin sources (<see cref="Protocol.Gallery"/>). A gallery is stored as
+/// Convy's own downloader for galleries from site sources (<see cref="Protocol.Gallery"/>). A gallery is stored as
 /// <c>&lt;downloads_path&gt;/&lt;source&gt;/&lt;key&gt;/&lt;Title&gt;/&lt;Title&gt;.cbz</c>; the background worker fetches
 /// its pages through the source and zips them, and the sync cycle places the archive like any other download (the
 /// <c>Title</c> folder is the root a job's sub-path replaces). The same archive is what the REST API streams to Shizuka.

@@ -29,6 +29,9 @@ public interface ISourceRegistry
     /// sources are still served by <see cref="GetSourcesAsync"/>.
     /// </summary>
     IReadOnlyList<SourceProviderError> ProviderErrors { get; }
+
+    /// <summary>Lists the sources now, however fresh the last listing is (an extension was installed or set up).</summary>
+    Task RefreshNowAsync(CancellationToken cancellationToken);
 }
 
 /// <summary>A provider that could not list its sources.</summary>
@@ -126,6 +129,8 @@ public sealed class SourceRegistry : ISourceRegistry, IDisposable
     /// <summary>Lists the sources of every provider, unless the last listing is still fresh.</summary>
     public Task RefreshAsync(CancellationToken cancellationToken) => RefreshSnapshotAsync(cancellationToken);
 
+    public Task RefreshNowAsync(CancellationToken cancellationToken) => RefreshSnapshotAsync(cancellationToken, force: true);
+
     public void Dispose() => _refreshGate.Dispose();
 
     private async Task RefreshLoggedAsync(CancellationToken stoppingToken)
@@ -140,13 +145,13 @@ public sealed class SourceRegistry : ISourceRegistry, IDisposable
         }
     }
 
-    private async Task<Snapshot> RefreshSnapshotAsync(CancellationToken cancellationToken)
+    private async Task<Snapshot> RefreshSnapshotAsync(CancellationToken cancellationToken, bool force = false)
     {
         await _refreshGate.WaitAsync(cancellationToken).ConfigureAwait(false);
         try
         {
             // Someone else may have listed them while this caller waited.
-            if (_snapshot is { } current && IsFresh(current))
+            if (!force && _snapshot is { } current && IsFresh(current))
             {
                 return current;
             }

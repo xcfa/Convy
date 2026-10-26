@@ -26,6 +26,9 @@ jobs:
 
       - name: Build and test
         run: dotnet test Convy.slnx -c Release
+        env:
+          # Shizuka.Sources.* from GitHub Packages (nuget.config): a token with read:packages.
+          PACKAGES_TOKEN: ${{ secrets.PACKAGES_TOKEN }}
 
   docker:
     needs: test
@@ -86,6 +89,8 @@ jobs:
           labels: ${{ steps.meta.outputs.labels }}
           build-args: |
             VERSION=${{ env.APP_VERSION }}
+          secrets: |
+            packages_token=${{ secrets.PACKAGES_TOKEN }}
           cache-from: type=gha
           cache-to: type=gha,mode=max
 

@@ -198,8 +198,8 @@ as before):
   "category": "music",
   "rule": "music",
   "title": "…",
-  "origin": { "source": "prowlarr:3", "url": "https://tracker.example/topic/42", "query": "evanescence fallen" },
-  "origin_source": "prowlarr:3",
+  "origin": { "source": "prowlarr-3", "url": "https://tracker.example/topic/42", "query": "evanescence fallen" },
+  "origin_source": "prowlarr-3",
   "origin_url": "https://tracker.example/topic/42",
   "origin_query": "evanescence fallen",
   "instruction": null,
@@ -213,7 +213,7 @@ as before):
 ```
 
 `origin` says where the release comes from: `source` is the id of the source that found it
-(`prowlarr:<indexer>`, `soulseek`, `opds:<id>`), `url` is the release page for a human (Prowlarr's
+(`prowlarr-<indexer>`, `slskd`, `flibusta`, …), `url` is the release page for a human (Prowlarr's
 `infoUrl`; not the download link), `query` is the first query that found it. Any part may be `null`
 (Soulseek has no page); `origin` itself is `null` when nothing is known. A job with several releases
 lists each release's `origin` under `releases` and has its own only when they all agree. `params`
@@ -324,24 +324,25 @@ files and starts the download; Convy adds it to the download client right away a
 places the files with the same rules as everything else. Choosing a release is the agent's
 job — Convy does not parse release names.
 
-Sources in this version: torrent trackers through **Prowlarr** (one source per indexer, id
-`prowlarr:<indexer id>`), **Soulseek** through slskd (id `soulseek`) and **OPDS catalogs** such
-as Flibusta (id `opds:<catalog id>`). Torrents are downloaded by qBittorrent, Soulseek folders
-by slskd, books from OPDS catalogs by Convy itself.
+Nothing is searched by Convy itself: every source is an extension package (see
+[Sources](#sources-extension-packages)): torrent trackers through **Prowlarr** (one source per
+indexer, id `prowlarr-<indexer id>`), **Soulseek** through slskd (id `slskd`), **OPDS catalogs**
+such as Flibusta (id `flibusta`) and manga and comics **sites**. Convy keeps only the downloaders:
+torrents go to qBittorrent, Soulseek folders to slskd, books and galleries are downloaded by
+Convy itself.
 
 ### Connecting
 
 | Variable | Purpose |
 | --- | --- |
 | `MCP__APIKEY` | Key the agent must send as `X-Api-Key` or `Authorization: Bearer`. Without it `/mcp` answers `503`. |
-| `PROWLARR__URL`, `PROWLARR__APIKEY` | Prowlarr connection. Without them no tracker source is offered. |
-| `SLSKD__URL`, `SLSKD__APIKEY` | slskd connection. Without them there is no Soulseek source and no slskd downloader. |
+| `SLSKD__URL`, `SLSKD__APIKEY` | slskd connection of the downloader. Without them Soulseek folders cannot be downloaded (the `slskd` source has its own address and key in its settings). |
 | `SLSKD__DOWNLOADSPATH` | Optional: slskd's downloads directory as seen inside Convy, when it differs from slskd's own `directories.downloads`. |
 | `TORRENTMETADATA__CACHEDIRECTORY`, `TORRENTMETADATA__DHTPORT` | Optional: DHT cache directory and UDP port (0 = any) used to read magnet metadata. |
 | `HTTPS_PROXY`, `HTTP_PROXY`, `ALL_PROXY`, `NO_PROXY` | Optional proxy for Convy's outgoing requests, see below. |
 
-**Outgoing proxy.** Every request Convy makes (OPDS catalogs, Prowlarr, slskd, qBittorrent,
-webhooks, the sign-in provider) uses the standard proxy variables as .NET reads them:
+**Outgoing proxy.** Every request Convy makes (the sources, slskd, qBittorrent, webhooks, the
+sign-in provider, the indexes of packages) uses the standard proxy variables as .NET reads them:
 
 - `HTTPS_PROXY` is for `https://` addresses and `HTTP_PROXY` only for `http://` ones; `ALL_PROXY`
   covers both. With only `HTTP_PROXY` set, Flibusta (`https://`) is reached directly.
@@ -351,8 +352,8 @@ webhooks, the sign-in provider) uses the standard proxy variables as .NET reads 
   `example.org` without the dot matches only that host.
 - Prowlarr, slskd and qBittorrent are usually reached by container name, so list them, or a set
   proxy will be asked for them too: `NO_PROXY=localhost,prowlarr,slskd,qbittorrent,.example.org`.
-- A catalog's own `proxy` (see [OPDS catalogs](#opds-catalogs-flibusta)) replaces the environment's
-  for that catalog.
+- A source's own `proxy` (its settings on the Sources page, or `extensions.settings.<id>.proxy`)
+  replaces the environment's for that source.
 
 The About page shows the proxy in effect and flags the `NO_PROXY` entries .NET ignores.
 
@@ -421,7 +422,9 @@ that matches nothing, …) comes back as a tool error with the reason.
    returns at most `search.max_results` results ("shown N of M").
 4. Each source reports `ok`, `empty`, `timeout`, `auth_failed` or `error`. A Prowlarr indexer
    that answers with nothing but is failing (it shows up in Prowlarr's indexer status) is
-   reported as `error`, not `empty`.
+   reported as `error`, not `empty`. A category's `options` pass a source what its package
+   documents (Prowlarr's Newznab `categories`, slskd's file `extensions`, …), by the id of the
+   source or of its provider (`prowlarr` for every indexer); the source's own entry wins.
 5. If nothing fits, the agent calls `search_next` for the next batch. Results already shown
    are not repeated.
 
@@ -430,8 +433,9 @@ opaque `result_id`s; the agent never sees URLs, magnet links or credentials.
 
 ### File lists and file selection
 
-`list_files` reads the file list without starting a download: a `.torrent` is fetched through
-the Prowlarr proxy and parsed; for magnet-only releases the metadata is fetched from the swarm
+`list_files` reads the file list without starting a download (a source may list the files
+itself); a `.torrent` is fetched from the source, with its key, only from the source's own hosts
+(a redirect to a magnet is that magnet) and parsed; for magnet-only releases the metadata is fetched from the swarm
 (DHT and the magnet's trackers) by an embedded client — nothing is added to qBittorrent. If the
 list does not arrive within `files.metadata_timeout_sec`, the answer is `timeout` and nothing
 keeps loading in the background.
@@ -443,8 +447,9 @@ an error. For qBittorrent the selection becomes file priorities set before the t
 
 ### Soulseek
 
-A Soulseek result is one user's folder: search hits are grouped by user and remote folder
-and filtered by the category's `soulseek.extensions`; availability shows the peer's free
+A Soulseek result (the `slskd` source of the `Convy.Sources.Slskd` package) is one user's
+folder: search hits are grouped by user and remote folder and filtered by the category's
+`options.slskd.extensions`; availability shows the peer's free
 upload slot, queue length and speed instead of seeders. A result includes the folder's subfolders (`CD2`,
 `Scans`), and disc folders found by the search (`CD1`, `Disc 2`) are grouped into one release.
 `list_files` browses the folder (adding the search hits, or relying on them when the peer
@@ -467,71 +472,43 @@ Before adding, Convy checks the per-job size limit (`jobs.max_size_gb`) and the 
 the client's download directory (`jobs.min_free_space_gb` is kept free). Asking the user before
 downloading is up to the agent's instructions, not the service.
 
-### OPDS catalogs (Flibusta)
+### Books (OPDS catalogs, Flibusta)
 
 [OPDS](https://specs.opds.io/) is the catalog format of e-book libraries (Flibusta, Calibre,
-Project Gutenberg, …). Each catalog in the `opds` section of `configuration.yml` becomes a
-source `opds:<id>`:
+Project Gutenberg, …). The catalogs are sources of the `Convy.Sources.Opds` package (`flibusta`
+and a catalog of your own; their settings are on the Sources page); Convy downloads their books:
 
 ```yaml
 opds:
   downloads_path: /data/downloads/opds   # same filesystem as the rule paths (hard links)
-  catalogs:
-    - id: flibusta
-      type: flibusta                      # Flibusta's search and author pages are preset
-      # url: https://flibusta.site/opds   # the default for type flibusta; any mirror works
-      # formats: [epub, fb2]              # preferred formats, in order (the default)
-      # unzip_fb2: true                   # store .fb2 rather than Flibusta's .fb2.zip
-      # timeout_sec: 120                  # Flibusta often needs a minute per search
-      # author_pages: 3                   # pages of 20 books read per author found
-      # proxy: socks5://tor:9050          # optional, e.g. Tor for a blocked catalog
-    - id: calibre
-      type: opds                          # any other OPDS 1.x catalog, e.g. Calibre-Web
-      url: https://calibre.example.com/opds
 ```
 
-- **Search.** A result is one book: `Authors — Title (year, language) [formats]`. The query is
-  searched as a title and, for `type: flibusta` (or with `author_search_url`), as an author
-  name too: the books of the authors found (those with the most books, up to `author_pages`
-  pages each) come back as results as well. So an agent searches for "Пикник на обочине" and
-  "Стругацкий" as two variants. Generic catalogs use the search their root feed announces
-  (`search_url` overrides it). Searches are slow on Flibusta, so the catalog's `timeout_sec`
-  replaces `search.source_timeout_sec` for it; results that arrived before the timeout are kept.
+- **Search.** A result is one book: `Authors — Title (year, language) [formats]`. Flibusta is
+  searched by title and by author: the books of the authors found come back as results as well,
+  so an agent searches for "Пикник на обочине" and "Стругацкий" as two variants. Searches are
+  slow on Flibusta, so its timeout (the source's `timeout_sec`, 120 by default) replaces
+  `search.source_timeout_sec` for it; results that arrived before the timeout are kept.
 - **Formats.** `list_files` shows a book's formats as files (`Author - Title.epub`, `.fb2`,
-  `.mobi`, …). `download` without `include` takes the first available of `formats`; if that one
-  keeps failing (Flibusta converts EPUB on the fly and sometimes answers with a web page), the
-  next one is tried. `include: ["*.mobi"]` picks a format explicitly, without fallback.
-- **Downloading.** Convy downloads books itself, one at a time, into
-  `<downloads_path>/<catalog>/<book>/<Author - Title>/`, and unpacks FB2 archives. A failed file
-  is tried again after 1 and 5 minutes (the job shows `stalled` meanwhile), then the job fails.
-  Unfinished downloads resume after a restart. The job is placed like any other: the rules see
-  the category's client category as `Category` (`Provider == opds`), and `subpath` replaces the
-  `Author - Title` folder. Cleaning up `downloads_path` after placement is left to you.
-- **Access.** Flibusta's mirrors differ in what works: `https://flibusta.site/opds` answers over
-  HTTPS, `flibusta.is` only over plain HTTP. A `proxy` (`http://`, `socks5://`) is used for the
-  catalog's searches and downloads; `username`/`password` are sent as HTTP basic authentication
-  (pass the password as a Docker secret, e.g. `Opds__catalogs__0__password`).
+  `.mobi`, …). `download` without `include` takes the first available of the source's preferred
+  formats; if that one keeps failing (Flibusta converts EPUB on the fly and sometimes answers with
+  a web page), the next one is tried. `include: ["*.mobi"]` picks a format explicitly, without
+  fallback.
+- **Downloading.** Convy downloads books itself, through the source (its hosts, proxy and
+  credentials), one at a time, into `<downloads_path>/<source>/<book>/<Author - Title>/`, and
+  unpacks FB2 archives when the source asks for it. A failed file is tried again after 1 and 5
+  minutes (the job shows `stalled` meanwhile), then the job fails; so does a job whose source was
+  removed or disabled. Unfinished downloads resume after a restart. The job is placed like any
+  other: the rules see the category's client category as `Category` (`Provider == opds`), and
+  `subpath` replaces the `Author - Title` folder. Cleaning up `downloads_path` after placement is
+  left to you.
 
-### Gallery plugins (manga and comics sites)
+### Galleries (manga and comics sites)
 
-Sites that serve galleries of pages (e-hentai, MangaDex, …) are not built in: they come as
-**plugins**, DLLs or zips dropped into `plugins.path` (`/data/plugins` by default) and loaded at
-startup, each in its own isolated load context. The plugins for the known sites are published
-from [xcfa/common-packages](https://github.com/xcfa/common-packages); the API they implement is the
-NuGet package `Convy.Sources.Abstractions` (GitHub Packages, tag `sources-api-v*`).
+Sites that serve galleries of pages (e-hentai, MangaDex, …) are the same extension packages
+Shizuka installs; Convy uses their sources that can download. A gallery is downloaded by Convy
+itself:
 
 ```yaml
-plugins:
-  path: /data/plugins          # the default
-  # trusted: false             # true skips the package audit: only for plugins you built yourself
-  settings:                    # per plugin, by its id; hot-reloaded (path, trusted and a proxy need a restart)
-    e-hentai:
-      # enabled: true
-      proxy: socks5://tor:9050 # optional
-      timeout_sec: 60
-      values:                  # the plugin's own settings, as its manifest lists them
-        cookies: ipb_member_id=…; ipb_pass_hash=…   # a Docker secret: Plugins__settings__e-hentai__values__cookies
-
 gallery:
   downloads_path: /data/downloads/gallery   # same filesystem as the rule paths (hard links)
   # category: other            # for jobs started through the REST API without a category
@@ -539,22 +516,12 @@ gallery:
   # page_timeout_sec: 120
 ```
 
-- **Audit.** A package from outside is checked before it is loaded: every DLL's metadata is
-  read and a package that opens its own connections (`HttpClient`, sockets), touches files,
-  processes, the environment or native code, or loads assemblies by name is refused and shown
-  as a problem of the plugin. A plugin talks to its sites only through the HTTP client the host
-  gives it, which allows the domains of the plugin's manifest alone (every hop of a redirect
-  included) and applies the plugin's rate limit, proxy and timeout. `trusted: true` turns the
-  audit off.
-- **Sources.** Each plugin's sources join the others (`get_sources`, categories' `sources:`), so
-  an agent searches and downloads from them like from Prowlarr. A gallery is downloaded by
-  Convy itself into `<downloads_path>/<source>/<key>/<title>/<title>.cbz`, pages in parallel
-  (`parallel_pages`); a failed page is retried after 1 and 5 minutes, then the job fails.
-  Unfinished downloads resume after a restart. Without `gallery.downloads_path` the sources
-  can be searched but nothing is downloaded.
+- **Downloading.** A gallery goes into `<downloads_path>/<source>/<key>/<title>/<title>.cbz`,
+  pages in parallel (`parallel_pages`); a failed page is retried after 1 and 5 minutes, then the
+  job fails. Unfinished downloads resume after a restart. Without `gallery.downloads_path` the
+  sources can be searched but nothing is downloaded.
 - **Metadata.** A result carries the site's metadata as `properties` (title, tags, artists,
-  language, pages, …) with the vocabulary of `SiteProperties` in common-packages, so a client
-  such as Shizuka can import a gallery with its tags.
+  language, pages, …), so a client such as Shizuka can import a gallery with its tags.
 
 #### REST API for other services
 
@@ -573,7 +540,7 @@ through a small REST API behind the MCP key (`MCP__APIKEY`, as `X-Api-Key` or
 | `/api/captcha/…` | the API of the service of checks, relayed with Convy's key (see [Bot checks](#bot-checks-and-captchas)) |
 
 Errors are `{ "error": "…" }` with `400` (a bad request: a missing parameter, a source that
-does not browse asked without `q`, an unknown category), `401` (the site refused the plugin's
+does not browse asked without `q`, an unknown category), `401` (the site refused the source's
 credentials), `403` (the site asks to prove this is not a robot: `challengeUrl` names the page,
 and `challengeId` the check that waits for a person at the service of checks), `404`
 (unknown source, job or link), `409` (the same release is already being downloaded by a job
@@ -592,29 +559,29 @@ captcha:
   url: http://captcha-solver:8191/
   key: …            # a key with the solve and solver scopes; a Docker secret: Captcha__key
   # wait_sec: 25    # how long a request waits for a check to be passed
-  # profile: convy  # Convy's own browser profiles there: <domain>#convy.<plugin>
+  # profile: convy  # Convy's own browser profiles there: <domain>#convy.<source>
 ```
 
-- **A plugin's request** that gets a check is handed to the service (`POST /solve`). Its browser,
+- **An extension's request** that gets a check is handed to the service (`POST /solve`). Its browser,
   on the same IP, usually passes it by itself; the request then goes again with the browser's
-  cookies and User-Agent, for every plugin from then on (only the check's own cookies, such as
+  cookies and User-Agent, for every extension from then on (only the check's own cookies, such as
   `cf_clearance`, are taken). A site that still shows the check to those cookies (it looks at the
-  TLS too) is asked through the service's browser (`POST /fetch`). The plugin's own cookies (a
-  sign-in) go along in the plugin's own profile at the service and reach no other plugin, no
+  TLS too) is asked through the service's browser (`POST /fetch`). The extension's own cookies (a
+  sign-in) go along in its own profile at the service and reach no other extension, no
   client of Convy and no other client of the service.
 - **A check that needs a person** waits at the service for `wait_sec`; then the request fails
   with the check, which stays open there: a person passes it in Convy's web UI, in a client's
   window (Shizuka's banner) or from the service's notification, and the next request takes its
   cookies. A call of
   the REST API (and a search) waits only as long as its source's time allows and answers `403` with
-  `challengeId`. A site's own captcha a plugin reports is handed to the service the same way.
+  `challengeId`. A site's own captcha an extension reports is handed to the service the same way.
 - **Clients.** `/api/captcha` relays the service's API with Convy's key, behind the MCP key and
   the IP allow-list: Shizuka set up with `http://convy:8080/api/captcha/` and Convy's MCP key
   registers its tabs as solvers and shows the page of a check through Convy, while the cookies
   stay with Convy, which is the one that talks to the sites. A client cannot name Convy's own
   profiles, and answers about Convy's checks come without their cookies. A reverse proxy in
   front of Convy must pass WebSockets on `/api/captcha/`.
-- **The web UI.** While it is open, its tab is a solver at the service for the plugins' domains:
+- **The web UI.** While it is open, its tab is a solver at the service for the extensions' domains:
   a check that needs a person is a banner under the top bar, and «Pass» opens a window with the
   page of the check in the service's browser (clicks, the wheel and keys go there). The tab's
   sockets (`/api/ui/captcha/`) are behind the UI's sign-in and take only the window's messages;
@@ -623,24 +590,82 @@ captcha:
 Without `captcha.url` a check is reported as the source's error («asks to prove this is not a
 robot»), and a gallery download retries it like any other failure.
 
-#### Writing a plugin
+## Sources (extension packages)
 
-A plugin is a class library referencing `Convy.Sources.Abstractions` with
-`ExcludeAssets="runtime"` (the host provides the assembly), with one public `SourcePlugin`:
+Every source is an extension package: a `.zip` (or a single `.dll`) in `extensions.path`, loaded
+at startup and on install, each in its own load context. One package format, index and loader
+(`Shizuka.Sources.Hosting`) serve both Convy and [Shizuka](https://github.com/xcfa/shizuka):
 
-- `Manifest` — `Id` (lower case, the key under `plugins.settings`), `Name`, `Domains` the plugin
-  may talk to, `Settings` the user can fill in (`PluginSetting`, secret or required),
-  `RequestsPerSecond`.
-- `CreateSources(IPluginContext context)` — the sources; `context.Http` sends requests
-  (`SendAsync(request, streaming, ct)`), `context.Settings.Get(key)` reads the current value of
-  a setting, `context.Html.Parse(html)` parses a page (CSS selectors), `context.Log` writes to Convy's log.
-- A source implements `IGallerySource` (`IContentSource` plus `Manifest`, `ResolveUrlAsync`,
-  `GetPagesAsync`, `GetImageUrlAsync`, `OpenImageAsync`, optionally `RetryImageUrlAsync` for a
-  second image server) and returns a `GalleryPayload` from `ResolveAsync`; `IGalleryBrowser`
-  adds browsing with a language, filters and a page token. A site asking for a captcha is
-  reported as `SourceErrorKind.Challenge` with `ChallengeUrl`.
-- Dependencies beyond the BCL go into the zip next to the DLL; everything else the audit refuses.
-  `Tests/Convy.Sources.TestPlugin` is a complete example over a fake site.
+- **Sites** (e-hentai, MangaDex, nhentai, …) implement Shizuka's API, `Shizuka.Sources.Abstractions`.
+  Shizuka imports their metadata; Convy uses their sources that can download (galleries).
+- **Convy's own sources** (`Convy.Sources.Prowlarr`, `Convy.Sources.Slskd`, `Convy.Sources.Opds`)
+  implement `Convy.Sources.Abstractions`, built on the same API. Shizuka does not load them: the
+  index marks them `"apps": ["convy"]` and their `requires` names Convy's API.
+
+The packages are published from [xcfa/common-packages](https://github.com/xcfa/common-packages),
+with an `index.json` that lists them; its README documents each package's settings.
+
+### The Sources page
+
+The web UI's **Sources** tab lists the installed packages with their sources (a provider such as
+Prowlarr with the sources it lists), their state and the reason a source cannot be used; it
+installs, updates and removes packages from the indexes or from a file, and edits a source's
+settings: its own values (secrets are never shown back, only "saved"), a sign-in for sites that
+have one, a proxy and a timeout. Changes apply at once (a proxy needs a restart). The page saves
+into the settings database, over `configuration.yml`; the same can be written there:
+
+```yaml
+extensions:
+  path: /data/extensions          # the default
+  # trusted: false                # true skips the package audit: only for packages you built yourself
+  indexes:                        # shown read-only on the page; more can be added there
+    - url: https://example.org/packages/index.json
+      # username: …  password: …  # basic authentication, or token: … (a bearer token)
+  settings:                       # per source or provider, by its id
+    prowlarr:
+      values:                     # its own settings, as its manifest lists them
+        url: http://prowlarr:9696
+        api_key: …                # a Docker secret: Extensions__settings__prowlarr__values__api_key
+    e-hentai:
+      # enabled: true
+      proxy: socks5://tor:9050    # optional
+      timeout_sec: 60
+      values:
+        cookies: ipb_member_id=…; ipb_pass_hash=…
+```
+
+A source's id is its manifest's (`slskd`, `flibusta`, `e-hentai`); a provider's sources are
+`<provider>-<id>` (`prowlarr-12`), and their only setting is on/off. The About page and the
+Database tab never show the values the page saved.
+
+- **Index.** The page lists the packages of every index that are for Convy (`apps`), marks the
+  ones this Convy cannot load (an older API, or a missing `requires`) and checks a download
+  against the index's `sha256`. An update replaces the package and keeps the old one if the new
+  one fails to load.
+- **Audit.** A package from outside is checked before it is loaded: every DLL's metadata is read
+  and a package that opens its own connections (`HttpClient`, sockets), touches files, processes,
+  the environment or native code, or loads assemblies by name is refused and shown as a problem.
+  A source talks to its sites only through the HTTP client the host gives it, which allows the
+  domains of its manifest (or of the address it was set up with) alone, every hop of a redirect
+  included, and applies the source's rate limit, proxy and timeout.
+
+### Writing a source
+
+A site is written as for Shizuka (`docs/sources.md` there; `Shizuka.Sources.Testing` tests it).
+A source of Convy's own API is a class library referencing `Convy.Sources.Abstractions` (NuGet,
+GitHub Packages, tag `sources-api-v*`) with `ExcludeAssets="runtime"`, the host provides it:
+
+- a public `ContentSource`: `Manifest` (Shizuka's `SourceManifest`: id, name, domains, settings),
+  `Protocol` (`Torrent`, `Soulseek`, `Files`), `SearchAsync(ContentQuery)` (the query, the
+  category and its `options` for this source), `ResolveAsync` (a `TorrentRelease`,
+  `SoulseekRelease` or `FilesRelease`), optionally `CheckAsync` (why it cannot be used now),
+  `ListFilesAsync` (otherwise Convy derives the files from the release) and `FetchHeaders`
+  (sent when Convy fetches a `.torrent` or a book for the source);
+- or a public `ContentSourceProvider` listing such sources from one connection (Prowlarr's
+  indexers).
+
+The host's `ISourceContext` gives the HTTP client, the settings and the log, as for a site.
+`Tests/Convy.Tests.ContentExtension` is a complete example of all three protocols and a provider.
 
 ## Jobs and placement
 
@@ -788,9 +813,12 @@ Convy serves a small web interface at `/`:
   shown as lines, as plain text like the log files, or as JSON Lines with the structured
   properties (`JobId`, `ItemRef`, `Attempt`, …), each ready to copy. The full log stays in the
   console and the log files.
+- **Sources** — the extension packages and their sources: install, update and remove them from
+  the indexes or a file, switch sources on and off, edit their settings and sign in (see
+  [The Sources page](#the-sources-page)).
 - **Database** — every table read-only, with search, sorting and paging. Values that hold
-  secrets are never sent: a search result's content id (it contains the Prowlarr API key)
-  is left out, and binary columns (`.torrent` files) are shown only as their size.
+  secrets are never sent: a search result's content id (a Prowlarr link contains the API key)
+  is left out, the settings the Sources page saved are masked and not searched, and binary columns (`.torrent` files) are shown only as their size.
 - **Webhooks** — every webhook with its events, rule filter, parameters and headers. Webhooks
   can be added, edited, switched off and deleted here; they are stored in the database and used
   together with those from `configuration.yml`, which are shown read-only. Header values are
@@ -814,7 +842,7 @@ Convy serves a small web interface at `/`:
   (`configuration.yml`, environment, Docker secret, …). Passwords, API keys, secrets and
   credentials inside URLs are hidden; "Copy for a bug report" copies all of it as text.
 
-The Overview and About pages never wait for Prowlarr, slskd or a catalog: Convy lists the search sources in the
+The Overview and About pages never wait for a source: Convy lists the search sources in the
 background, right after a start and then whenever the list is older than five minutes, and the
 pages show the last list (for a few seconds after a start, "Listing the sources…").
 
@@ -979,9 +1007,13 @@ Notes:
 
 ## Building and testing
 
-Requires the .NET 10 SDK.
+Requires the .NET 10 SDK. `Shizuka.Sources.Abstractions` and `Shizuka.Sources.Hosting` come from
+GitHub Packages, which NuGet reads only with a token: put a personal access token with
+`read:packages` into `PACKAGES_TOKEN` (see `nuget.config`). CI and the image build take it from
+the repository secret `PACKAGES_TOKEN` (`docker build --secret id=packages_token,env=PACKAGES_TOKEN`).
 
 ```bash
+export PACKAGES_TOKEN=…
 dotnet build Convy.slnx
 dotnet test Convy.slnx
 ```
@@ -1006,12 +1038,13 @@ downloads a JRE automatically the first time, so no separate Java installation i
 | --- | --- |
 | `Convy` | ASP.NET host: the polling worker, dependency injection, HTTP endpoints |
 | `frontend` | the web UI (React + Vite), built into `src/Convy/wwwroot` |
-| `Convy.Services` | downloaders (qBittorrent, OPDS, galleries behind `IDownloader`), plugin host, the client of the service of checks (`Captcha/`), sync cycle, file linking, state tracker, webhook notifier |
-| `Convy.Sources.Abstractions` | the contract of sources and plugins (`IContentSource`, `IGallerySource`, `SourcePlugin`), a NuGet package for plugin authors |
-| `Convy.Sources` | search sources (Prowlarr), torrent metadata (.torrent parsing, magnet metadata from DHT) |
+| `Convy.Services` | downloaders (qBittorrent, slskd, OPDS books, galleries behind `IDownloader`), the extension host and the Sources page's service (`Extensions/`), the client of the service of checks (`Captcha/`), sync cycle, file linking, state tracker, webhook notifier |
+| `Convy.Sources.Abstractions` | Convy's API for extensions (`ContentSource`, `ContentSourceProvider`), built on `Shizuka.Sources.Abstractions`; a NuGet package for their authors |
+| `Convy.Sources.Contracts` | what the host's services see of a source (`IContentSource`, `IGallerySource`, `SearchRequest`, payloads) |
+| `Convy.Sources` | torrent metadata (.torrent parsing, magnet metadata from DHT), the slskd client of the downloader |
 | `Convy.Mcp` | MCP tool definitions, a thin layer over the services |
 | `skills/convy` | the agent skill: how to search, choose releases and download through the MCP tools |
 | `Convy.PathExpressions` | the rule language: ANTLR grammar, expression tree over item properties, mapping-file loader |
 | `Convy.Data` | EF Core (SQLite) entities and migrations |
 | `Convy.Infrastructure` | low-level helpers (the native hard-link wrapper) |
-| `Tests/*` | unit tests for the rule language and the state tracker; `Convy.Sources.TestPlugin` — a plugin over a fake site the plugin tests load; `Convy.Tests` — the host's endpoints (the relay of checks) over a test server |
+| `Tests/*` | unit tests for the rule language and the state tracker; `Convy.Tests.TestExtension` (a site) and `Convy.Tests.ContentExtension` (Convy's own API) — extensions over fake sites the tests load; `Convy.Tests` — the host's endpoints (the relay of checks) over a test server |

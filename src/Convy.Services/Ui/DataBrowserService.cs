@@ -126,7 +126,8 @@ public sealed class DataBrowserService
         var where = string.Empty;
         if (!string.IsNullOrWhiteSpace(query.Search))
         {
-            var searchable = table.Columns.Where(c => c.Info.Kind is "text" or "time").ToList();
+            // A saved setting's value may be a secret: searching it would tell what it holds.
+            var searchable = table.Columns.Where(c => c.Info.Kind is "text" or "time" && !(table.Name == "UserSettings" && c.Info.Name == "Value")).ToList();
             if (searchable.Count == 0)
             {
                 return new DataPage(table.Name, table.Columns.Select(c => c.Info).ToList(), [], 0, offset, limit);
@@ -167,7 +168,7 @@ public sealed class DataBrowserService
                     row[i] = reader.IsDBNull(i) ? null : Present(table.Columns[i].Info.Kind, reader.GetValue(i));
                 }
 
-                rows.Add(row);
+                rows.Add(MaskSetting(table, row));
             }
         }
         finally
@@ -176,6 +177,25 @@ public sealed class DataBrowserService
         }
 
         return new DataPage(table.Name, table.Columns.Select(c => c.Info).ToList(), rows, total, offset, limit);
+    }
+
+    /// <summary>A row of the saved settings with a secret's value hidden (an index's password, a source's cookies).</summary>
+    private static object?[] MaskSetting(TableModel table, object?[] row)
+    {
+        if (table.Name != "UserSettings")
+        {
+            return row;
+        }
+
+        var names = table.Columns.Select(c => c.Info.Name).ToList();
+        var key = names.IndexOf("Key");
+        var value = names.IndexOf("Value");
+        if (key >= 0 && value >= 0 && row[key] is string name)
+        {
+            row[value] = ConfigurationMasking.Mask(name.Contains(':', StringComparison.Ordinal) ? name : "UserSettings:" + name, row[value] as string, out _);
+        }
+
+        return row;
     }
 
     private static string SelectExpression(ColumnModel column) => column.Info.Kind switch

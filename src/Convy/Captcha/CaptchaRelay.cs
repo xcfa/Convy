@@ -22,7 +22,7 @@ namespace Convy.Captcha;
 /// <c>/challenges/{id}/screen</c>). A client cannot tell it from the service: Shizuka set up with Convy's address
 /// registers its tab as a solver and shows the page of a check through it, while the cookies stay with Convy, which goes
 /// to the sites. Behind the IP allow-list and the API key, like the rest of the external API. Convy's own profiles at
-/// the service (its plugins' sign-ins) stay its own: a client cannot name them, and their cookies are left out of the
+/// the service (its extensions' sign-ins) stay its own: a client cannot name them, and their cookies are left out of the
 /// answers about Convy's checks.
 /// </summary>
 public sealed class CaptchaRelay : IDisposable

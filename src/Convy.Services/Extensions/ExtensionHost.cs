@@ -124,6 +124,9 @@ public sealed class ExtensionHost : ISourceProvider, ISourceProviderGroup, IDisp
         Extensions.SelectMany(e => e.Sources).Concat(_listed.Values.SelectMany(l => l))
             .FirstOrDefault(s => string.Equals(s.Id, id, StringComparison.OrdinalIgnoreCase));
 
+    /// <summary>The sources a provider listed last; none before its first listing.</summary>
+    public IReadOnlyList<PackagedSource> ListedBy(string providerId) => _listed.GetValueOrDefault(providerId) ?? [];
+
     /// <summary>Reads the torrents of the sources.</summary>
     internal ITorrentMetadataService Torrents { get; }
 

@@ -5,6 +5,7 @@ import { Jobs } from "./pages/Jobs";
 import { Logs } from "./pages/Logs";
 import { Data } from "./pages/Data";
 import { Webhooks } from "./pages/Webhooks";
+import { Sources } from "./pages/Sources";
 import { Rules } from "./pages/Rules";
 import { About } from "./pages/About";
 import { readRoute, tabs } from "./route";
@@ -65,6 +66,7 @@ export function App() {
         {route.tab === "jobs" && <Jobs status={route.params.get("status") ?? ""} />}
         {route.tab === "logs" && <Logs job={route.params.get("job") ?? ""} />}
         {route.tab === "data" && <Data table={route.params.get("table")} />}
+        {route.tab === "sources" && <Sources />}
         {route.tab === "webhooks" && <Webhooks />}
         {route.tab === "rules" && <Rules />}
         {route.tab === "about" && <About />}

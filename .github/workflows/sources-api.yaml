@@ -1,0 +1,38 @@
+name: Publish Convy.Sources.Abstractions
+
+# Convy's API for extensions (built on Shizuka.Sources.Abstractions) as a NuGet package on GitHub Packages. Tag sources-api-v<Version>, where <Version> is the csproj's
+# <Version>; the docker workflow ignores these tags (it watches v*).
+on:
+  push:
+    tags: ["sources-api-v*"]
+
+jobs:
+  publish:
+    runs-on: ubuntu-22.04
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '10.0.x'
+      - name: The tag names the package's version
+        run: |
+          version=$(sed -nE 's|.*<Version>(.*)</Version>.*|\1|p' src/Convy.Sources.Abstractions/Convy.Sources.Abstractions.csproj)
+          if [ "sources-api-v$version" != "$GITHUB_REF_NAME" ]; then
+            echo "::error::Tag $GITHUB_REF_NAME, but the csproj has <Version>$version</Version>"
+            exit 1
+          fi
+      - run: dotnet pack src/Convy.Sources.Abstractions/Convy.Sources.Abstractions.csproj -c Release -o nupkg
+        env:
+          PACKAGES_TOKEN: ${{ secrets.PACKAGES_TOKEN }}
+      - uses: actions/upload-artifact@v4
+        with:
+          name: nupkg
+          path: nupkg/
+      - run: >-
+          dotnet nuget push "nupkg/*.nupkg"
+          --source "https://nuget.pkg.github.com/${{ github.repository_owner }}/index.json"
+          --api-key "${{ secrets.GITHUB_TOKEN }}"
+          --skip-duplicate

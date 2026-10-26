@@ -42,6 +42,41 @@ public sealed class UserSettingsService : IUserSettingsService
         await _onSettingsChanged(cancellationToken).ConfigureAwait(false);
     }
 
+    public async Task WriteAsync(IReadOnlyDictionary<string, string?> entries, string? replace, CancellationToken cancellationToken)
+    {
+        await using var db = await _dbFactory.CreateDbContextAsync(cancellationToken)
+            .ConfigureAwait(false);
+
+        if (replace is not null)
+        {
+            var stale = await db.UserSettings
+                .Where(e => e.Key.StartsWith(replace))
+                .ToListAsync(cancellationToken)
+                .ConfigureAwait(false);
+            db.UserSettings.RemoveRange(stale.Where(e => !entries.ContainsKey(e.Key)));
+        }
+
+        foreach (var (key, value) in entries)
+        {
+            if (value is null)
+            {
+                var entry = await db.UserSettings.FirstOrDefaultAsync(e => e.Key == key, cancellationToken).ConfigureAwait(false);
+                if (entry is not null)
+                {
+                    db.UserSettings.Remove(entry);
+                }
+            }
+            else
+            {
+                await UpsertAsync(db, key, value, cancellationToken).ConfigureAwait(false);
+            }
+        }
+
+        await db.SaveChangesAsync(cancellationToken).ConfigureAwait(false);
+
+        await _onSettingsChanged(cancellationToken).ConfigureAwait(false);
+    }
+
     private static async Task UpsertAsync(
         SettingsDbContext db, string key, string value, CancellationToken cancellationToken)
     {

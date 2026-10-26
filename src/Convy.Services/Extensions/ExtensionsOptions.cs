@@ -3,14 +3,15 @@ using Microsoft.Extensions.Configuration;
 namespace Convy.Services.Extensions;
 
 /// <summary>
-/// The <c>extensions</c> section of configuration.yml: where the source extensions are (the packages Shizuka installs,
-/// built against <c>Shizuka.Sources.Abstractions</c>) and what each of their sources gets.
+/// The <c>extensions</c> section of configuration.yml: where the source extensions are (sites, the packages Shizuka
+/// installs too, and Convy's own: Prowlarr, slskd, OPDS), the indexes the Sources page installs them from and what each
+/// of their sources gets. The Sources page saves into the settings database, over this file.
 /// </summary>
 public sealed class ExtensionsOptions
 {
     public const string SectionName = "Extensions";
 
-    /// <summary>The folder with the extension packages (a <c>.zip</c> or a <c>.dll</c> each). Read at startup.</summary>
+    /// <summary>The folder with the extension packages (a <c>.zip</c> or a <c>.dll</c> each): read at startup, written by the Sources page.</summary>
     [ConfigurationKeyName("path")]
     public string Path { get; set; } = "/data/extensions";
 
@@ -20,6 +21,14 @@ public sealed class ExtensionsOptions
     /// </summary>
     [ConfigurationKeyName("trusted")]
     public bool Trusted { get; set; }
+
+    /// <summary>Indexes of packages (<c>index.json</c>) the Sources page lists, from this file: shown there read-only.</summary>
+    [ConfigurationKeyName("indexes")]
+    public List<ExtensionIndexOptions> Indexes { get; set; } = [];
+
+    /// <summary>Indexes added on the Sources page (saved in the settings database).</summary>
+    [ConfigurationKeyName("ui_indexes")]
+    public List<ExtensionIndexOptions> UiIndexes { get; set; } = [];
 
     /// <summary>Per source, by its manifest id: settings, proxy, on/off. Hot-reloaded (the proxy needs a restart).</summary>
     [ConfigurationKeyName("settings")]
@@ -48,4 +57,24 @@ public sealed class ExtensionEntryOptions
     /// <summary>The source's own settings by key (<c>cookies</c>, …), as its manifest lists them; checked like Shizuka checks them.</summary>
     [ConfigurationKeyName("values")]
     public Dictionary<string, string?> Values { get; set; } = new(StringComparer.OrdinalIgnoreCase);
+}
+
+/// <summary>An index of extension packages and how to sign in to it, when it wants that.</summary>
+public sealed class ExtensionIndexOptions
+{
+    /// <summary>The index's address (<c>https://…/index.json</c>).</summary>
+    [ConfigurationKeyName("url")]
+    public string? Url { get; set; }
+
+    /// <summary>HTTP basic authentication: the user name (a Nextcloud share's token).</summary>
+    [ConfigurationKeyName("username")]
+    public string? Username { get; set; }
+
+    /// <summary>HTTP basic authentication: the password.</summary>
+    [ConfigurationKeyName("password")]
+    public string? Password { get; set; }
+
+    /// <summary>A bearer token, instead of a user name and password.</summary>
+    [ConfigurationKeyName("token")]
+    public string? Token { get; set; }
 }

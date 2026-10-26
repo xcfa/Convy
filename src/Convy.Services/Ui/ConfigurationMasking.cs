@@ -22,7 +22,7 @@ public static partial class ConfigurationMasking
         }
 
         var name = key[(key.LastIndexOf(':') + 1)..];
-        if (SecretKey().IsMatch(name) || IsHeaderValue(key))
+        if (SecretKey().IsMatch(name) || IsHeaderValue(key) || IsSourceValue(key))
         {
             hidden = true;
             return Hidden;
@@ -45,7 +45,20 @@ public static partial class ConfigurationMasking
                && string.Equals(segments[^3], "headers", StringComparison.OrdinalIgnoreCase);
     }
 
-    [GeneratedRegex(@"(password|passwd|pwd|secret|token|credentials?|key)$", RegexOptions.IgnoreCase)]
+    /// <summary>
+    /// A source's own setting (<c>Extensions:settings:e-hentai:values:cookies</c>): only its manifest knows whether it is a
+    /// secret, and the Sources page shows the others.
+    /// </summary>
+    private static bool IsSourceValue(string key)
+    {
+        var segments = key.Split(':');
+        return segments.Length == 5
+               && string.Equals(segments[0], "Extensions", StringComparison.OrdinalIgnoreCase)
+               && string.Equals(segments[1], "settings", StringComparison.OrdinalIgnoreCase)
+               && string.Equals(segments[3], "values", StringComparison.OrdinalIgnoreCase);
+    }
+
+    [GeneratedRegex(@"(password|passwd|pwd|secret|token|credentials?|key|cookies?)$", RegexOptions.IgnoreCase)]
     private static partial Regex SecretKey();
 
     [GeneratedRegex(@"(?<=://)(?<user>[^/@:\s]+):(?<password>[^/@\s]+)@")]

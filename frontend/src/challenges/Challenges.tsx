@@ -14,7 +14,7 @@ interface Shown {
 }
 
 /**
- * The bot checks of this tab. While the UI is open, the tab is a solver at the service of checks for the plugins'
+ * The bot checks of this tab. While the UI is open, the tab is a solver at the service of checks for the extensions'
  * domains: an offer is a banner under the top bar ("Pass" / "Not now"), and "Pass" opens the window with the page of
  * the check.
  */

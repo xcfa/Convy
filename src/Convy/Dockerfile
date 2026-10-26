@@ -1,3 +1,4 @@
+# syntax=docker/dockerfile:1
 # See https://aka.ms/customizecontainer to learn how to customize your debug container and how Visual Studio uses this Dockerfile to build your images for faster debugging.
 
 # This stage is used when running from VS in fast mode (Default for Debug configuration).
@@ -35,8 +36,12 @@ COPY ["src/Convy.PathExpressions/Convy.PathExpressions.csproj", "src/Convy.PathE
 COPY ["src/Convy.Infrastructure/Convy.Infrastructure.csproj", "src/Convy.Infrastructure/"]
 COPY ["src/Convy.Sources/Convy.Sources.csproj", "src/Convy.Sources/"]
 COPY ["src/Convy.Sources.Contracts/Convy.Sources.Contracts.csproj", "src/Convy.Sources.Contracts/"]
+COPY ["src/Convy.Sources.Abstractions/Convy.Sources.Abstractions.csproj", "src/Convy.Sources.Abstractions/"]
 COPY ["src/Convy.Mcp/Convy.Mcp.csproj", "src/Convy.Mcp/"]
-RUN dotnet restore "src/Convy/Convy.csproj"
+COPY ["nuget.config", "./"]
+# Shizuka.Sources.* come from GitHub Packages, which NuGet reads only with a token (see nuget.config): the build
+# secret packages_token (docker build --secret id=packages_token,env=PACKAGES_TOKEN). It never lands in a layer.
+RUN --mount=type=secret,id=packages_token,env=PACKAGES_TOKEN dotnet restore "src/Convy/Convy.csproj"
 
 COPY . .
 # The built UI is published with the app as wwwroot.
@@ -46,7 +51,8 @@ COPY --from=ui /ui src/Convy/wwwroot
 ARG VERSION=
 # Map Docker's TARGETARCH (amd64/arm64) to the .NET RID arch (x64/arm64). The -a flag
 # pulls the right native bits (e.g. SQLite's e_sqlite3) for the target.
-RUN DOTNET_ARCH="$(echo "$TARGETARCH" | sed 's/amd64/x64/')" \
+RUN --mount=type=secret,id=packages_token,env=PACKAGES_TOKEN \
+    DOTNET_ARCH="$(echo "$TARGETARCH" | sed 's/amd64/x64/')" \
  && dotnet publish "src/Convy/Convy.csproj" -c "$BUILD_CONFIGURATION" -a "$DOTNET_ARCH" -o /app/publish /p:UseAppHost=false \
     ${VERSION:+"/p:Version=$VERSION"}
 

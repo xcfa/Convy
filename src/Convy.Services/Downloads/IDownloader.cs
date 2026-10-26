@@ -79,6 +79,6 @@ public static class DownloadProviders
     /// <summary>Convy's own downloader for books from OPDS catalogs.</summary>
     public const string Opds = "opds";
 
-    /// <summary>Convy's own downloader for galleries (CBZ) from plugin sources.</summary>
+    /// <summary>Convy's own downloader for galleries (CBZ) from site sources.</summary>
     public const string Gallery = "gallery";
 }

@@ -22,7 +22,7 @@ namespace Convy.Captcha;
 
 /// <summary>
 /// <c>/api/ui/captcha</c>: the sockets of the web UI's checks. While the UI is open its tab is a solver at the service of
-/// checks for the plugins' domains (an offer is a banner, «Pass» opens the window with the page of the check). Unlike
+/// checks for the extensions' domains (an offer is a banner, «Pass» opens the window with the page of the check). Unlike
 /// <see cref="CaptchaRelay"/> for API clients, this one is behind the UI's sign-in and lets only the few messages a
 /// window needs go up: a tab cannot register as an automatic solver or name itself.
 /// </summary>
@@ -55,7 +55,7 @@ public sealed class CaptchaWindowRelay
     private readonly ILogger<CaptchaWindowRelay> _logger;
 
     /// <param name="relay">Opens the service's sockets with Convy's key.</param>
-    /// <param name="domains">The plugins' domains, the ones the tab passes checks for.</param>
+    /// <param name="domains">The extensions' domains, the ones the tab passes checks for.</param>
     public CaptchaWindowRelay(
         CaptchaRelay relay, IOptionsMonitor<CaptchaOptions> options, Func<IEnumerable<string>> domains, ILogger<CaptchaWindowRelay> logger)
     {
@@ -158,7 +158,7 @@ public sealed class CaptchaWindowRelay
         return await http.WebSockets.AcceptWebSocketAsync().ConfigureAwait(false);
     }
 
-    /// <summary>The plugins' domains, without a leading dot, in lower case.</summary>
+    /// <summary>The extensions' domains, without a leading dot, in lower case.</summary>
     private SortedSet<string> Domains() =>
         new(_domains().Select(d => d.Trim().TrimStart('.').ToLowerInvariant()).Where(d => d.Length > 0), StringComparer.Ordinal);
 

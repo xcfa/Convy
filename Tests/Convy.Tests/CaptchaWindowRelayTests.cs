@@ -106,7 +106,7 @@ public sealed class CaptchaWindowRelayTests : IAsyncLifetime
     }
 
     [Fact]
-    public async Task TheTabIsAnInteractiveSolverOfThePluginsDomainsAndOnlyAcceptOrDeclineGoUp()
+    public async Task TheTabIsAnInteractiveSolverOfTheExtensionsDomainsAndOnlyAcceptOrDeclineGoUp()
     {
         _options.Url = _serviceUrl.AbsoluteUri;
 

@@ -184,6 +184,10 @@ public sealed class ExtensionSource : ExtensionUnit, IGallerySource, IGalleryBro
         return again == failed ? null : again;
     }
 
+    /// <summary>Signs in to the site with what was typed into its login's fields: the cookies to save (its manifest's <c>Login.CookiesKey</c>).</summary>
+    public Task<string> LoginAsync(IReadOnlyDictionary<string, string> fields, CancellationToken cancellationToken) =>
+        CallAsync((context, ct) => _source.LoginAsync(fields, context, ct), cancellationToken);
+
     /// <summary>The image through the source's HTTP (its domains and cookies, not its rate gate), read whole.</summary>
     public async Task<GalleryImage> OpenImageAsync(Uri url, CancellationToken cancellationToken)
     {

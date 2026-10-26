@@ -4,7 +4,7 @@ namespace Convy.Services.Captcha;
 
 /// <summary>
 /// The <c>captcha</c> section of configuration.yml: the service of checks (captcha-solver) that passes the Cloudflare and
-/// DDoS-Guard checks and the sites' captchas the plugins run into. Read on every request, so an edit applies at once.
+/// DDoS-Guard checks and the sites' captchas the extensions run into. Read on every request, so an edit applies at once.
 /// </summary>
 public sealed class CaptchaOptions
 {
@@ -26,15 +26,15 @@ public sealed class CaptchaOptions
     public double WaitSeconds { get; set; } = 25;
 
     /// <summary>
-    /// The name of Convy's own browser profiles at the service: a plugin's checks run in
-    /// <c>&lt;domain&gt;#&lt;profile&gt;.&lt;plugin&gt;</c>, with its cookies (a sign-in), which never reach other
-    /// plugins, Convy's clients or the profile other clients of the service share.
+    /// The name of Convy's own browser profiles at the service: an extension's checks run in
+    /// <c>&lt;domain&gt;#&lt;profile&gt;.&lt;source&gt;</c>, with its cookies (a sign-in), which never reach other
+    /// extensions, Convy's clients or the profile other clients of the service share.
     /// </summary>
     [ConfigurationKeyName("profile")]
     public string Profile { get; set; } = "convy";
 
-    /// <summary>The profile name of a plugin's checks (letters, digits, '.', '_', '-'; up to 64, as the service takes).</summary>
-    public string ProfileFor(string plugin) => Clean($"{OwnName}.{plugin}");
+    /// <summary>The profile name of an extension's checks (letters, digits, '.', '_', '-'; up to 64, as the service takes).</summary>
+    public string ProfileFor(string source) => Clean($"{OwnName}.{source}");
 
     /// <summary>Whether <paramref name="profile"/> (<c>domain#name</c>) is one of Convy's own: its clients never get into them.</summary>
     public bool IsOwn(string? profile)

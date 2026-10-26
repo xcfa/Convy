@@ -20,6 +20,7 @@ using Convy.Services.Downloaders.Opds;
 using Convy.Services.Downloaders.Gallery;
 using Convy.Services.External;
 using Convy.Services.Extensions;
+using Shizuka.Sources.Hosting;
 using System.Linq;
 using Convy.Services.Linking;
 using Convy.Services.Sync;
@@ -306,6 +307,10 @@ public class Program
 		builder.Services.AddOptions<ExtensionsOptions>().Bind(builder.Configuration.GetSection(ExtensionsOptions.SectionName));
 		builder.Services.AddOptions<GalleryOptions>().Bind(builder.Configuration.GetSection(GalleryOptions.SectionName));
 		builder.Services.AddSingleton<ExtensionHost>();
+		// The Sources page: packages from indexes into the extensions folder, settings into the settings database.
+		builder.Services.AddSingleton(sp => new ExtensionIndexClient(
+			new SourceTransport(ExtensionHost.CreateHandler(null)), new ExtensionIndexLimits(), sp.GetRequiredService<TimeProvider>()));
+		builder.Services.AddSingleton<ExtensionAdminService>();
 		builder.Services.AddSingleton<ISourceProvider>(sp => sp.GetRequiredService<ExtensionHost>());
 		var galleryOptions = builder.Configuration.GetSection(GalleryOptions.SectionName).Get<GalleryOptions>() ?? new GalleryOptions();
 		var galleryDownloadsPath = string.IsNullOrWhiteSpace(galleryOptions.DownloadsPath) ? null : galleryOptions.DownloadsPath.Trim();
