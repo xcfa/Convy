@@ -11,7 +11,8 @@ namespace Convy.Configuration;
 
 /// <summary>
 /// Reads the <c>UserSettings</c> table and exposes each row as
-/// <c>UserSettings:{Key}</c> in the configuration tree. The database is read
+/// <c>UserSettings:{Key}</c> in the configuration tree; a key that is a path
+/// (<c>Extensions:settings:prowlarr:values:url</c>, what the Sources page saves) as itself. The database is read
 /// asynchronously via <see cref="ReloadAsync"/>; the synchronous
 /// <see cref="Load"/> required by the configuration contract is intentionally a
 /// no-op so that building configuration never blocks on database I/O.
@@ -55,7 +56,7 @@ public sealed class DbConfigurationProvider : ConfigurationProvider
 
             foreach (var entry in entries)
             {
-                data[$"UserSettings:{entry.Key}"] = entry.Value;
+                data[entry.Key.Contains(':', StringComparison.Ordinal) ? entry.Key : $"UserSettings:{entry.Key}"] = entry.Value;
             }
         }
         catch (SqliteException)

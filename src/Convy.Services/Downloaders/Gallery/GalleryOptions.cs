@@ -2,7 +2,7 @@ using Microsoft.Extensions.Configuration;
 
 namespace Convy.Services.Downloaders.Gallery;
 
-/// <summary>The <c>gallery</c> section of configuration.yml: where galleries from plugin sources are downloaded.</summary>
+/// <summary>The <c>gallery</c> section of configuration.yml: where galleries from site sources are downloaded.</summary>
 public sealed class GalleryOptions
 {
     public const string SectionName = "Gallery";

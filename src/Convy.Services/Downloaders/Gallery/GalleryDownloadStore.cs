@@ -18,7 +18,7 @@ public enum GalleryDownloadState
     Cancelled,
 }
 
-/// <summary>A gallery Convy downloads from a plugin source into a CBZ.</summary>
+/// <summary>A gallery Convy downloads from a site source into a CBZ.</summary>
 public sealed record GalleryDownload
 {
     public required string ItemRef { get; init; }

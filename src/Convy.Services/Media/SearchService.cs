@@ -1,4 +1,4 @@
-using Convy.Services.Captcha;
+using Convy.Services.Extensions;
 using Convy.Services.Webhooks;
 using Convy.Sources;
 using Microsoft.Extensions.Logging;
@@ -235,7 +235,7 @@ public sealed class SearchService
         using var deadline = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
         deadline.CancelAfter(timeout);
         // A bot check is waited for only while the search can still say which check it is.
-        using var waits = CaptchaService.WaitWithin(timeout);
+        using var waits = CallBudget.Within(timeout);
 
         var results = new List<ContentInfo>();
         try

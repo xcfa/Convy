@@ -5,7 +5,7 @@ using Microsoft.EntityFrameworkCore;
 namespace Convy.Data.Entities
 {
     /// <summary>
-    /// A gallery Convy downloads itself page by page from a plugin source into a CBZ: where it goes and how far the
+    /// A gallery Convy downloads itself page by page from a site source into a CBZ: where it goes and how far the
     /// download got. Survives restarts, so unfinished downloads are picked up again.
     /// </summary>
     [PrimaryKey(nameof(ItemRef))]

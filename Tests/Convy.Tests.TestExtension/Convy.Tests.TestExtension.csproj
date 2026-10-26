@@ -1,0 +1,18 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <!-- A source extension as a third party builds one for Shizuka: against Shizuka.Sources.Abstractions only, which
+       the host provides. The tests load its DLL from the extensions folder of their output like a user would. -->
+  <PropertyGroup>
+    <TargetFramework>net10.0</TargetFramework>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+    <IsPackable>false</IsPackable>
+    <Version>1.0.0</Version>
+    <GenerateDocumentationFile>false</GenerateDocumentationFile>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <PackageReference Include="Shizuka.Sources.Abstractions" Version="1.6.0" ExcludeAssets="runtime" />
+  </ItemGroup>
+
+</Project>

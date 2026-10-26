@@ -56,7 +56,7 @@ public sealed class GalleryDownloadRunner
         if (await _sources.FindAsync(download.SourceId, cancellationToken).ConfigureAwait(false) is not IGallerySource source)
         {
             await UpdateAsync(
-                    download with { State = GalleryDownloadState.Failed, Error = $"The source '{download.SourceId}' is not available (its plugin is not loaded or disabled)." },
+                    download with { State = GalleryDownloadState.Failed, Error = $"The source '{download.SourceId}' is not available (its extension is not installed, or the source is disabled)." },
                     download.State)
                 .ConfigureAwait(false);
             return;

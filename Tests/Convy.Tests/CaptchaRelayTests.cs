@@ -45,7 +45,7 @@ public sealed class CaptchaRelayTests : IAsyncLifetime
         _service.MapGet("/challenges", (HttpContext http) =>
         {
             Record(http, null);
-            // Convy's own check (a plugin's sign-in in its cookies) next to a client's.
+            // Convy's own check (an extension's sign-in in its cookies) next to a client's.
             return Results.Json(new object[]
             {
                 new { id = Guid.NewGuid(), state = "solved", profile = "gallery.test#convy.e-hentai", cookies = new[] { new { name = "ipb_pass_hash", value = "secret" } } },

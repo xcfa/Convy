@@ -26,7 +26,7 @@ public sealed record SoulseekPayload(string Username, string Directory, IReadOnl
     : DownloadPayload(Protocol.Soulseek);
 
 /// <summary>A book from an OPDS catalog: one file per format.</summary>
-/// <param name="CatalogId">The catalog (<c>flibusta</c>), whose client also downloads the files.</param>
+/// <param name="CatalogId">The source (<c>flibusta</c>), which also fetches the files (<see cref="IFileSource"/>).</param>
 /// <param name="BookKey">Stable, file-system safe key of the book within the catalog.</param>
 /// <param name="Folder">Folder the book's files are stored in, e.g. <c>Стругацкий - Пикник на обочине</c>.</param>
 /// <param name="Files">Every format the catalog offers.</param>

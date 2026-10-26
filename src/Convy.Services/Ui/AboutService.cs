@@ -115,7 +115,7 @@ public sealed class AboutService
     /// <summary>The top-level configuration sections Convy reads.</summary>
     public static readonly IReadOnlyList<string> Sections =
     [
-        "ConnectionStrings", "Convy", "QBitTorrent", "UserSettings", "Prowlarr", "Slskd", "Opds", "Mcp", "Ui",
+        "ConnectionStrings", "Convy", "QBitTorrent", "UserSettings", "Extensions", "Gallery", "Captcha", "Slskd", "Opds", "Mcp", "Ui",
         "Categories", "Search", "Files", "Jobs", "Webhooks", "IpAccessControl", "TorrentMetadata", "Serilog",
     ];
 

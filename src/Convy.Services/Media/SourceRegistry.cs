@@ -29,6 +29,9 @@ public interface ISourceRegistry
     /// sources are still served by <see cref="GetSourcesAsync"/>.
     /// </summary>
     IReadOnlyList<SourceProviderError> ProviderErrors { get; }
+
+    /// <summary>Lists the sources now, however fresh the last listing is (an extension was installed or set up).</summary>
+    Task RefreshNowAsync(CancellationToken cancellationToken);
 }
 
 /// <summary>A provider that could not list its sources.</summary>
@@ -41,8 +44,8 @@ public sealed record SourceProviderError(string Provider, string Message, int Kn
 /// <remarks>
 /// Asks every <see cref="ISourceProvider"/> (all at once) and keeps the combined list. A
 /// listing older than five minutes is still served while <see cref="RunAsync"/> makes a new
-/// one in the background: listing asks Prowlarr, slskd and every OPDS catalog, which can take
-/// long (Flibusta), and neither a page of the UI nor a search should wait for it.
+/// one in the background: listing asks every source whether it can be used (Prowlarr, slskd, an
+/// OPDS catalog), which can take long (Flibusta), and neither a page of the UI nor a search should wait for it.
 /// A provider that fails keeps its last known sources, so a short outage does not make
 /// categories lose their sources; the failure itself surfaces when such a source is searched.
 /// </remarks>
@@ -126,6 +129,8 @@ public sealed class SourceRegistry : ISourceRegistry, IDisposable
     /// <summary>Lists the sources of every provider, unless the last listing is still fresh.</summary>
     public Task RefreshAsync(CancellationToken cancellationToken) => RefreshSnapshotAsync(cancellationToken);
 
+    public Task RefreshNowAsync(CancellationToken cancellationToken) => RefreshSnapshotAsync(cancellationToken, force: true);
+
     public void Dispose() => _refreshGate.Dispose();
 
     private async Task RefreshLoggedAsync(CancellationToken stoppingToken)
@@ -140,18 +145,19 @@ public sealed class SourceRegistry : ISourceRegistry, IDisposable
         }
     }
 
-    private async Task<Snapshot> RefreshSnapshotAsync(CancellationToken cancellationToken)
+    private async Task<Snapshot> RefreshSnapshotAsync(CancellationToken cancellationToken, bool force = false)
     {
         await _refreshGate.WaitAsync(cancellationToken).ConfigureAwait(false);
         try
         {
             // Someone else may have listed them while this caller waited.
-            if (_snapshot is { } current && IsFresh(current))
+            if (!force && _snapshot is { } current && IsFresh(current))
             {
                 return current;
             }
 
-            var listings = await Task.WhenAll(_providers.Select(p => ListAsync(p, cancellationToken))).ConfigureAwait(false);
+            var providers = _providers.SelectMany(p => p is ISourceProviderGroup group ? group.Providers : [p]).ToList();
+            var listings = await Task.WhenAll(providers.Select(p => ListAsync(p, cancellationToken))).ConfigureAwait(false);
 
             var sources = new List<IContentSource>();
             var errors = new List<SourceProviderError>();

@@ -22,7 +22,7 @@ public static partial class ConfigurationMasking
         }
 
         var name = key[(key.LastIndexOf(':') + 1)..];
-        if (SecretKey().IsMatch(name) || IsHeaderValue(key))
+        if (SecretKey().IsMatch(name) || IsHeaderValue(key) || IsSourceValue(key) || IsIndexUser(key))
         {
             hidden = true;
             return Hidden;
@@ -45,7 +45,33 @@ public static partial class ConfigurationMasking
                && string.Equals(segments[^3], "headers", StringComparison.OrdinalIgnoreCase);
     }
 
-    [GeneratedRegex(@"(password|passwd|pwd|secret|token|credentials?|key)$", RegexOptions.IgnoreCase)]
+    /// <summary>
+    /// A source's own setting (<c>Extensions:settings:e-hentai:values:cookies</c>): only its manifest knows whether it is a
+    /// secret, and the Sources page shows the others.
+    /// </summary>
+    private static bool IsSourceValue(string key)
+    {
+        var segments = key.Split(':');
+        return segments.Length == 5
+               && string.Equals(segments[0], "Extensions", StringComparison.OrdinalIgnoreCase)
+               && string.Equals(segments[1], "settings", StringComparison.OrdinalIgnoreCase)
+               && string.Equals(segments[3], "values", StringComparison.OrdinalIgnoreCase);
+    }
+
+    /// <summary>
+    /// The user name of an index of packages (<c>Extensions:ui_indexes:0:username</c>): a public share's token, for one,
+    /// is all its secret.
+    /// </summary>
+    private static bool IsIndexUser(string key)
+    {
+        var segments = key.Split(':');
+        return segments.Length == 4
+               && string.Equals(segments[0], "Extensions", StringComparison.OrdinalIgnoreCase)
+               && (string.Equals(segments[1], "indexes", StringComparison.OrdinalIgnoreCase) || string.Equals(segments[1], "ui_indexes", StringComparison.OrdinalIgnoreCase))
+               && string.Equals(segments[3], "username", StringComparison.OrdinalIgnoreCase);
+    }
+
+    [GeneratedRegex(@"(password|passwd|pwd|secret|token|credentials?|key|cookies?)$", RegexOptions.IgnoreCase)]
     private static partial Regex SecretKey();
 
     [GeneratedRegex(@"(?<=://)(?<user>[^/@:\s]+):(?<password>[^/@\s]+)@")]

@@ -1,4 +1,4 @@
-using Convy.Services.Captcha;
+using Convy.Services.Extensions;
 using Convy.Sources;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
@@ -67,7 +67,7 @@ public sealed class FileListingService
         var timeout = Longest(TimeSpan.FromSeconds(Math.Max(1, _options.CurrentValue.MetadataTimeoutSeconds)), source.Timeout);
         using var deadline = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
         deadline.CancelAfter(timeout);
-        using var waits = CaptchaService.WaitWithin(timeout);
+        using var waits = CallBudget.Within(timeout);
 
         FileListing listing;
         try

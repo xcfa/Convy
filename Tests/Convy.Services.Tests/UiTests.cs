@@ -399,6 +399,31 @@ public sealed class DataBrowserServiceTests : IDisposable
     }
 
     [Fact]
+    public async Task HidesTheSecretsTheSourcesPageSavedAndDoesNotSearchThem()
+    {
+        await Seed();
+        await using (var settings = _settings.CreateDbContext())
+        {
+            settings.UserSettings.Add(new UserSettingEntry { Key = "Extensions:settings:e-hentai:values:cookies", Value = "ipb_pass_hash=abc" });
+            settings.UserSettings.Add(new UserSettingEntry { Key = "Extensions:ui_indexes:0:password", Value = "pw" });
+            settings.UserSettings.Add(new UserSettingEntry { Key = "Extensions:settings:e-hentai:proxy", Value = "socks5://tor:9050" });
+            await settings.SaveChangesAsync();
+        }
+
+        var page = await _service.ReadAsync("UserSettings", new DataQuery(null, "Key", false, 0, 50), CancellationToken.None);
+
+        Assert.Equal(
+            [
+                ["Extensions:settings:e-hentai:proxy", "socks5://tor:9050"],
+                ["Extensions:settings:e-hentai:values:cookies", ConfigurationMasking.Hidden],
+                ["Extensions:ui_indexes:0:password", ConfigurationMasking.Hidden],
+                ["UserSettings:AutoSyncEnabled", "true"],
+            ],
+            page.Rows);
+        Assert.Empty((await _service.ReadAsync("UserSettings", new DataQuery("ipb_pass", null, true, 0, 50), CancellationToken.None)).Rows);
+    }
+
+    [Fact]
     public async Task RejectsUnknownTablesAndColumns()
     {
         await Assert.ThrowsAsync<ConvyRequestException>(() =>

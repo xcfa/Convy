@@ -14,14 +14,13 @@ using Convy.Services.Jobs;
 using Convy.Services.Media;
 using Convy.Services.Storage;
 using Convy.Sources;
-using Convy.Sources.Prowlarr;
 using Convy.Sources.Slskd;
 using Convy.Sources.Torrents;
-using Convy.Sources.Opds;
 using Convy.Services.Downloaders.Opds;
 using Convy.Services.Downloaders.Gallery;
 using Convy.Services.External;
-using Convy.Services.Plugins;
+using Convy.Services.Extensions;
+using Shizuka.Sources.Hosting;
 using System.Linq;
 using Convy.Services.Linking;
 using Convy.Services.Sync;
@@ -237,7 +236,7 @@ public class Program
 		builder.Services.AddSingleton<IDownloader, QBittorrentDownloader>();
 		builder.Services.AddSingleton<IDownloaderResolver, DownloaderResolver>();
 
-		// slskd is both a source (Soulseek search) and a downloader; both use one client.
+		// slskd downloads what the slskd source extension finds; its connection is set here, for the downloader.
 		var slskdOptions = builder.Configuration.GetSection(SlskdOptions.SectionName).Get<SlskdOptions>()
 		                   ?? new SlskdOptions();
 		builder.Services.AddSingleton(_ => new SlskdClient(
@@ -246,7 +245,6 @@ public class Program
 				BaseAddress = slskdOptions.IsConfigured ? new Uri(slskdOptions.Url!.TrimEnd('/') + "/api/v0/") : null,
 			},
 			slskdOptions));
-		builder.Services.AddSingleton<ISourceProvider, SoulseekSourceProvider>();
 		if (slskdOptions.IsConfigured)
 		{
 			builder.Services.AddSingleton<IDownloader, SlskdDownloader>();
@@ -274,32 +272,11 @@ public class Program
 		                              ?? new TorrentMetadataOptions());
 		builder.Services.AddSingleton<ITorrentMetadataService, TorrentMetadataService>();
 
-		// Prowlarr: one source per indexer. Its own HttpClient never follows redirects, because
-		// download links redirect to magnet: URIs (and must not leak the key to other hosts).
-		var prowlarrOptions = builder.Configuration.GetSection(ProwlarrOptions.SectionName).Get<ProwlarrOptions>()
-		                      ?? new ProwlarrOptions();
-		builder.Services.AddSingleton(prowlarrOptions);
-		builder.Services.AddSingleton(_ => new ProwlarrClient(
-			new HttpClient(new SocketsHttpHandler
-			{
-				AllowAutoRedirect = false,
-				PooledConnectionLifetime = TimeSpan.FromMinutes(5),
-			})
-			{
-				BaseAddress = prowlarrOptions.IsConfigured ? new Uri(prowlarrOptions.Url!.TrimEnd('/') + "/") : null,
-			},
-			prowlarrOptions));
-		builder.Services.AddSingleton<ISourceProvider, ProwlarrSourceProvider>();
-
-		// OPDS catalogs (Flibusta, …): one source per catalog, and Convy's own downloader for
-		// their books, which needs downloads_path on the same filesystem as the rule paths.
+		// Books of the sources that have Convy fetch their files (the OPDS extension's catalogs): Convy's own
+		// downloader, which needs downloads_path on the same filesystem as the rule paths.
 		var opdsOptions = builder.Configuration.GetSection(OpdsOptions.SectionName).Get<OpdsOptions>() ?? new OpdsOptions();
-		var opdsCatalogs = opdsOptions.Resolve(out var opdsProblems);
-		builder.Services.AddSingleton(new OpdsCatalogs(
-			opdsCatalogs.Select(c => new OpdsClient(c.Catalog, OpdsHttp.Create(c.Options))).ToList()));
-		builder.Services.AddSingleton<ISourceProvider, OpdsSourceProvider>();
 		var opdsDownloadsPath = string.IsNullOrWhiteSpace(opdsOptions.DownloadsPath) ? null : opdsOptions.DownloadsPath.Trim();
-		if (opdsCatalogs.Count > 0 && opdsDownloadsPath is not null)
+		if (opdsDownloadsPath is not null)
 		{
 			builder.Services.AddSingleton<IOpdsDownloadStore, EfOpdsDownloadStore>();
 			builder.Services.AddSingleton<OpdsDownloadQueue>();
@@ -313,24 +290,28 @@ public class Program
 			builder.Services.AddHostedService<OpdsDownloadWorker>();
 		}
 
-		// The service of checks (captcha-solver): plugins' requests hand it the bot checks they run into, and
+		// The service of checks (captcha-solver): the extensions' requests hand it the bot checks they run into, and
 		// /api/captcha relays its API to Convy's clients (Shizuka) with Convy's key.
 		builder.Services.AddOptions<CaptchaOptions>().Bind(builder.Configuration.GetSection(CaptchaOptions.SectionName));
-		builder.Services.AddSingleton<CaptchaService>();
 		builder.Services.AddSingleton<CaptchaRelay>();
-		// The UI's tab passes the checks of the plugins' domains (they load once, at the start).
+		// The UI's tab passes the checks of the extensions' domains (they load once, at the start).
 		builder.Services.AddSingleton(sp => new CaptchaWindowRelay(
 			sp.GetRequiredService<CaptchaRelay>(),
 			sp.GetRequiredService<IOptionsMonitor<CaptchaOptions>>(),
-			() => sp.GetRequiredService<PluginHost>().Plugins.SelectMany(p => p.Manifest.Domains),
+			() => sp.GetRequiredService<ExtensionHost>().Domains,
 			sp.GetRequiredService<ILogger<CaptchaWindowRelay>>()));
 
-		// Plugins (/data/plugins): each package in its own load context; their sources join the others. Galleries from
-		// them are downloaded by Convy's own downloader into gallery.downloads_path, as CBZ.
-		builder.Services.AddOptions<PluginsOptions>().Bind(builder.Configuration.GetSection(PluginsOptions.SectionName));
+		// Source extensions (/data/extensions): Shizuka's packages, each in its own load context; their sources that
+		// download join the others. Galleries from them are downloaded by Convy's own downloader into
+		// gallery.downloads_path, as CBZ.
+		builder.Services.AddOptions<ExtensionsOptions>().Bind(builder.Configuration.GetSection(ExtensionsOptions.SectionName));
 		builder.Services.AddOptions<GalleryOptions>().Bind(builder.Configuration.GetSection(GalleryOptions.SectionName));
-		builder.Services.AddSingleton<PluginHost>();
-		builder.Services.AddSingleton<ISourceProvider>(sp => sp.GetRequiredService<PluginHost>());
+		builder.Services.AddSingleton<ExtensionHost>();
+		// The Sources page: packages from indexes into the extensions folder, settings into the settings database.
+		builder.Services.AddSingleton(sp => new ExtensionIndexClient(
+			new SourceTransport(ExtensionHost.CreateHandler(null)), new ExtensionIndexLimits(), sp.GetRequiredService<TimeProvider>()));
+		builder.Services.AddSingleton<ExtensionAdminService>();
+		builder.Services.AddSingleton<ISourceProvider>(sp => sp.GetRequiredService<ExtensionHost>());
 		var galleryOptions = builder.Configuration.GetSection(GalleryOptions.SectionName).Get<GalleryOptions>() ?? new GalleryOptions();
 		var galleryDownloadsPath = string.IsNullOrWhiteSpace(galleryOptions.DownloadsPath) ? null : galleryOptions.DownloadsPath.Trim();
 		if (galleryDownloadsPath is not null)
@@ -388,20 +369,10 @@ public class Program
 
 		await app.Services.GetRequiredService<WebhookCatalog>().ReloadAsync(CancellationToken.None);
 
-		foreach (var problem in opdsProblems)
-		{
-			app.Logger.LogWarning("{Problem} The catalog is not used.", problem);
-		}
-
-		if (opdsCatalogs.Count > 0 && opdsDownloadsPath is null)
-		{
-			app.Logger.LogWarning("opds.downloads_path is not set: books can be found but not downloaded.");
-		}
-
-		// Plugins load once, before the sources are first listed; a broken package is logged and skipped.
-		var plugins = app.Services.GetRequiredService<PluginHost>();
-		plugins.LoadAll();
-		if (plugins.Plugins.Count > 0 && galleryDownloadsPath is null)
+		// Extensions load once, before the sources are first listed; a broken package is logged and skipped.
+		var extensions = app.Services.GetRequiredService<ExtensionHost>();
+		extensions.LoadAll();
+		if (extensions.Extensions.Count > 0 && galleryDownloadsPath is null)
 		{
 			app.Logger.LogWarning("gallery.downloads_path is not set: galleries can be found but not downloaded.");
 		}

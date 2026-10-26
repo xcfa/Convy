@@ -4,6 +4,7 @@ export const tabs = [
   { id: "overview", label: "Overview" },
   { id: "jobs", label: "Jobs" },
   { id: "logs", label: "Logs" },
+  { id: "sources", label: "Sources" },
   { id: "data", label: "Database" },
   { id: "webhooks", label: "Webhooks" },
   { id: "rules", label: "Rules" },

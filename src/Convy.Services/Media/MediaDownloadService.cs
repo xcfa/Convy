@@ -1,4 +1,4 @@
-using Convy.Services.Captcha;
+using Convy.Services.Extensions;
 using Convy.Services.Downloads;
 using Convy.Services.Jobs;
 using Convy.Services.Placement;
@@ -206,7 +206,7 @@ public sealed class MediaDownloadService
         var timeout = source.Timeout ?? TimeSpan.FromSeconds(Math.Max(1, _searchOptions.CurrentValue.SourceTimeoutSeconds));
         using var deadline = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
         deadline.CancelAfter(timeout);
-        using var waits = CaptchaService.WaitWithin(timeout);
+        using var waits = CallBudget.Within(timeout);
 
         try
         {

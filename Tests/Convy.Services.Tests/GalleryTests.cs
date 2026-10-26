@@ -12,16 +12,16 @@ using Microsoft.Extensions.Logging.Abstractions;
 namespace Convy.Services.Tests;
 
 /// <summary>
-/// The gallery downloader over the test plugin: the plugin is loaded from its DLL, its site is <see cref="Web"/>,
+/// The gallery downloader over the test extension: it is loaded from its DLL, its site is <see cref="Web"/>,
 /// the downloader and the REST service run against a real (in-memory SQLite) store.
 /// </summary>
 internal sealed class GalleryHarness : IDisposable
 {
-    /// <param name="captcha">The service of checks of the plugins and the REST service; none by default.</param>
-    public GalleryHarness(Convy.Services.Captcha.CaptchaService? captcha = null)
+    /// <param name="captcha">The service of checks of the extensions; none by default.</param>
+    public GalleryHarness(FakeCaptchaService? captcha = null)
     {
         Downloads = Directory.CreateTempSubdirectory("convy-gallery-").FullName;
-        Host = Plugins.Host(Web, time: Time, captcha: captcha);
+        Host = Extensions.Host(Web, time: Time, captcha: captcha);
         Registry = new SourceRegistry([Host], Media.Health(), Time, NullLogger<SourceRegistry>.Instance);
         Registry.RefreshAsync(CancellationToken.None).GetAwaiter().GetResult();
         Store = new EfGalleryDownloadStore(Db);
@@ -38,14 +38,14 @@ internal sealed class GalleryHarness : IDisposable
         };
         Api = new GalleryApiService(
             Registry, Media.Catalog(categories), Jobs, JobStore, new DownloaderResolver([Downloader]),
-            new StaticOptions<GalleryOptions>(Options), new StaticOptions<SearchOptions>(new SearchOptions { SourceTimeoutSeconds = 5 }), captcha);
+            new StaticOptions<GalleryOptions>(Options), new StaticOptions<SearchOptions>(new SearchOptions { SourceTimeoutSeconds = 5 }));
     }
 
     public FakeSiteHandler Web { get; } = new();
     public FakeTime Time { get; } = new();
     public TestDb Db { get; } = new();
     public string Downloads { get; }
-    public Convy.Services.Plugins.PluginHost Host { get; }
+    public Convy.Services.Extensions.ExtensionHost Host { get; }
     public SourceRegistry Registry { get; }
     public GalleryOptions Options { get; } = new() { Category = "manga", ParallelPages = 2, PageTimeoutSeconds = 10 };
     public EfGalleryDownloadStore Store { get; }
@@ -56,11 +56,17 @@ internal sealed class GalleryHarness : IDisposable
     public JobService Jobs { get; }
     public GalleryApiService Api { get; }
 
-    /// <summary>A gallery <paramref name="id"/> on the fake site with <paramref name="pages"/> pages whose images are <c>page N</c>.</summary>
-    public void Gallery(string id, string title, int pages, string imageHost = "img.gallery.test", string folder = "img")
+    /// <summary>The release of a gallery on the fake site: its address.</summary>
+    public static string Release(string id) => $"https://gallery.test/g/{id}";
+
+    /// <summary>
+    /// A gallery <paramref name="id"/> on the fake site with <paramref name="pages"/> pages whose images are <c>page N</c>;
+    /// the listing names the first image when <paramref name="listed"/>, the others are asked for per page.
+    /// </summary>
+    public void Gallery(string id, string title, int pages, string imageHost = "img.gallery.test", string folder = "img", bool listed = true)
     {
         Web.Json($"https://gallery.test/api/g/{id}", $$"""{ "id": "{{id}}", "title": "{{title}}", "pages": {{pages}}, "tags": ["female:glasses", "full color"], "artists": ["Someone"], "language": "en" }""");
-        Web.Json($"https://gallery.test/api/g/{id}/pages", "[" + string.Join(",", Enumerable.Range(1, pages).Select(n => n == 1 ? $$"""{ "image": "https://{{imageHost}}/{{folder}}/{{id}}/1.jpg" }""" : "{}")) + "]");
+        Web.Json($"https://gallery.test/api/g/{id}/pages", "[" + string.Join(",", Enumerable.Range(1, pages).Select(n => n == 1 && listed ? $$"""{ "image": "https://{{imageHost}}/{{folder}}/{{id}}/1.jpg" }""" : "{}")) + "]");
         for (var n = 1; n <= pages; n++)
         {
             Web.Json($"https://gallery.test/api/g/{id}/{n}", $$"""{ "image": "https://{{imageHost}}/{{folder}}/{{id}}/{{n}}.jpg" }""");
@@ -71,7 +77,7 @@ internal sealed class GalleryHarness : IDisposable
     public async Task<string> AddAsync(string id, string title = "Title", int pages = 3)
     {
         Gallery(id, title, pages);
-        return await Downloader.AddAsync(new GalleryPayload("test-gallery", id, title, pages), FileSelection.All, new AddOptions("Manga"), CancellationToken.None);
+        return await Downloader.AddAsync(new GalleryPayload("test-gallery", Release(id), title, pages), FileSelection.All, new AddOptions("Manga"), CancellationToken.None);
     }
 
     public void Dispose()
@@ -96,7 +102,7 @@ public class GalleryDownloaderTests
     {
         using var h = new GalleryHarness();
         var itemRef = await h.AddAsync("g1", "My Gallery: Vol. 1");
-        Assert.Equal("test-gallery:g1", itemRef);
+        Assert.Equal("test-gallery:https://gallery.test/g/g1", itemRef);
         Assert.Equal(DownloadState.Queued, (await h.Downloader.GetItemAsync(itemRef, CancellationToken.None))!.State);
 
         await h.Runner.RunAsync(itemRef, CancellationToken.None);
@@ -127,12 +133,12 @@ public class GalleryDownloaderTests
     public async Task ABrokenImageIsFetchedFromTheRetryAddress()
     {
         using var h = new GalleryHarness();
-        h.Gallery("g2", "Two", 2, folder: "broken");
+        h.Gallery("g2", "Two", 2, folder: "broken", listed: false);
         h.Web.Bytes("https://img.gallery.test/img/g2/1.jpg", "page 1"u8.ToArray());
         h.Web.Bytes("https://img.gallery.test/img/g2/2.jpg", "page 2"u8.ToArray());
         h.Web.Status("https://img.gallery.test/broken/g2/1.jpg", HttpStatusCode.InternalServerError);
         h.Web.Status("https://img.gallery.test/broken/g2/2.jpg", HttpStatusCode.InternalServerError);
-        var itemRef = await h.Downloader.AddAsync(new GalleryPayload("test-gallery", "g2", "Two", 2), FileSelection.All, new AddOptions(null), CancellationToken.None);
+        var itemRef = await h.Downloader.AddAsync(new GalleryPayload("test-gallery", GalleryHarness.Release("g2"), "Two", 2), FileSelection.All, new AddOptions(null), CancellationToken.None);
 
         await h.Runner.RunAsync(itemRef, CancellationToken.None);
 
@@ -175,7 +181,7 @@ public class GalleryDownloaderTests
 
         // The site fixed: a new job for the same release picks the pages up.
         h.Web.Bytes("https://img.gallery.test/img/g3/3.jpg", "page 3"u8.ToArray());
-        await h.Downloader.AddAsync(new GalleryPayload("test-gallery", "g3", "Title", 3), FileSelection.All, new AddOptions(null), CancellationToken.None);
+        await h.Downloader.AddAsync(new GalleryPayload("test-gallery", GalleryHarness.Release("g3"), "Title", 3), FileSelection.All, new AddOptions(null), CancellationToken.None);
         await h.Runner.RunAsync(itemRef, CancellationToken.None);
         Assert.Equal(GalleryDownloadState.Completed, (await h.Store.GetAsync(itemRef, CancellationToken.None))!.State);
     }
@@ -193,7 +199,7 @@ public class GalleryDownloaderTests
         Assert.DoesNotContain(h.Web.Requested, u => u.Contains("/pages", StringComparison.Ordinal));
 
         await Assert.ThrowsAsync<ConvyRequestException>(() => h.Downloader.AddAsync(
-            new GalleryPayload("test-gallery", "g4", "Title"), new FileSelection(["a.jpg"]), new AddOptions(null), CancellationToken.None));
+            new GalleryPayload("test-gallery", GalleryHarness.Release("g4"), "Title"), new FileSelection(["a.jpg"]), new AddOptions(null), CancellationToken.None));
     }
 
     [Fact]
@@ -252,16 +258,17 @@ public class GalleryApiTests
         h.Gallery("g1", "One", 3);
 
         var page = await h.Api.SearchAsync("test-gallery", "glasses", "en", new Dictionary<string, IReadOnlyList<string>> { ["category"] = ["manga"] }, null, CancellationToken.None);
-        Assert.Equal("2", page.NextPage);
+        Assert.Equal("b:2", page.NextPage);
         var item = Assert.Single(page.Items);
-        Assert.Equal(("g1", "One", 3, "female:glasses", "3"), (item.ContentId, item.Title, item.FileCount, item.Properties["tags"], item.Properties["pages"]));
+        // What the catalog says; the full metadata comes with the release's link.
+        Assert.Equal(("https://gallery.test/g/g1", "One", "g1"), (item.ContentId, item.Title, item.Properties["id"]));
 
         var resolved = await h.Api.ResolveAsync("test-gallery", "https://gallery.test/g/g1", CancellationToken.None);
-        Assert.Equal(("g1", "https://gallery.test/g/g1", "Someone"), (resolved.ContentId, resolved.InfoUrl, resolved.Properties["artists"]));
+        Assert.Equal(("https://gallery.test/g/g1", "https://gallery.test/g/g1", "Someone"), (resolved.ContentId, resolved.InfoUrl, resolved.Properties["artists"]));
 
         var missing = await Assert.ThrowsAsync<ApiException>(() => h.Api.ResolveAsync("test-gallery", "https://gallery.test/g/nope", CancellationToken.None));
         Assert.Equal(404, missing.Status);
-        Assert.Equal(404, (await Assert.ThrowsAsync<ApiException>(() => h.Api.SearchAsync("prowlarr:1", "x", null, new Dictionary<string, IReadOnlyList<string>>(), null, CancellationToken.None))).Status);
+        Assert.Equal(404, (await Assert.ThrowsAsync<ApiException>(() => h.Api.SearchAsync("prowlarr-1", "x", null, new Dictionary<string, IReadOnlyList<string>>(), null, CancellationToken.None))).Status);
         Assert.Equal(400, (await Assert.ThrowsAsync<ApiException>(() => h.Api.ResolveAsync("test-gallery", "not a url", CancellationToken.None))).Status);
     }
 
@@ -271,13 +278,13 @@ public class GalleryApiTests
         using var h = new GalleryHarness();
         h.Gallery("g1", "One", 2);
 
-        var job = await h.Api.StartJobAsync(new ApiStartJobRequest("test-gallery", "g1"), CancellationToken.None);
+        var job = await h.Api.StartJobAsync(new ApiStartJobRequest("test-gallery", GalleryHarness.Release("g1")), CancellationToken.None);
         Assert.Equal(("j_1", "queued", "One", 0, 2, false), (job.JobId, job.Status, job.Title, job.PagesDone, job.PagesTotal, job.ArchiveReady));
         var stored = Assert.Single(await h.JobStore.GetGroupAsync(1, CancellationToken.None));
-        Assert.Equal(("gallery", "test-gallery:g1", "manga", "Manga", "https://gallery.test/g/g1"), (stored.Provider, stored.ItemRef, stored.Category, stored.ClientCategory, stored.OriginUrl));
+        Assert.Equal(("gallery", "test-gallery:https://gallery.test/g/g1", "manga", "Manga", "https://gallery.test/g/g1"), (stored.Provider, stored.ItemRef, stored.Category, stored.ClientCategory, stored.OriginUrl));
 
         // Asked again while it runs: the same job, not a second one.
-        var again = await h.Api.StartJobAsync(new ApiStartJobRequest("test-gallery", "g1"), CancellationToken.None);
+        var again = await h.Api.StartJobAsync(new ApiStartJobRequest("test-gallery", GalleryHarness.Release("g1")), CancellationToken.None);
         Assert.Equal("j_1", again.JobId);
 
         var notReady = await Assert.ThrowsAsync<ApiException>(() => h.Api.GetArchiveAsync("j_1", CancellationToken.None));
@@ -303,16 +310,16 @@ public class GalleryApiTests
         using var h = new GalleryHarness();
         h.Gallery("g1", "One", 1);
 
-        Assert.Equal(400, (await Assert.ThrowsAsync<ApiException>(() => h.Api.StartJobAsync(new ApiStartJobRequest("", "g1"), CancellationToken.None))).Status);
-        Assert.Equal(404, (await Assert.ThrowsAsync<ApiException>(() => h.Api.StartJobAsync(new ApiStartJobRequest("soulseek", "g1"), CancellationToken.None))).Status);
-        var badCategory = await Assert.ThrowsAsync<ApiException>(() => h.Api.StartJobAsync(new ApiStartJobRequest("test-gallery", "g1", "movies"), CancellationToken.None));
+        Assert.Equal(400, (await Assert.ThrowsAsync<ApiException>(() => h.Api.StartJobAsync(new ApiStartJobRequest("", GalleryHarness.Release("g1")), CancellationToken.None))).Status);
+        Assert.Equal(404, (await Assert.ThrowsAsync<ApiException>(() => h.Api.StartJobAsync(new ApiStartJobRequest("slskd", GalleryHarness.Release("g1")), CancellationToken.None))).Status);
+        var badCategory = await Assert.ThrowsAsync<ApiException>(() => h.Api.StartJobAsync(new ApiStartJobRequest("test-gallery", GalleryHarness.Release("g1"), "movies"), CancellationToken.None));
         Assert.Equal(400, badCategory.Status);
         Assert.Contains("Unknown category 'movies'", badCategory.Message);
-        var noRelease = await Assert.ThrowsAsync<ApiException>(() => h.Api.StartJobAsync(new ApiStartJobRequest("test-gallery", "nope"), CancellationToken.None));
+        var noRelease = await Assert.ThrowsAsync<ApiException>(() => h.Api.StartJobAsync(new ApiStartJobRequest("test-gallery", GalleryHarness.Release("nope")), CancellationToken.None));
         Assert.Equal(502, noRelease.Status);
-        Assert.Contains("No gallery nope", noRelease.Message);
+        Assert.Contains("no release at https://gallery.test/g/nope", noRelease.Message);
 
-        var other = await h.Api.StartJobAsync(new ApiStartJobRequest("test-gallery", "g1", "other"), CancellationToken.None);
+        var other = await h.Api.StartJobAsync(new ApiStartJobRequest("test-gallery", GalleryHarness.Release("g1"), "other"), CancellationToken.None);
         Assert.Equal("other", (await h.JobStore.GetGroupAsync(1, CancellationToken.None))[0].Category);
         Assert.Equal("j_1", other.JobId);
     }

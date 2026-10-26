@@ -20,27 +20,8 @@ public sealed class SlskdOptions
     /// </summary>
     public string? DownloadsPath { get; set; }
 
-    /// <summary>slskd ends a search after this long without new responses.</summary>
-    public double SearchInactivitySeconds { get; set; } = 8;
-
-    /// <summary>A search still running after this long is stopped and its responses are used.</summary>
-    public double SearchMaxSeconds { get; set; } = 15;
-
-    /// <summary>Peer responses collected per search.</summary>
-    public int ResponseLimit { get; set; } = 100;
-
     public bool IsConfigured => !string.IsNullOrWhiteSpace(Url) && !string.IsNullOrWhiteSpace(ApiKey);
 }
-
-public sealed record SlskdSearch(Guid Id, string? State, bool IsComplete, int ResponseCount);
-
-public sealed record SlskdFile(string Filename, long Size, string? Extension = null, int? BitRate = null, int? Length = null);
-
-public sealed record SlskdResponse(
-    string Username, IReadOnlyList<SlskdFile>? Files, bool HasFreeUploadSlot, int QueueLength, long UploadSpeed);
-
-/// <summary>A browsed directory; file names are bare (without the directory).</summary>
-public sealed record SlskdDirectory(string Name, IReadOnlyList<SlskdFile>? Files);
 
 public sealed record SlskdTransfer
 {
@@ -74,10 +55,10 @@ public sealed record SlskdEnqueueFile(string Filename, long Size);
 public sealed record SlskdBatchFailure(string? Filename, string? Message);
 
 /// <summary>
-/// HTTP client for the slskd API (<c>/api/v0</c>, <c>X-API-Key</c>). slskd accepts one search
-/// request at a time, so starting searches is serialised here; polling is not.
+/// HTTP client for the slskd API (<c>/api/v0</c>, <c>X-API-Key</c>) as the Soulseek downloader uses it: queueing and
+/// watching transfers. Searching Soulseek is the business of the slskd source extension.
 /// </summary>
-public sealed class SlskdClient : IDisposable
+public sealed class SlskdClient
 {
     private static readonly JsonSerializerOptions Json = new(JsonSerializerDefaults.Web)
     {
@@ -85,7 +66,6 @@ public sealed class SlskdClient : IDisposable
     };
 
     private readonly HttpClient _http;
-    private readonly SemaphoreSlim _searchStartGate = new(1, 1);
 
     public SlskdClient(HttpClient http, SlskdOptions options)
     {
@@ -94,51 +74,6 @@ public sealed class SlskdClient : IDisposable
     }
 
     public SlskdOptions Options { get; }
-
-    public async Task<SlskdSearch> StartSearchAsync(string text, CancellationToken cancellationToken)
-    {
-        var request = new
-        {
-            id = Guid.NewGuid(),
-            searchText = text,
-            searchTimeout = (int)(Options.SearchInactivitySeconds * 1000), // milliseconds
-            responseLimit = Options.ResponseLimit,
-            fileLimit = 10_000,
-            filterResponses = true,
-        };
-
-        await _searchStartGate.WaitAsync(cancellationToken).ConfigureAwait(false);
-        try
-        {
-            return await SendAsync<SlskdSearch>(HttpMethod.Post, "searches", request, cancellationToken).ConfigureAwait(false)
-                   ?? throw new SourceException(SourceErrorKind.Error, "slskd returned no search.");
-        }
-        finally
-        {
-            _searchStartGate.Release();
-        }
-    }
-
-    public async Task<SlskdSearch> GetSearchAsync(Guid id, CancellationToken cancellationToken) =>
-        await SendAsync<SlskdSearch>(HttpMethod.Get, $"searches/{id}?includeResponses=false", null, cancellationToken).ConfigureAwait(false)
-        ?? throw new SourceException(SourceErrorKind.Error, "The search disappeared from slskd.");
-
-    /// <summary>Stops a running search; its responses are kept.</summary>
-    public Task StopSearchAsync(Guid id, CancellationToken cancellationToken) =>
-        SendAsync<object>(HttpMethod.Put, $"searches/{id}", null, cancellationToken);
-
-    /// <summary>Responses of a search; slskd stores them only once the search has ended.</summary>
-    public async Task<IReadOnlyList<SlskdResponse>> GetSearchResponsesAsync(Guid id, CancellationToken cancellationToken) =>
-        await SendAsync<List<SlskdResponse>>(HttpMethod.Get, $"searches/{id}/responses", null, cancellationToken).ConfigureAwait(false) ?? [];
-
-    public Task DeleteSearchAsync(Guid id, CancellationToken cancellationToken) =>
-        SendAsync<object>(HttpMethod.Delete, $"searches/{id}", null, cancellationToken);
-
-    /// <summary>The files of one remote directory (the first entry is the directory itself).</summary>
-    public async Task<IReadOnlyList<SlskdDirectory>> BrowseDirectoryAsync(string username, string directory, CancellationToken cancellationToken) =>
-        await SendAsync<List<SlskdDirectory>>(
-            HttpMethod.Post, $"users/{Uri.EscapeDataString(username)}/directory", new { directory }, cancellationToken)
-            .ConfigureAwait(false) ?? [];
 
     /// <summary>
     /// Queues downloads from one user as a batch (slskd 0.26+) stored under
@@ -201,15 +136,6 @@ public sealed class SlskdClient : IDisposable
             : null;
     }
 
-    /// <summary>Whether slskd is logged in to the Soulseek network.</summary>
-    public async Task<bool> IsLoggedInAsync(CancellationToken cancellationToken)
-    {
-        var state = await SendAsync<ServerState>(HttpMethod.Get, "server", null, cancellationToken).ConfigureAwait(false);
-        return state?.IsLoggedIn == true;
-    }
-
-    public void Dispose() => _searchStartGate.Dispose();
-
     private async Task<T?> SendAsync<T>(
         HttpMethod method, string path, object? body, CancellationToken cancellationToken, bool notFoundIsNull = false)
     {
@@ -265,6 +191,4 @@ public sealed class SlskdClient : IDisposable
     private sealed record SlskdBatch(Guid Id, List<SlskdTransfer>? Transfers, SlskdBatchOptions? Options);
 
     private sealed record SlskdBatchOptions(string? Destination);
-
-    private sealed record ServerState(bool IsLoggedIn, string? State);
 }

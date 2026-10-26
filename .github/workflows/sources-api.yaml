@@ -1,6 +1,6 @@
 name: Publish Convy.Sources.Abstractions
 
-# The plugin API as a NuGet package on GitHub Packages. Tag sources-api-v<Version>, where <Version> is the csproj's
+# Convy's API for extensions (built on Shizuka.Sources.Abstractions) as a NuGet package on GitHub Packages. Tag sources-api-v<Version>, where <Version> is the csproj's
 # <Version>; the docker workflow ignores these tags (it watches v*).
 on:
   push:
@@ -25,6 +25,8 @@ jobs:
             exit 1
           fi
       - run: dotnet pack src/Convy.Sources.Abstractions/Convy.Sources.Abstractions.csproj -c Release -o nupkg
+        env:
+          PACKAGES_TOKEN: ${{ secrets.PACKAGES_TOKEN }}
       - uses: actions/upload-artifact@v4
         with:
           name: nupkg

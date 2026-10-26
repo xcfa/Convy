@@ -28,23 +28,12 @@ public sealed class CategoryOptions
     /// <summary>Source ids in priority order; all active sources by name when omitted.</summary>
     public List<string>? Sources { get; set; }
 
-    /// <summary>Read by the Prowlarr provider only.</summary>
-    public ProwlarrCategoryOptions? Prowlarr { get; set; }
-
-    /// <summary>Read by the Soulseek provider only.</summary>
-    public SoulseekCategoryOptions? Soulseek { get; set; }
-}
-
-public sealed class ProwlarrCategoryOptions
-{
-    /// <summary>Newznab category ids, e.g. 2000 (movies), 3000 (audio), 5000 (TV).</summary>
-    public List<int>? Categories { get; set; }
-}
-
-public sealed class SoulseekCategoryOptions
-{
-    /// <summary>File extensions to keep (without dot), e.g. flac, mp3.</summary>
-    public List<string>? Extensions { get; set; }
+    /// <summary>
+    /// What the category tells each source, by the source's or its provider's id: lists of values by key, as the
+    /// source documents them (<c>options.prowlarr.categories: [3000]</c>, <c>options.slskd.extensions: [flac, mp3]</c>).
+    /// </summary>
+    [ConfigurationKeyName("options")]
+    public Dictionary<string, Dictionary<string, List<string>>> Options { get; set; } = new(StringComparer.OrdinalIgnoreCase);
 }
 
 /// <summary>The <c>search</c> section of configuration.yml.</summary>

@@ -41,7 +41,7 @@ public sealed class ConvyMcpTools
         _run.Run("get_categories", () => _catalog.GetCategoriesAsync(cancellationToken));
 
     [McpServerTool(Name = "get_sources", ReadOnly = true)]
-    [Description("Lists search sources (trackers via Prowlarr, Soulseek, OPDS catalogs, gallery plugins) with id, name, protocol and status (ok, error, disabled).")]
+    [Description("Lists search sources (trackers via Prowlarr, Soulseek, OPDS catalogs, manga and comics sites; each from an extension package) with id, name, protocol and status (ok, error, disabled).")]
     public Task<CallToolResult> GetSources(CancellationToken cancellationToken) =>
         _run.Run("get_sources", () => _catalog.GetSourcesAsync(cancellationToken));
 

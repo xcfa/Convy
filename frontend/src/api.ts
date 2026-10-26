@@ -269,6 +269,93 @@ export interface AboutInfo {
   settings: AboutSetting[];
 }
 
+export interface SourceSetting {
+  key: string;
+  label: string;
+  kind: "text" | "secret" | "flag" | "number" | "choice" | "cookies" | "url";
+  description: string | null;
+  options: string[];
+  default: string | null;
+  /** Never sent for a secret or cookies; `set` tells whether one is saved. */
+  value: string | null;
+  set: boolean;
+}
+
+export interface ListedSource {
+  id: string;
+  name: string;
+  kind: string;
+  enabled: boolean;
+  status: string;
+  message: string | null;
+}
+
+export interface SourceUnit {
+  id: string;
+  name: string;
+  /** gallery (a site), torrent, soulseek, files, or provider (its sources in `sources`). */
+  kind: "gallery" | "torrent" | "soulseek" | "files" | "provider";
+  enabled: boolean;
+  status: string;
+  message: string | null;
+  proxy: string | null;
+  timeout_sec: number;
+  domains: string[];
+  nsfw: boolean;
+  settings: SourceSetting[];
+  login: { description: string | null; fields: SourceSetting[] } | null;
+  sources: ListedSource[] | null;
+}
+
+export interface InstalledExtension {
+  package: string;
+  version: string;
+  file: string;
+  api: string;
+  convy_api: string | null;
+  units: SourceUnit[];
+}
+
+export interface SourcesView {
+  path: string;
+  extensions: InstalledExtension[];
+  problems: { file: string; message: string }[];
+  indexes: { url: string; source: "file" | "ui"; auth: "none" | "basic" | "bearer" }[];
+}
+
+export interface AvailableExtension {
+  index: string;
+  package: string;
+  name: string;
+  version: string;
+  nsfw: boolean;
+  languages: string[];
+  sources: { id: string; name: string }[];
+  incompatible: string | null;
+  installed: string | null;
+  update: boolean;
+}
+
+export interface AvailableView {
+  extensions: AvailableExtension[];
+  errors: { index: string; message: string }[];
+}
+
+export interface SourceSettingsInput {
+  enabled?: boolean;
+  proxy?: string;
+  timeout_sec?: number;
+  /** Only what changed; "" clears a value. */
+  values?: Record<string, string>;
+}
+
+export interface IndexInput {
+  url: string;
+  username?: string;
+  password?: string;
+  token?: string;
+}
+
 export class ApiError extends Error {
   readonly status: number;
 
@@ -344,4 +431,21 @@ export const api = {
     request<WebhookTestResult>("/api/ui/webhooks/test", json("POST", { webhook, event, ...opened })),
   rules: () => request<RulesView>("/api/ui/rules"),
   about: () => request<AboutInfo>("/api/ui/about"),
+  sources: () => request<SourcesView>("/api/ui/sources"),
+  availableSources: (fresh = false) => request<AvailableView>(`/api/ui/sources/available${query({ fresh })}`),
+  installSource: (index: string, pkg: string) =>
+    request<InstalledExtension>("/api/ui/sources/install", json("POST", { index, package: pkg })),
+  uploadSource: (file: File) => {
+    const form = new FormData();
+    form.append("file", file);
+    return request<InstalledExtension>("/api/ui/sources/upload", { method: "POST", body: form });
+  },
+  removeSource: (pkg: string) => request<void>(`/api/ui/sources/packages/${encodeURIComponent(pkg)}`, { method: "DELETE" }),
+  removeBrokenSource: (file: string) => request<void>(`/api/ui/sources/problems/${encodeURIComponent(file)}`, { method: "DELETE" }),
+  saveSourceSettings: (id: string, input: SourceSettingsInput) =>
+    request<void>(`/api/ui/sources/settings/${encodeURIComponent(id)}`, json("PUT", input)),
+  signInSource: (id: string, fields: Record<string, string>) =>
+    request<void>(`/api/ui/sources/login/${encodeURIComponent(id)}`, json("POST", { fields })),
+  addSourceIndex: (input: IndexInput) => request<void>("/api/ui/sources/indexes", json("POST", input)),
+  removeSourceIndex: (url: string) => request<void>(`/api/ui/sources/indexes${query({ url })}`, { method: "DELETE" }),
 };
