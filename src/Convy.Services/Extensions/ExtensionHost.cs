@@ -392,7 +392,8 @@ public sealed class ExtensionHost : ISourceProvider, ISourceProviderGroup, IDisp
                 }
 
                 Take(manifest.Id);
-                galleries.Add(new ExtensionSource(source, package.Package, this, _loggers.CreateLogger($"Convy.Extensions.{manifest.Id}")));
+                galleries.Add(new ExtensionSource(source, package.Package, this, _loggers.CreateLogger($"Convy.Extensions.{manifest.Id}"),
+                    archives: package.ApiVersion >= ExtensionSource.ArchivesFrom));
             }
 
             var sources = new List<PackagedSource>();

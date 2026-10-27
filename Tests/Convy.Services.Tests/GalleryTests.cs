@@ -148,6 +148,71 @@ public class GalleryDownloaderTests
     }
 
     [Fact]
+    public async Task AnArchiveTheSiteMakesIsKeptAsItComesInsteadOfThePages()
+    {
+        using var h = new GalleryHarness();
+        h.Gallery("g3", "Three", 3);
+        byte[] made;
+        using (var buffer = new MemoryStream())
+        {
+            using (var zip = new ZipArchive(buffer, ZipArchiveMode.Create, leaveOpen: true))
+            {
+                foreach (var name in new[] { "Three/01.webp", "Three/02.webp", "ComicInfo.xml" })
+                {
+                    using var entry = new StreamWriter(zip.CreateEntry(name).Open());
+                    entry.Write(name);
+                }
+            }
+
+            made = buffer.ToArray();
+        }
+
+        h.Web.Json("https://gallery.test/api/g/g3/archive", """{ "url": "https://files.gallery.test/g3.cbz" }""");
+        h.Web.Bytes("https://files.gallery.test/g3.cbz", made, "application/zip");
+        var itemRef = await h.Downloader.AddAsync(new GalleryPayload("test-gallery", GalleryHarness.Release("g3"), "Three", 3), FileSelection.All, new AddOptions(null), CancellationToken.None);
+
+        await h.Runner.RunAsync(itemRef, CancellationToken.None);
+
+        var download = (await h.Store.GetAsync(itemRef, CancellationToken.None))!;
+        // The site's own archive, its pages counted: two, not the three the gallery said.
+        Assert.Equal((GalleryDownloadState.Completed, 2, 2, (long)made.Length), (download.State, download.PagesDone, download.PagesTotal, download.Bytes));
+        Assert.Equal(made, await File.ReadAllBytesAsync(download.ArchivePath, CancellationToken.None));
+        Assert.Equal("secret", FakeSiteHandler.Header(h.Web.Requests.Single(r => r.RequestUri!.AbsoluteUri == "https://files.gallery.test/g3.cbz"), "X-Token"));
+        Assert.DoesNotContain(h.Web.Requested, r => r.StartsWith("https://gallery.test/api/g/g3/pages", StringComparison.Ordinal));
+        Assert.False(File.Exists(download.ArchivePath + ".part"));
+
+        // The count the site gives is taken as it is.
+        h.Gallery("g6", "Six", 3);
+        h.Web.Json("https://gallery.test/api/g/g6/archive", """{ "url": "https://files.gallery.test/g3.cbz", "pages": 7 }""");
+        var six = await h.Downloader.AddAsync(new GalleryPayload("test-gallery", GalleryHarness.Release("g6"), "Six", 3), FileSelection.All, new AddOptions(null), CancellationToken.None);
+        await h.Runner.RunAsync(six, CancellationToken.None);
+        Assert.Equal(7, (await h.Store.GetAsync(six, CancellationToken.None))!.PagesTotal);
+    }
+
+    [Fact]
+    public async Task AnArchiveThatFailsOrIsNoZipLeavesNothingAndThePagesAreDownloaded()
+    {
+        using var h = new GalleryHarness();
+        h.Gallery("g4", "Four", 2);
+        h.Web.Json("https://gallery.test/api/g/g4/archive", """{ "url": "https://files.gallery.test/g4.cbz" }""");
+        h.Web.Bytes("https://files.gallery.test/g4.cbz", "not a zip"u8.ToArray(), "application/zip");
+        h.Gallery("g5", "Five", 2);
+        h.Web.Status("https://gallery.test/api/g/g5/archive", HttpStatusCode.BadGateway);
+
+        foreach (var id in new[] { "g4", "g5" })
+        {
+            var itemRef = await h.Downloader.AddAsync(new GalleryPayload("test-gallery", GalleryHarness.Release(id), id, 2), FileSelection.All, new AddOptions(null), CancellationToken.None);
+            await h.Runner.RunAsync(itemRef, CancellationToken.None);
+
+            var download = (await h.Store.GetAsync(itemRef, CancellationToken.None))!;
+            Assert.Equal((GalleryDownloadState.Completed, 2), (download.State, download.PagesDone));
+            Assert.False(File.Exists(download.ArchivePath + ".part"));
+            using var zip = ZipFile.OpenRead(download.ArchivePath);
+            Assert.Equal(["0001.jpg", "0002.jpg"], zip.Entries.Select(e => e.Name).Order());
+        }
+    }
+
+    [Fact]
     public async Task AFailedPageWaitsForARetryKeepsTheFetchedPagesAndFailsForGood()
     {
         using var h = new GalleryHarness();

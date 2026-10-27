@@ -23,9 +23,20 @@ public sealed class ExtensionSource : ExtensionUnit, IGallerySource, IGalleryBro
     /// <summary>The largest image a page may have.</summary>
     private const long MaxImageBytes = 64L * 1024 * 1024;
 
+    /// <summary>The largest archive a source may name.</summary>
+    private const long MaxArchiveBytes = 16L * 1024 * 1024 * 1024;
+
+    /// <summary>
+    /// The API from which a source with both <see cref="Api.SourceCapabilities.Archive"/> and
+    /// <see cref="Api.SourceCapabilities.Download"/> says "no archive, take the pages" with <c>null</c>: an older one
+    /// meant its archive for Shizuka's import (one that may cost the account something), so Convy does not ask it.
+    /// </summary>
+    public static readonly Version ArchivesFrom = new(1, 7);
+
     private readonly Api.MetadataSource _source;
 
-    public ExtensionSource(Api.MetadataSource source, string package, ExtensionHost host, ILogger logger)
+    /// <param name="archives">Whether the extension is built against <see cref="ArchivesFrom"/> or later: only then is its archive asked for.</param>
+    public ExtensionSource(Api.MetadataSource source, string package, ExtensionHost host, ILogger logger, bool archives = false)
         : base(source.Manifest, package, host, logger)
     {
         _source = source;
@@ -37,6 +48,7 @@ public sealed class ExtensionSource : ExtensionUnit, IGallerySource, IGalleryBro
             Languages = manifest.Languages,
             DefaultAgeRating = manifest.DefaultAgeRating is { } rating ? (int)rating : null,
             CanSearch = manifest.Capabilities.HasFlag(Api.SourceCapabilities.Browse) || manifest.Capabilities.HasFlag(Api.SourceCapabilities.Search),
+            Archives = archives && manifest.Capabilities.HasFlag(Api.SourceCapabilities.Archive),
             Filters = manifest.BrowseFilters
                 .Select(f => new GalleryFilter(f.Key, f.Label, f.Options.Select(o => new GalleryFilterOption(o.Value, o.Label)).ToList()))
                 .ToList(),
@@ -203,6 +215,52 @@ public sealed class ExtensionSource : ExtensionUnit, IGallerySource, IGalleryBro
         }
     }
 
+    /// <summary>
+    /// The archive a source with <see cref="GalleryManifest.Archives"/> names for the release, fetched through its HTTP
+    /// with the headers it asks for; <c>null</c> — it has none for this one (API 1.7: then its pages).
+    /// </summary>
+    public async Task<GalleryArchive?> DownloadArchiveAsync(string contentId, Stream destination, CancellationToken cancellationToken)
+    {
+        if (!Manifest.Archives)
+        {
+            return null;
+        }
+
+        var archive = await CallAsync((context, ct) => _source.GetArchiveAsync(Address(contentId), context, NoProgress.Instance, ct), cancellationToken)
+            .ConfigureAwait(false);
+        if (archive is null)
+        {
+            return null;
+        }
+
+        if (archive.Url is not { IsAbsoluteUri: true })
+        {
+            throw new SourceException(SourceErrorKind.Error, $"{Name} gave no address for the archive of {contentId}.");
+        }
+
+        if (archive.SizeBytes > MaxArchiveBytes)
+        {
+            throw new SourceException(SourceErrorKind.Error, $"The archive is larger than {MaxArchiveBytes} bytes.");
+        }
+
+        var http = NewHttp();
+        try
+        {
+            var (fits, bytes, _) = await http.DownloadAsync(archive.Url, archive.Headers, destination, MaxArchiveBytes, cancellationToken).ConfigureAwait(false);
+            return fits
+                ? new GalleryArchive(bytes, archive.Pages is > 0 ? archive.Pages : null)
+                : throw new SourceException(SourceErrorKind.Error, $"The archive is larger than {MaxArchiveBytes} bytes.");
+        }
+        catch (Api.SourceException ex)
+        {
+            throw Failure(ex, http);
+        }
+        catch (Exception ex) when (ex is not (OperationCanceledException or SourceException or HttpRequestException or IOException))
+        {
+            throw new SourceException(SourceErrorKind.Error, $"The archive of {Name} could not be fetched: {ex.Message}", ex);
+        }
+    }
+
     private async Task<IReadOnlyList<Api.SourcePageLink>> PagesAsync(string contentId, Api.ISourceContext context, CancellationToken ct)
     {
         var url = Address(contentId);
@@ -322,6 +380,16 @@ public sealed class ExtensionSource : ExtensionUnit, IGallerySource, IGalleryBro
             InfoUrl = candidate.Url.AbsoluteUri,
             Properties = properties.Build(),
         };
+    }
+
+    /// <summary>Where the progress of an archive goes: the download's state counts pages, not the site's preparation.</summary>
+    private sealed class NoProgress : IProgress<Api.SourceProgress>
+    {
+        public static NoProgress Instance { get; } = new();
+
+        public void Report(Api.SourceProgress value)
+        {
+        }
     }
 
     /// <summary>The flat properties of a release: blank values are left out, lists joined with <c>, </c>.</summary>
