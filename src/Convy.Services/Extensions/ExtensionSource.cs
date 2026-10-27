@@ -23,6 +23,9 @@ public sealed class ExtensionSource : ExtensionUnit, IGallerySource, IGalleryBro
     /// <summary>The largest image a page may have.</summary>
     private const long MaxImageBytes = 64L * 1024 * 1024;
 
+    /// <summary>The largest archive a source may name.</summary>
+    private const long MaxArchiveBytes = 16L * 1024 * 1024 * 1024;
+
     private readonly Api.MetadataSource _source;
 
     public ExtensionSource(Api.MetadataSource source, string package, ExtensionHost host, ILogger logger)
@@ -203,6 +206,48 @@ public sealed class ExtensionSource : ExtensionUnit, IGallerySource, IGalleryBro
         }
     }
 
+    /// <summary>
+    /// The archive a source with <see cref="Api.SourceCapabilities.Archive"/> names for the release (API 1.5), fetched
+    /// through its HTTP with the headers it asks for; <c>null</c> — it has none for this one (API 1.7: then its pages).
+    /// </summary>
+    public async Task<GalleryArchive?> DownloadArchiveAsync(string contentId, Stream destination, CancellationToken cancellationToken)
+    {
+        if (!_source.Manifest.Capabilities.HasFlag(Api.SourceCapabilities.Archive))
+        {
+            return null;
+        }
+
+        var archive = await CallAsync((context, ct) => _source.GetArchiveAsync(Address(contentId), context, NoProgress.Instance, ct), cancellationToken)
+            .ConfigureAwait(false);
+        if (archive is null)
+        {
+            return null;
+        }
+
+        if (archive.Url is not { IsAbsoluteUri: true })
+        {
+            throw new SourceException(SourceErrorKind.Error, $"{Name} gave no address for the archive of {contentId}.");
+        }
+
+        if (archive.SizeBytes > MaxArchiveBytes)
+        {
+            throw new SourceException(SourceErrorKind.Error, $"The archive is larger than {MaxArchiveBytes} bytes.");
+        }
+
+        var http = NewHttp();
+        try
+        {
+            var (fits, bytes, _) = await http.DownloadAsync(archive.Url, archive.Headers, destination, MaxArchiveBytes, cancellationToken).ConfigureAwait(false);
+            return fits
+                ? new GalleryArchive(bytes, archive.Pages is > 0 ? archive.Pages : null)
+                : throw new SourceException(SourceErrorKind.Error, $"The archive is larger than {MaxArchiveBytes} bytes.");
+        }
+        catch (Api.SourceException ex)
+        {
+            throw Failure(ex, http);
+        }
+    }
+
     private async Task<IReadOnlyList<Api.SourcePageLink>> PagesAsync(string contentId, Api.ISourceContext context, CancellationToken ct)
     {
         var url = Address(contentId);
@@ -322,6 +367,16 @@ public sealed class ExtensionSource : ExtensionUnit, IGallerySource, IGalleryBro
             InfoUrl = candidate.Url.AbsoluteUri,
             Properties = properties.Build(),
         };
+    }
+
+    /// <summary>Where the progress of an archive goes: the download's state counts pages, not the site's preparation.</summary>
+    private sealed class NoProgress : IProgress<Api.SourceProgress>
+    {
+        public static NoProgress Instance { get; } = new();
+
+        public void Report(Api.SourceProgress value)
+        {
+        }
     }
 
     /// <summary>The flat properties of a release: blank values are left out, lists joined with <c>, </c>.</summary>

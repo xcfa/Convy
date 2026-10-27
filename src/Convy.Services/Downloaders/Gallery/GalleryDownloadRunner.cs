@@ -7,9 +7,9 @@ using Microsoft.Extensions.Options;
 namespace Convy.Services.Downloaders.Gallery;
 
 /// <summary>
-/// Downloads one gallery: lists its pages through the source, fetches the images that are not on disk yet (a few at a
-/// time, each through the source's HTTP) into <see cref="GalleryDownload.WorkPath"/>, then zips them into the CBZ. A
-/// failure is tried again later (up to <see cref="MaxAttempts"/> runs); pages already fetched are kept between runs.
+/// Downloads one gallery: as the archive the site makes when the source has one for it, else page by page — lists its
+/// pages through the source, fetches the images that are not on disk yet (a few at a time, each through the source's
+/// HTTP) into <see cref="GalleryDownload.WorkPath"/>, then zips them into the CBZ. A failure is tried again later (up to <see cref="MaxAttempts"/> runs); pages already fetched are kept between runs.
 /// </summary>
 public sealed class GalleryDownloadRunner
 {
@@ -106,6 +106,11 @@ public sealed class GalleryDownloadRunner
 
     private async Task<GalleryDownload> DownloadAsync(IGallerySource source, GalleryDownload download, CancellationToken cancellationToken)
     {
+        if (await DownloadArchiveAsync(source, download, cancellationToken).ConfigureAwait(false) is { } archived)
+        {
+            return archived;
+        }
+
         var pages = await source.GetPagesAsync(download.ContentId, cancellationToken).ConfigureAwait(false);
         if (pages.Count == 0)
         {
@@ -174,6 +179,62 @@ public sealed class GalleryDownloadRunner
 
         var size = await PackAsync(state, pages.Count, cancellationToken).ConfigureAwait(false);
         return state with { PagesDone = pages.Count, Bytes = size };
+    }
+
+    /// <summary>
+    /// The archive the site makes, kept as it comes once it opens as a zip; <c>null</c> — the source has none for the
+    /// release. Pages a run before it fetched are dropped.
+    /// </summary>
+    private static async Task<GalleryDownload?> DownloadArchiveAsync(IGallerySource source, GalleryDownload download, CancellationToken cancellationToken)
+    {
+        Directory.CreateDirectory(Path.GetDirectoryName(download.ArchivePath)!);
+        var part = download.ArchivePath + ".part";
+        GalleryArchive? archive;
+        int pages;
+        try
+        {
+            await using (var output = new FileStream(part, FileMode.Create, FileAccess.Write, FileShare.None, 81920, useAsync: true))
+            {
+                archive = await source.DownloadArchiveAsync(download.ContentId, output, cancellationToken).ConfigureAwait(false);
+            }
+
+            if (archive is null)
+            {
+                TryDelete(part);
+                return null;
+            }
+
+            if (archive.Bytes == 0)
+            {
+                throw new SourceException(SourceErrorKind.Error, "The site sent an empty archive.");
+            }
+
+            using (var zip = ZipFile.OpenRead(part))
+            {
+                pages = archive.Pages ?? zip.Entries.Count(e => e.Name.Length > 0);
+            }
+
+            File.Move(part, download.ArchivePath, overwrite: true);
+        }
+        catch
+        {
+            TryDelete(part);
+            throw;
+        }
+
+        try
+        {
+            if (Directory.Exists(download.WorkPath))
+            {
+                Directory.Delete(download.WorkPath, recursive: true);
+            }
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+        {
+            // Left behind; harmless.
+        }
+
+        return download with { PagesTotal = pages, PagesDone = pages, Bytes = new FileInfo(download.ArchivePath).Length };
     }
 
     /// <summary>Fetches one page's image into the work folder as <c>NNNN.ext</c>; a broken mirror is tried once more.</summary>

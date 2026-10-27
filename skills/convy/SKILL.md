@@ -106,7 +106,8 @@ names with `list_files` and use `include` (see below).
 
 - A result from a gallery source (e-hentai, MangaDex, … — extensions the owner installed) is one
   gallery or chapter; its `properties` carry the site's tags, artists, language and page count.
-  The download is one CBZ archive built by Convy page by page; progress shows pages done.
+  The download is one CBZ archive: the one the site makes when the source has it (nhentai with an API key), else built
+  by Convy page by page; progress shows pages done.
 - There is no file selection: `include` is ignored for galleries.
 
 ### Other categories

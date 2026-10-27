@@ -37,7 +37,20 @@ public interface IGallerySource : IContentSource
     /// into the archive and disposes it. Throws <see cref="SourceException"/> for a refused or missing image.
     /// </summary>
     Task<GalleryImage> OpenImageAsync(Uri url, CancellationToken cancellationToken);
+
+    /// <summary>
+    /// The release as one archive the site makes (a zip or CBZ), written into <paramref name="destination"/>, when the
+    /// source has one for it (nhentai gives one to an account); <c>null</c> — none, the downloader takes the pages.
+    /// Default: none.
+    /// </summary>
+    Task<GalleryArchive?> DownloadArchiveAsync(string contentId, Stream destination, CancellationToken cancellationToken) =>
+        Task.FromResult<GalleryArchive?>(null);
 }
+
+/// <summary>An archive <see cref="IGallerySource.DownloadArchiveAsync"/> wrote.</summary>
+/// <param name="Bytes">How many bytes it has.</param>
+/// <param name="Pages">How many pages it holds, when the site says.</param>
+public sealed record GalleryArchive(long Bytes, int? Pages);
 
 /// <summary>One page of a gallery.</summary>
 /// <param name="Number">1-based position in reading order.</param>

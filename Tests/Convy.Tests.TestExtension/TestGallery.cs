@@ -5,7 +5,7 @@ namespace Convy.Tests.TestExtension;
 
 /// <summary>
 /// A gallery site at <c>https://gallery.test</c> with a JSON API, as the tests fake it: galleries at <c>/g/{id}</c>,
-/// series at <c>/s/{id}</c> whose chapters are galleries.
+/// series at <c>/s/{id}</c> whose chapters are galleries; a gallery whose archive the site has is downloaded as that.
 /// </summary>
 public sealed class TestGallery : MetadataSource
 {
@@ -16,7 +16,7 @@ public sealed class TestGallery : MetadataSource
         Id = "test-gallery",
         Name = "Test gallery",
         Domains = ["gallery.test"],
-        Capabilities = SourceCapabilities.Resolve | SourceCapabilities.Browse | SourceCapabilities.Download | SourceCapabilities.Chapters,
+        Capabilities = SourceCapabilities.Resolve | SourceCapabilities.Browse | SourceCapabilities.Download | SourceCapabilities.Chapters | SourceCapabilities.Archive,
         Nsfw = true,
         Languages = ["ja", "en"],
         DefaultAgeRating = SourceAgeRating.Age18,
@@ -112,6 +112,26 @@ public sealed class TestGallery : MetadataSource
                     ? new SourcePageLink(new Uri(image.GetString()!))
                     : new SourcePageLink(new Uri($"{Site}/g/{id}/{i + 1}"), IsImage: false))
                 .ToList(),
+        };
+    }
+
+    /// <summary>The archive at the address <c>/api/g/{id}/archive</c> names, with the token; none (404) — the pages.</summary>
+    public override async Task<SourceArchive?> GetArchiveAsync(Uri url, ISourceContext context, IProgress<SourceProgress> progress, CancellationToken ct)
+    {
+        if (url.AbsolutePath.Trim('/').Split('/') is not ["g", var id])
+            return null;
+        using var request = new HttpRequestMessage(HttpMethod.Get, $"{Site}/api/g/{id}/archive");
+        var response = await context.Http.SendAsync(request, ct);
+        if (response.StatusCode == 404)
+            return null;
+        if (!response.IsSuccess)
+            throw new SourceException($"The site answered {response.StatusCode} to the archive.");
+        using var json = JsonDocument.Parse(response.Body);
+        return new SourceArchive
+        {
+            Url = new Uri(json.RootElement.GetProperty("url").GetString()!),
+            Headers = context.Settings.Get("token") is { } token ? new Dictionary<string, string> { ["X-Token"] = token } : null,
+            Pages = json.RootElement.TryGetProperty("pages", out var pages) ? pages.GetInt32() : null,
         };
     }
 
