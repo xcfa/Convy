@@ -85,6 +85,9 @@ public sealed record GalleryManifest
     /// <summary>Whether <see cref="IContentSource.SearchAsync"/> finds releases by text (some sites only resolve links).</summary>
     public bool CanSearch { get; init; } = true;
 
+    /// <summary>Whether the source may have a release as one archive the site makes (<see cref="IGallerySource.DownloadArchiveAsync"/>).</summary>
+    public bool Archives { get; init; }
+
     /// <summary>Filters a search accepts besides the text, in display order.</summary>
     public IReadOnlyList<GalleryFilter> Filters { get; init; } = [];
 }

@@ -26,9 +26,17 @@ public sealed class ExtensionSource : ExtensionUnit, IGallerySource, IGalleryBro
     /// <summary>The largest archive a source may name.</summary>
     private const long MaxArchiveBytes = 16L * 1024 * 1024 * 1024;
 
+    /// <summary>
+    /// The API from which a source with both <see cref="Api.SourceCapabilities.Archive"/> and
+    /// <see cref="Api.SourceCapabilities.Download"/> says "no archive, take the pages" with <c>null</c>: an older one
+    /// meant its archive for Shizuka's import (one that may cost the account something), so Convy does not ask it.
+    /// </summary>
+    public static readonly Version ArchivesFrom = new(1, 7);
+
     private readonly Api.MetadataSource _source;
 
-    public ExtensionSource(Api.MetadataSource source, string package, ExtensionHost host, ILogger logger)
+    /// <param name="archives">Whether the extension is built against <see cref="ArchivesFrom"/> or later: only then is its archive asked for.</param>
+    public ExtensionSource(Api.MetadataSource source, string package, ExtensionHost host, ILogger logger, bool archives = false)
         : base(source.Manifest, package, host, logger)
     {
         _source = source;
@@ -40,6 +48,7 @@ public sealed class ExtensionSource : ExtensionUnit, IGallerySource, IGalleryBro
             Languages = manifest.Languages,
             DefaultAgeRating = manifest.DefaultAgeRating is { } rating ? (int)rating : null,
             CanSearch = manifest.Capabilities.HasFlag(Api.SourceCapabilities.Browse) || manifest.Capabilities.HasFlag(Api.SourceCapabilities.Search),
+            Archives = archives && manifest.Capabilities.HasFlag(Api.SourceCapabilities.Archive),
             Filters = manifest.BrowseFilters
                 .Select(f => new GalleryFilter(f.Key, f.Label, f.Options.Select(o => new GalleryFilterOption(o.Value, o.Label)).ToList()))
                 .ToList(),
@@ -207,12 +216,12 @@ public sealed class ExtensionSource : ExtensionUnit, IGallerySource, IGalleryBro
     }
 
     /// <summary>
-    /// The archive a source with <see cref="Api.SourceCapabilities.Archive"/> names for the release (API 1.5), fetched
-    /// through its HTTP with the headers it asks for; <c>null</c> — it has none for this one (API 1.7: then its pages).
+    /// The archive a source with <see cref="GalleryManifest.Archives"/> names for the release, fetched through its HTTP
+    /// with the headers it asks for; <c>null</c> — it has none for this one (API 1.7: then its pages).
     /// </summary>
     public async Task<GalleryArchive?> DownloadArchiveAsync(string contentId, Stream destination, CancellationToken cancellationToken)
     {
-        if (!_source.Manifest.Capabilities.HasFlag(Api.SourceCapabilities.Archive))
+        if (!Manifest.Archives)
         {
             return null;
         }
@@ -245,6 +254,10 @@ public sealed class ExtensionSource : ExtensionUnit, IGallerySource, IGalleryBro
         catch (Api.SourceException ex)
         {
             throw Failure(ex, http);
+        }
+        catch (Exception ex) when (ex is not (OperationCanceledException or SourceException or HttpRequestException or IOException))
+        {
+            throw new SourceException(SourceErrorKind.Error, $"The archive of {Name} could not be fetched: {ex.Message}", ex);
         }
     }
 

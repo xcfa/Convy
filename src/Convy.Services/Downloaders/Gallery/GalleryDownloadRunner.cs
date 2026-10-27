@@ -106,7 +106,7 @@ public sealed class GalleryDownloadRunner
 
     private async Task<GalleryDownload> DownloadAsync(IGallerySource source, GalleryDownload download, CancellationToken cancellationToken)
     {
-        if (await DownloadArchiveAsync(source, download, cancellationToken).ConfigureAwait(false) is { } archived)
+        if (source.Manifest.Archives && await DownloadArchiveAsync(source, download, cancellationToken).ConfigureAwait(false) is { } archived)
         {
             return archived;
         }
@@ -183,9 +183,9 @@ public sealed class GalleryDownloadRunner
 
     /// <summary>
     /// The archive the site makes, kept as it comes once it opens as a zip; <c>null</c> — the source has none for the
-    /// release. Pages a run before it fetched are dropped.
+    /// release, or getting it failed (the pages are the way then). Pages a run before it fetched are dropped.
     /// </summary>
-    private static async Task<GalleryDownload?> DownloadArchiveAsync(IGallerySource source, GalleryDownload download, CancellationToken cancellationToken)
+    private async Task<GalleryDownload?> DownloadArchiveAsync(IGallerySource source, GalleryDownload download, CancellationToken cancellationToken)
     {
         Directory.CreateDirectory(Path.GetDirectoryName(download.ArchivePath)!);
         var part = download.ArchivePath + ".part";
@@ -211,10 +211,17 @@ public sealed class GalleryDownloadRunner
 
             using (var zip = ZipFile.OpenRead(part))
             {
-                pages = archive.Pages ?? zip.Entries.Count(e => e.Name.Length > 0);
+                pages = archive.Pages ?? zip.Entries.Count(e => ImageExtensions.Contains(Path.GetExtension(e.Name)));
             }
 
             File.Move(part, download.ArchivePath, overwrite: true);
+        }
+        catch (Exception ex) when (ex is SourceException or HttpRequestException or IOException or InvalidDataException or UnauthorizedAccessException
+                                       or OperationCanceledException && !cancellationToken.IsCancellationRequested)
+        {
+            TryDelete(part);
+            _logger.LogWarning("{Title}: the site's archive failed ({Reason}); downloading the pages.", download.Title, ex.Message);
+            return null;
         }
         catch
         {
@@ -365,6 +372,11 @@ public sealed class GalleryDownloadRunner
         Directory.Exists(workPath)
             ? Directory.EnumerateFiles(workPath, $"{number:0000}.*").FirstOrDefault(f => !f.EndsWith(".part", StringComparison.Ordinal))
             : null;
+
+    private static readonly HashSet<string> ImageExtensions = new(StringComparer.OrdinalIgnoreCase)
+    {
+        ".jpg", ".jpeg", ".png", ".webp", ".gif", ".avif", ".jxl", ".bmp",
+    };
 
     private static int CountDone(string workPath, int pages) => Enumerable.Range(1, pages).Count(n => Existing(workPath, n) is not null);
 
