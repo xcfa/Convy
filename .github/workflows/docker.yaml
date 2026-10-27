@@ -15,6 +15,9 @@ env:
 jobs:
   test:
     runs-on: ubuntu-22.04
+    permissions:
+      contents: read
+      packages: read
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
@@ -27,8 +30,9 @@ jobs:
       - name: Build and test
         run: dotnet test Convy.slnx -c Release
         env:
-          # Shizuka.Sources.* from GitHub Packages (nuget.config): a token with read:packages.
-          PACKAGES_TOKEN: ${{ secrets.PACKAGES_TOKEN }}
+          # Shizuka.Sources.* from GitHub Packages (nuget.config): the secret PACKAGES_TOKEN (read:packages) when set,
+          # else the job's own token, which reads a package once it lets this repository in («Manage Actions access»).
+          PACKAGES_TOKEN: ${{ secrets.PACKAGES_TOKEN || github.token }}
 
   docker:
     needs: test
@@ -90,7 +94,7 @@ jobs:
           build-args: |
             VERSION=${{ env.APP_VERSION }}
           secrets: |
-            packages_token=${{ secrets.PACKAGES_TOKEN }}
+            packages_token=${{ secrets.PACKAGES_TOKEN || github.token }}
           cache-from: type=gha
           cache-to: type=gha,mode=max
 

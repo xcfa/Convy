@@ -1010,7 +1010,9 @@ Notes:
 Requires the .NET 10 SDK. `Shizuka.Sources.Abstractions` and `Shizuka.Sources.Hosting` come from
 GitHub Packages, which NuGet reads only with a token: put a personal access token with
 `read:packages` into `PACKAGES_TOKEN` (see `nuget.config`). CI and the image build take it from
-the repository secret `PACKAGES_TOKEN` (`docker build --secret id=packages_token,env=PACKAGES_TOKEN`).
+the repository secret `PACKAGES_TOKEN` (`docker build --secret id=packages_token,env=PACKAGES_TOKEN`),
+or, without the secret, use the job's own token: then each of the two packages must let this
+repository in (package settings, «Manage Actions access»).
 
 ```bash
 export PACKAGES_TOKEN=…

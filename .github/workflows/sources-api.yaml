@@ -26,7 +26,8 @@ jobs:
           fi
       - run: dotnet pack src/Convy.Sources.Abstractions/Convy.Sources.Abstractions.csproj -c Release -o nupkg
         env:
-          PACKAGES_TOKEN: ${{ secrets.PACKAGES_TOKEN }}
+          # The secret when set, else the job's own token (docker.yaml).
+          PACKAGES_TOKEN: ${{ secrets.PACKAGES_TOKEN || github.token }}
       - uses: actions/upload-artifact@v4
         with:
           name: nupkg
