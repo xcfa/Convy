@@ -33,9 +33,10 @@ public static class GalleryProperties
 
     public const string Authors = "authors";
 
+    /// <summary>Translators and scanlation groups.</summary>
     public const string Translators = "translators";
 
-    /// <summary>Circles, scanlation groups.</summary>
+    /// <summary>Circles and studios that made the work.</summary>
     public const string Groups = "groups";
 
     public const string Characters = "characters";
