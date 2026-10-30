@@ -291,7 +291,7 @@ public class ExtensionSourceTests
     {
         var web = new FakeSiteHandler();
         web.Json("https://gallery.test/api/g/g1",
-            """{ "title": "One", "language": "en", "pages": 3, "chapter": "3", "series": "Saga", "tags": ["female:glasses", "full color"], "artists": ["Someone"] }""");
+            """{ "title": "One", "language": "en", "pages": 3, "chapter": "3", "series": "Saga", "tags": ["female:glasses", "full color"], "artists": ["Someone"], "circles": ["Ink Circle"] }""");
         using var host = Extensions.Host(web);
         var source = await Extensions.GallerySource(host);
 
@@ -299,7 +299,7 @@ public class ExtensionSourceTests
 
         Assert.Equal(("https://gallery.test/g/g1", "One — Ch. 3", 3, "test-gallery:g1"), (found.ContentId, found.Title, found.FileCount, found.DedupKey));
         Assert.Equal("female:glasses, full color", found.Properties[GalleryProperties.Tags]);
-        Assert.Equal(("Someone", "Saga", "en", "true"), (found.Properties[GalleryProperties.Artists], found.Properties[GalleryProperties.Series],
+        Assert.Equal(("Someone, Ink Circle", "Saga", "en", "true"), (found.Properties[GalleryProperties.Artists], found.Properties[GalleryProperties.Series],
             found.Properties[GalleryProperties.Language], found.Properties[GalleryProperties.Nsfw]));
 
         var payload = Assert.IsType<GalleryPayload>(await source.ResolveAsync(found.ContentId, CancellationToken.None));

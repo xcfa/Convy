@@ -60,7 +60,8 @@ public sealed class TestGallery : MetadataSource
             Title = g.GetProperty("title").GetString()!,
             Language = g.TryGetProperty("language", out var language) ? language.GetString() : null,
             Tags = Strings(g, "tags").Select(t => t.Split(':', 2) is [var ns, var name] ? new SourceTag(name, ns) : new SourceTag(t)).ToList(),
-            Credits = Strings(g, "artists").Select(a => new SourceCredit(a, SourceCreditRoles.Artist)).ToList(),
+            Credits = Strings(g, "artists").Select(a => new SourceCredit(a, SourceCreditRoles.Artist))
+                .Concat(Strings(g, "circles").Select(c => new SourceCredit(c, "circle"))).ToList(),
             PageCount = g.TryGetProperty("pages", out var pages) ? pages.GetInt32() : null,
             Chapter = g.TryGetProperty("chapter", out var chapter) ? chapter.GetString() : null,
             Series = kind == "s"
