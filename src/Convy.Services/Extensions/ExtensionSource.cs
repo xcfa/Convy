@@ -334,7 +334,8 @@ public sealed class ExtensionSource : ExtensionUnit, IGallerySource, IGalleryBro
             .Add(GalleryProperties.Description, metadata.Description)
             .Add(GalleryProperties.Tags, tags)
             .Add(GalleryProperties.Authors, Credits(Api.SourceCreditRoles.Author))
-            .Add(GalleryProperties.Artists, Credits(Api.SourceCreditRoles.Artist))
+            // A doujinshi circle ("circle": Shizuka makes it a group) draws the work: an artist here, as before.
+            .Add(GalleryProperties.Artists, Credits(Api.SourceCreditRoles.Artist).Concat(Credits("circle")))
             .Add(GalleryProperties.Translators, Credits(Api.SourceCreditRoles.Translator))
             .Add(GalleryProperties.Groups, Credits(Api.SourceCreditRoles.Group))
             .Add(GalleryProperties.Characters, metadata.Characters)
