@@ -53,20 +53,31 @@ public sealed class TestGallery : MetadataSource
         using var json = JsonDocument.Parse(response.Body);
         var g = json.RootElement;
         var self = new Uri($"{Site}/{kind}/{id}");
+        var title = g.GetProperty("title").GetString()!;
+        var languageCode = g.TryGetProperty("language", out var language) ? language.GetString() : null;
+        var seriesTitle = kind == "s" ? title : g.TryGetProperty("series", out var series) ? series.GetString() : null;
+        // The flat dictionary other hosts read: the extension writes it, the host passes it on as is.
+        var properties = new Dictionary<string, string> { ["id"] = id, ["url"] = self.AbsoluteUri, ["title"] = title, ["nsfw"] = "true" };
+        if (languageCode is not null) properties["language"] = languageCode;
+        if (Strings(g, "tags").ToList() is { Count: > 0 } tags) properties["tags"] = string.Join(", ", tags);
+        if (Strings(g, "artists").ToList() is { Count: > 0 } artists) properties["artists"] = string.Join(", ", artists);
+        if (Strings(g, "circles").ToList() is { Count: > 0 } circles) properties["groups"] = string.Join(", ", circles);
+        if (seriesTitle is not null) properties["series"] = seriesTitle;
         return new SourceMetadata
         {
             ExternalId = id,
             Url = self,
-            Title = g.GetProperty("title").GetString()!,
-            Language = g.TryGetProperty("language", out var language) ? language.GetString() : null,
+            Title = title,
+            Language = languageCode,
             Tags = Strings(g, "tags").Select(t => t.Split(':', 2) is [var ns, var name] ? new SourceTag(name, ns) : new SourceTag(t)).ToList(),
             Credits = Strings(g, "artists").Select(a => new SourceCredit(a, SourceCreditRoles.Artist))
-                .Concat(Strings(g, "circles").Select(c => new SourceCredit(c, "circle"))).ToList(),
+                .Concat(Strings(g, "circles").Select(c => new SourceCredit(c, SourceCreditRoles.Circle))).ToList(),
             PageCount = g.TryGetProperty("pages", out var pages) ? pages.GetInt32() : null,
             Chapter = g.TryGetProperty("chapter", out var chapter) ? chapter.GetString() : null,
             Series = kind == "s"
-                ? new SourceSeries { Title = g.GetProperty("title").GetString()!, ExternalId = id, Url = self }
-                : g.TryGetProperty("series", out var series) ? new SourceSeries { Title = series.GetString()! } : null,
+                ? new SourceSeries { Title = title, ExternalId = id, Url = self }
+                : seriesTitle is not null ? new SourceSeries { Title = seriesTitle } : null,
+            Properties = properties,
         };
     }
 
@@ -86,6 +97,7 @@ public sealed class TestGallery : MetadataSource
                 Title = i.GetProperty("title").GetString()!,
                 ExternalId = id,
                 IsSeries = series,
+                Properties = new Dictionary<string, string> { ["id"] = id, ["title"] = i.GetProperty("title").GetString()! },
             };
         }).ToList();
         var next = json.RootElement.TryGetProperty("next", out var n) && n.ValueKind == JsonValueKind.String ? n.GetString() : null;
@@ -96,7 +108,8 @@ public sealed class TestGallery : MetadataSource
     {
         using var json = await context.Http.GetJsonAsync(new Uri($"{Site}/api{query.Url.AbsolutePath}/chapters"), ct);
         return json.RootElement.EnumerateArray()
-            .Select(c => new SourceCandidate { Url = new Uri($"{Site}/g/{c.GetProperty("id").GetString()}"), Title = c.GetProperty("title").GetString()!, ExternalId = c.GetProperty("id").GetString() })
+            .Select(c => new SourceCandidate { Url = new Uri($"{Site}/g/{c.GetProperty("id").GetString()}"), Title = c.GetProperty("title").GetString()!, ExternalId = c.GetProperty("id").GetString(),
+                Properties = new Dictionary<string, string> { ["id"] = c.GetProperty("id").GetString()!, ["title"] = c.GetProperty("title").GetString()! } })
             .ToList();
     }
 

@@ -320,68 +320,30 @@ public sealed class ExtensionSource : ExtensionUnit, IGallerySource, IGalleryBro
         return $"{metadata.Title} — {string.Join(' ', parts)}{(chapter is null ? "" : $": {chapter}")}";
     }
 
-    /// <summary>A release with what the site says about it, under <see cref="GalleryProperties"/>.</summary>
-    private ContentInfo Content(Api.SourceMetadata metadata)
+    /// <summary>
+    /// A release with what the site says about it: the extension's own flat dictionary (API 1.10,
+    /// <see cref="Api.SourceMetadata.Properties"/>), handed on as is. Convy maps nothing into it: which key a credit or a
+    /// tag goes under is the extension's call, so a new role or field never needs a change here.
+    /// </summary>
+    private ContentInfo Content(Api.SourceMetadata metadata) => new()
     {
-        var tags = metadata.Tags.Select(t => string.IsNullOrWhiteSpace(t.Namespace) ? t.Name : $"{t.Namespace}:{t.Name}");
-        string[] Credits(string role) => metadata.Credits.Where(c => c.Role == role).Select(c => c.Name).ToArray();
-        var properties = new Properties()
-            .Add(GalleryProperties.Id, metadata.ExternalId)
-            .Add(GalleryProperties.Url, metadata.Url.AbsoluteUri)
-            .Add(GalleryProperties.Title, ReleaseTitle(metadata))
-            .Add(GalleryProperties.OriginalTitle, metadata.AltTitles.FirstOrDefault()?.Title)
-            .Add(GalleryProperties.Language, metadata.Language)
-            .Add(GalleryProperties.Description, metadata.Description)
-            .Add(GalleryProperties.Tags, tags)
-            .Add(GalleryProperties.Authors, Credits(Api.SourceCreditRoles.Author))
-            // A doujinshi circle ("circle": Shizuka makes it a group) draws the work: an artist here, as before.
-            .Add(GalleryProperties.Artists, Credits(Api.SourceCreditRoles.Artist).Concat(Credits("circle")))
-            .Add(GalleryProperties.Translators, Credits(Api.SourceCreditRoles.Translator))
-            .Add(GalleryProperties.Groups, Credits(Api.SourceCreditRoles.Group))
-            .Add(GalleryProperties.Characters, metadata.Characters)
-            .Add(GalleryProperties.Series, metadata.Series?.Title)
-            .Add(GalleryProperties.Volume, metadata.Volume)
-            .Add(GalleryProperties.Chapter, metadata.Chapter)
-            .Add(GalleryProperties.Pages, metadata.PageCount?.ToString(CultureInfo.InvariantCulture))
-            .Add(GalleryProperties.Published, metadata.Published?.ToString("yyyy-MM-dd", CultureInfo.InvariantCulture))
-            .Add(GalleryProperties.Cover, metadata.CoverUrl?.AbsoluteUri)
-            .Add(GalleryProperties.AgeRating, metadata.AgeRating is { } age ? ((int)age).ToString(CultureInfo.InvariantCulture) : null)
-            .Add(GalleryProperties.Nsfw, (metadata.AgeRating is { } rated ? rated == Api.SourceAgeRating.Age18 : _source.Manifest.Nsfw) ? "true" : "false");
-        foreach (var (key, value) in metadata.Extra)
-        {
-            properties.AddIfAbsent(key, value);
-        }
+        ContentId = metadata.Url.AbsoluteUri,
+        Title = ReleaseTitle(metadata),
+        FileCount = metadata.PageCount,
+        DedupKey = $"{Id}:{metadata.ExternalId}",
+        InfoUrl = metadata.Url.AbsoluteUri,
+        Properties = new Dictionary<string, string>(metadata.Properties, StringComparer.Ordinal),
+    };
 
-        return new ContentInfo
-        {
-            ContentId = metadata.Url.AbsoluteUri,
-            Title = ReleaseTitle(metadata),
-            FileCount = metadata.PageCount,
-            DedupKey = $"{Id}:{metadata.ExternalId}",
-            InfoUrl = metadata.Url.AbsoluteUri,
-            Properties = properties.Build(),
-        };
-    }
-
-    /// <summary>A release a search found: what the catalog says, the full metadata comes with its link.</summary>
-    private ContentInfo Content(Api.SourceCandidate candidate)
+    /// <summary>A release a search found, with what the list says (the extension's dictionary); the full metadata comes with its link.</summary>
+    private ContentInfo Content(Api.SourceCandidate candidate) => new()
     {
-        var properties = new Properties()
-            .Add(GalleryProperties.Id, candidate.ExternalId)
-            .Add(GalleryProperties.Url, candidate.Url.AbsoluteUri)
-            .Add(GalleryProperties.Title, candidate.Title)
-            .Add(GalleryProperties.Language, candidate.Language)
-            .Add(GalleryProperties.Summary, candidate.Summary)
-            .Add(GalleryProperties.Cover, candidate.CoverUrl?.AbsoluteUri);
-        return new ContentInfo
-        {
-            ContentId = candidate.Url.AbsoluteUri,
-            Title = string.IsNullOrWhiteSpace(candidate.Title) ? candidate.Url.AbsoluteUri : candidate.Title,
-            DedupKey = $"{Id}:{candidate.ExternalId ?? candidate.Url.AbsoluteUri}",
-            InfoUrl = candidate.Url.AbsoluteUri,
-            Properties = properties.Build(),
-        };
-    }
+        ContentId = candidate.Url.AbsoluteUri,
+        Title = string.IsNullOrWhiteSpace(candidate.Title) ? candidate.Url.AbsoluteUri : candidate.Title,
+        DedupKey = $"{Id}:{candidate.ExternalId ?? candidate.Url.AbsoluteUri}",
+        InfoUrl = candidate.Url.AbsoluteUri,
+        Properties = new Dictionary<string, string>(candidate.Properties, StringComparer.Ordinal),
+    };
 
     /// <summary>Where the progress of an archive goes: the download's state counts pages, not the site's preparation.</summary>
     private sealed class NoProgress : IProgress<Api.SourceProgress>
@@ -391,34 +353,5 @@ public sealed class ExtensionSource : ExtensionUnit, IGallerySource, IGalleryBro
         public void Report(Api.SourceProgress value)
         {
         }
-    }
-
-    /// <summary>The flat properties of a release: blank values are left out, lists joined with <c>, </c>.</summary>
-    private sealed class Properties
-    {
-        private readonly Dictionary<string, string> _values = new(StringComparer.Ordinal);
-
-        public Properties Add(string key, string? value)
-        {
-            if (!string.IsNullOrWhiteSpace(value))
-            {
-                _values[key] = value.Trim();
-            }
-
-            return this;
-        }
-
-        public Properties Add(string key, IEnumerable<string> values) =>
-            Add(key, string.Join(", ", values.Where(v => !string.IsNullOrWhiteSpace(v)).Select(v => v.Trim()).Distinct(StringComparer.Ordinal)));
-
-        public void AddIfAbsent(string key, string? value)
-        {
-            if (!_values.ContainsKey(key))
-            {
-                Add(key, value);
-            }
-        }
-
-        public IReadOnlyDictionary<string, string> Build() => _values;
     }
 }

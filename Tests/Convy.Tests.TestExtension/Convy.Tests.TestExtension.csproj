@@ -12,7 +12,7 @@
   </PropertyGroup>
 
   <ItemGroup>
-    <PackageReference Include="Shizuka.Sources.Abstractions" Version="1.7.0" ExcludeAssets="runtime" />
+    <PackageReference Include="Shizuka.Sources.Abstractions" Version="1.10.0" ExcludeAssets="runtime" />
   </ItemGroup>
 
 </Project>

@@ -299,8 +299,8 @@ public class ExtensionSourceTests
 
         Assert.Equal(("https://gallery.test/g/g1", "One — Ch. 3", 3, "test-gallery:g1"), (found.ContentId, found.Title, found.FileCount, found.DedupKey));
         Assert.Equal("female:glasses, full color", found.Properties[GalleryProperties.Tags]);
-        Assert.Equal(("Someone, Ink Circle", "Saga", "en", "true"), (found.Properties[GalleryProperties.Artists], found.Properties[GalleryProperties.Series],
-            found.Properties[GalleryProperties.Language], found.Properties[GalleryProperties.Nsfw]));
+        Assert.Equal(("Someone", "Ink Circle", "Saga", "en", "true"), (found.Properties[GalleryProperties.Artists], found.Properties[GalleryProperties.Groups],
+            found.Properties[GalleryProperties.Series], found.Properties[GalleryProperties.Language], found.Properties[GalleryProperties.Nsfw]));
 
         var payload = Assert.IsType<GalleryPayload>(await source.ResolveAsync(found.ContentId, CancellationToken.None));
         Assert.Equal(("test-gallery", "https://gallery.test/g/g1", "One — Ch. 3", 3), (payload.SourceId, payload.ContentId, payload.Title, payload.PageCount));
