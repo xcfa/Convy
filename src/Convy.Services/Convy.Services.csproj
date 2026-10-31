@@ -12,7 +12,7 @@
 		<PackageReference Include="Banned.Qbittorrent" Version="1.3.0" />
 		<PackageReference Include="Microsoft.Extensions.FileSystemGlobbing" Version="10.0.9" />
 		<!-- Gallery sources are Shizuka source extensions: the same packages, audit, HTTP and service of checks as Shizuka's. -->
-		<PackageReference Include="Shizuka.Sources.Hosting" Version="1.10.0" />
+		<PackageReference Include="Shizuka.Sources.Hosting" Version="1.12.0" />
 	</ItemGroup>
 
 	<ItemGroup>
